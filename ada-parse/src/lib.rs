@@ -1,23 +1,31 @@
-//! ada's own highlighting for the most used languages, with syntect and Oniguruma left as the
-//! fallback for the long tail (ADR-40).
-//!
-//! The [language table](Lang) names the languages ada highlights without syntect, from a
-//! fence's token, a file's name or its first line, so that nothing loads syntect's syntax set to
-//! find out a language is one of them. [`lex`] highlights a line of one: it gives the line's
-//! [`Span`]s, each a kind of the language, and [`Lang::scopes`] gives the scopes each kind
-//! carries, bat's scopes for the same text, so that themes written for bat's grammars apply.
-//!
-//! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
-//! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
-//! Diff is a line lexer, each line on its own; INI, Java properties, `.env`, Git's own files
-//! (ignore, attributes, mailmap and link files), fstab, `known_hosts`, OpenSSH's configs, crontabs and pkg-config's `.pc` files share the line-format engine
-//! (`line_format.rs`); logs (O-043) and JSON (O-048) came from ada; Dockerfile's scanner is
-//! bat's grammar compiled by hand, and XML's of ada's own design; YAML's and TOML's read
-//! their formats as bat's grammars do on well-formed text (TOML's as TOML 1.1 where bat's
-//! doesn't). bash's scanner is ada's own (X-093); Makefile's is too (X-097), its recipes and
-//! other shell on bash's (X-094). Each is held by checks of ada's own, not by syntect (X-116):
-//! its unit tests, `tests/readings.rs`' snapshots of its readings, and the `tokens` fuzz target's
-//! invariants.
+#![doc = include_str!("../README.md")]
+
+// ada's own highlighting for the most used languages (ADR-40); every other language bat's set
+// names prints plain (ADR-43). The crate's documentation is the README; these notes are for its
+// maintainers.
+//
+// The public API (REL-025) is `lex`, `Span`, `State` and `Lang` with its lookups, `name`, `base`,
+// `scopes` and `line_by_line`, and follows semver at ada's version: an addition is fine in any
+// release, a break needs ada 2.0, `cargo semver-checks` gates it. Everything else that is `pub` is
+// `#[doc(hidden)]`: ada-md's, which pins this exact version, so it may change in any release.
+// What `lex` gives (the kinds, the spans) and which names the lookups know are behavior, not API.
+//
+// The [language table](Lang) names the languages ada highlights, from a fence's token, a file's
+// name or its first line. `lex` highlights a line of one: it gives the line's `Span`s, each a
+// kind of the language, and `Lang::scopes` gives the scopes each kind carries, bat's scopes for
+// the same text, so that themes written for bat's grammars apply.
+//
+// The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
+// a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
+// Diff is a line lexer, each line on its own; INI, Java properties, `.env`, Git's own files
+// (ignore, attributes, mailmap and link files), fstab, `known_hosts`, OpenSSH's configs, crontabs
+// and pkg-config's `.pc` files share the line-format engine (`line_format.rs`); logs (O-043) and
+// JSON (O-048) came from ada; Dockerfile's scanner is bat's grammar compiled by hand, and XML's
+// of ada's own design; YAML's and TOML's read their formats as bat's grammars do on well-formed
+// text (TOML's as TOML 1.1 where bat's doesn't). bash's scanner is ada's own (X-093); Makefile's
+// is too (X-097), its recipes and other shell on bash's (X-094). Each is held by checks of ada's
+// own, not by syntect (X-116): its unit tests, `tests/readings.rs`' snapshots of its readings,
+// and the `tokens` fuzz target's invariants.
 
 mod bash;
 mod cc;
@@ -87,16 +95,29 @@ mod yaml_scan;
 use std::mem::MaybeUninit;
 
 use emit::Sink as _;
+// ada-md's, not the API (REL-025)
+#[doc(hidden)]
 pub use emit::{Rule, Rules, Run};
-pub use lang::{ALIASES, FirstLine, IGNORED_SUFFIXES, Lang, first_line_syntaxes};
+pub use lang::Lang;
+// ada-md's, not the API (REL-025)
+#[doc(hidden)]
+pub use lang::{ALIASES, FirstLine, IGNORED_SUFFIXES, first_line_syntaxes};
 use lisp::Dialect;
 
 /// Bytes `start..end` of a line are kind `kind` of the line's language, whose scopes
 /// [`Lang::scopes`] gives.
+///
+/// A `kind` is opaque: it means something only through [`Lang::scopes`] of the same language,
+/// in the same version of this crate. Which kinds a language has, and what they're numbered,
+/// changes whenever its lexer does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Span {
+    /// The span's first byte in the line.
     pub start: u32,
+    /// The byte past the span's last one.
     pub end: u32,
+    /// The span's kind, its scopes by [`Lang::scopes`].
     pub kind: u16,
 }
 
@@ -161,6 +182,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
 /// bash's), HTML's (X-076, its embeds' spans read into them), Makefile's (X-095, a shell
 /// region's laid spans read into them) and Diff's (X-163); any other language's spans (SQL's,
 /// whose run writes ran slower in ada in X-075 and X-076) are read into them.
+#[doc(hidden)]
 #[inline(never)]
 pub fn lex_runs(
     lang: Lang,
@@ -199,6 +221,7 @@ pub fn lex_runs(
 /// lexed and handed to `each` in its place. Returns where the lines left start, or `None` once
 /// `text`'s last line (one without a `\n`) is done. The language's scanner is found once a
 /// call, not once a line (HL-006).
+#[doc(hidden)]
 #[inline]
 pub fn lex_lines(
     lang: Lang,
@@ -226,11 +249,13 @@ pub fn lex_lines(
 /// A line's replacement before it's lexed, as [`lex_lines`]' `prep`: written into the buffer,
 /// true when it was. A plain function, so that a carried scan's loop is compiled with the scan
 /// (X-086).
+#[doc(hidden)]
 pub type Prep = fn(&str, &mut String) -> bool;
 
 /// As [`lex_lines`], but each line's runs by theme rule pushed to `runs`, as [`lex_runs`]
 /// pushes them, and where the line's runs end (`runs`' length) pushed to `ends`; a line is
 /// replaced by `prep`'s where it has one.
+#[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub fn lex_lines_runs(
     lang: Lang,
@@ -1049,7 +1074,7 @@ mod tests {
         let text = "fn main() {\r\n    let s = r#\"raw\n\n\r\nstill\"#;\r\r\n\t// a tab\n}\n\nlast";
         let expand = |l: &str| l.replace('\t', "    ");
         // every language: the carried scanners' blocks (X-067) and the line-by-line ones
-        for lang in Lang::ALL {
+        for &lang in Lang::ALL {
             let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
             for line in text.split('\n') {
                 let line = expand(line.strip_suffix('\r').unwrap_or(line));

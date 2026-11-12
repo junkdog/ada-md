@@ -3,9 +3,12 @@ name = "ada-parse"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
-description = "ada-md's own lexers for the most used languages, and the table that names them"
+description = "Syntax highlighting lexers for about 60 languages, with bat's scopes: ada-md's highlighter"
 license = "MIT"
 repository = "https://github.com/junkdog/ada-md"
+readme = "README.md"
+keywords = ["syntax-highlighting", "lexer", "highlighting", "tokenizer"]
+categories = ["parser-implementations", "text-processing"]
 
 # no syntect types (ADR-40), and no dependencies. ada checks the table against bat's syntax set
 # in its own tests, where syntect is a dev-dependency (ADR-43).

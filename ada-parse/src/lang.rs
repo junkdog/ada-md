@@ -11,6 +11,7 @@
 /// A language ada highlights with a lexer of its own; every other language bat's set names
 /// prints plain (ADR-43).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Lang {
     /// bat's `JSON` (O-048).
     Json,
@@ -147,6 +148,7 @@ pub enum Lang {
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
 /// `fuzz/markdown.dict` names them all (F-013).
+#[doc(hidden)]
 pub const ALIASES: &[(&str, &str)] = &[
     // pkg-config's other spelling (X-146)
     ("pkgconfig", "pc"),
@@ -191,7 +193,8 @@ static OTHERS: &[&str] = &["resolv.conf"];
 /// The suffixes bat ignores at a file name's end (its `IgnoredSuffixes`, checked on bat 0.26.1
 /// file by file, X-145): an editor's backup, apt's, dpkg's, ucf's and rpm's, and a build
 /// system's template (`.in`). bat names such a file by the rest ([`Lang::strip_ignored_suffix`]).
-pub const IGNORED_SUFFIXES: [&str; 15] = [
+#[doc(hidden)]
+pub const IGNORED_SUFFIXES: &[&str] = &[
     "~",
     ".bak",
     ".old",
@@ -490,7 +493,8 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 61] = [
+    /// Every language, in no promised order.
+    pub const ALL: &'static [Lang] = &[
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -554,8 +558,8 @@ impl Lang {
         Lang::Clojure,
     ];
 
-    /// The name of the syntax it stands in for, as syntect names it. Emacs Lisp's and Scheme's
-    /// are `Lisp`'s: [`Lang::from_name`] gives `Lisp` for them, a file or a fence names them.
+    /// The name of the syntax it stands in for, as bat's syntax set names it (`Rust`,
+    /// `Bourne Again Shell (bash)`). Emacs Lisp's and Scheme's are `Lisp`'s.
     pub fn name(self) -> &'static str {
         match self {
             Lang::Json => "JSON",
@@ -623,6 +627,7 @@ impl Lang {
     /// The name ada gives a whole file in it, and `-l`: [`Lang::name`], but Emacs Lisp's and
     /// Scheme's own, which lead back to them ([`Lang::from_token`]) where `Lisp` would give
     /// Common Lisp's reading.
+    #[doc(hidden)]
     pub fn label(self) -> &'static str {
         match self {
             Lang::EmacsLisp => "Emacs Lisp",
@@ -699,6 +704,7 @@ impl Lang {
     /// The scopes under [`Lang::base`] each kind of a line lexer's language carries,
     /// space-separated, by [`crate::Span::kind`]; empty for the scanners, whose kinds
     /// [`Lang::scopes`] gives.
+    #[doc(hidden)]
     pub fn kinds(self) -> &'static [&'static str] {
         match self {
             Lang::Diff => crate::diff::KINDS,
@@ -772,12 +778,6 @@ impl Lang {
         }
     }
 
-    /// Whether [`crate::lex`] lexes it: every language in the table, since Makefiles moved onto
-    /// bash's scanner.
-    pub fn lexed(self) -> bool {
-        true
-    }
-
     /// Whether a line's spans never depend on the lines before it, so that lines can be lexed
     /// in any order, on any thread, from `State::default()`.
     pub fn line_by_line(self) -> bool {
@@ -794,12 +794,14 @@ impl Lang {
     }
 
     /// The language a syntax's own name gives, as `find_syntax_by_name` matches it: exactly.
+    #[doc(hidden)]
     pub fn from_name(name: &str) -> Option<Lang> {
-        Lang::ALL.into_iter().find(|l| l.name() == name)
+        Lang::ALL.iter().copied().find(|l| l.name() == name)
     }
 
     /// The language an extension or a whole file name gives, as `find_syntax_by_extension`
     /// matches it: ignoring ASCII case.
+    #[doc(hidden)]
     pub fn from_extension(ext: &str) -> Option<Lang> {
         EXTENSIONS
             .iter()
@@ -807,9 +809,9 @@ impl Lang {
             .map(|&(l, _)| l)
     }
 
-    /// The language a fence's token gives (`json`, `zsh`, `Makefile`), as ada looks one up in
-    /// the set: a syntax's own name, then the token through [`ALIASES`] by extension, then by
-    /// name ignoring case.
+    /// The language a markdown fence's token gives (`json`, `zsh`, `Makefile`): a syntax's own
+    /// name, then the token as an extension (after a few aliases: `zsh`, `ts`, `csharp`), then
+    /// a name ignoring case.
     pub fn from_token(lang: &str) -> Option<Lang> {
         if let Some(l) = Lang::from_name(lang) {
             return Some(l);
@@ -819,16 +821,15 @@ impl Lang {
             .find(|(alias, _)| alias.eq_ignore_ascii_case(lang))
             .map_or(lang, |&(_, token)| token);
         Lang::from_extension(token).or_else(|| {
-            Lang::ALL.into_iter().find(|l| {
+            Lang::ALL.iter().copied().find(|l| {
                 l.name().eq_ignore_ascii_case(token) || l.label().eq_ignore_ascii_case(token)
             })
         })
     }
 
-    /// The language a file's name gives, as ada reads one: the whole name (`Makefile`,
-    /// `.zshrc`), a CMake template's ([`Lang::header_template`], [`Lang::configured_file`]),
-    /// then its extension as a token; failing those, the name without a suffix bat ignores
-    /// ([`Lang::strip_ignored_suffix`]: `Config.cmake.in`, `Makefile.in`, `setup.py.orig`).
+    /// The language a file's name (not its path) gives, as ada reads one: the whole name
+    /// (`Makefile`, `.zshrc`), a CMake template's, then its extension as a token; failing those,
+    /// the name without a suffix bat ignores (`Config.cmake.in`, `Makefile.in`, `setup.py.orig`).
     pub fn from_file_name(name: &str) -> Option<Lang> {
         if let Some(l) = Lang::from_extension(name) {
             return Some(l);
@@ -852,6 +853,7 @@ impl Lang {
     /// `name` without the suffix bat ignores at its end, if it has one ([`IGNORED_SUFFIXES`]):
     /// bat names such a file by the rest when neither its whole name nor its extension names
     /// it, and strips again from the rest (`x.py.in.bak`). As bat, ASCII case counts.
+    #[doc(hidden)]
     pub fn strip_ignored_suffix(name: &str) -> Option<&str> {
         IGNORED_SUFFIXES
             .iter()
@@ -862,11 +864,13 @@ impl Lang {
     /// The language of a header (`.h`) whose text starts with `text`, one of C, C++, Objective-C
     /// and Objective-C++, by the words in its first 64 KB (X-134): bat's set names every `.h`
     /// Objective-C, its last claimant.
+    #[doc(hidden)]
     pub fn for_header(text: &[u8]) -> Lang {
         crate::header::language(text)
     }
 
     /// Whether a file's name is a header's that [`Lang::for_header`] decides: `.h`.
+    #[doc(hidden)]
     pub fn is_header(name: &str) -> bool {
         name.rsplit_once('.')
             .is_some_and(|(stem, ext)| !stem.is_empty() && ext.eq_ignore_ascii_case("h"))
@@ -880,6 +884,7 @@ impl Lang {
     /// `.c`'s too, the others [`Lang::CMakeCppHeader`]. bat's set names a file by its last
     /// extension, or by the whole name `h.in`, and bat names a `.in` by the rest (`x.h.in` C's
     /// or Objective-C's): ada's reading departs from both for these names (`.in`, `.cmake`).
+    #[doc(hidden)]
     pub fn header_template(name: &str) -> Option<Lang> {
         let (stem, ext) = name.rsplit_once('.')?;
         if !(ext.eq_ignore_ascii_case("in") || ext.eq_ignore_ascii_case("cmake")) {
@@ -906,6 +911,7 @@ impl Lang {
     /// the set's other syntaxes: a `.cmake` named for one of those stays CMake (`.fish.cmake`),
     /// as do `x.toolchain.cmake`, `x.in.cmake` and the like; pkg-config's `x.pc.cmake` is
     /// pkg-config's since X-146. bat names these CMake, by the last extension: a departure.
+    #[doc(hidden)]
     pub fn configured_file(name: &str) -> Option<Lang> {
         let (stem, ext) = name.rsplit_once('.')?;
         if !ext.eq_ignore_ascii_case("cmake") {
@@ -921,6 +927,7 @@ impl Lang {
     /// The language of a `.h` header's template (`h.in`, X-140) whose text starts with `text`:
     /// C++'s ([`Lang::CMakeCppHeader`]) where the header's text is C++'s or Objective-C++'s
     /// ([`Lang::for_header`]), else C's.
+    #[doc(hidden)]
     pub fn for_header_template(text: &[u8]) -> Lang {
         match Lang::for_header(text) {
             Lang::Cpp | Lang::ObjCpp => Lang::CMakeCppHeader,
@@ -930,7 +937,7 @@ impl Lang {
 
     /// The language a file's first line declares (`#!/bin/sh`, `# -*- makefile -*-`), when
     /// syntect's first-line match on bat's set surely gives one of these; `None` when it gives
-    /// another syntax, none, or only the set can tell ([`Lang::first_line`]).
+    /// another syntax, none, or only the set can tell.
     pub fn from_first_line(line: &str) -> Option<Lang> {
         match Lang::first_line(line) {
             FirstLine::Lang(lang) => Some(lang),
@@ -948,6 +955,7 @@ impl Lang {
     /// itself; the walk goes the same way, past each regex the line surely doesn't match, and
     /// stops at the first it may: one of these languages when that regex is one of theirs and
     /// matches, the set when only the set can tell.
+    #[doc(hidden)]
     pub fn first_line(line: &str) -> FirstLine {
         Lang::walk_first_lines(line, &mut |_, _| None, false)
     }
@@ -958,6 +966,7 @@ impl Lang {
     /// by the table's test for ASCII lines where there is one, though the line isn't ASCII;
     /// `Ask` comes back only when there is none. ada answers with the set's regexes, as the
     /// `regex` crate reads them (ADR-43).
+    #[doc(hidden)]
     pub fn first_line_asking(
         line: &str,
         ask: &mut dyn FnMut(usize, &str) -> Option<bool>,
@@ -1003,6 +1012,7 @@ impl Lang {
 }
 
 /// What a file's first line says, by [`Lang::first_line`].
+#[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FirstLine {
     /// The set's first-line match gives this language.

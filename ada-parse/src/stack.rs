@@ -48,7 +48,7 @@ impl State {
         1 + self.held()
     }
 
-    /// The state that holds the top [`HELD`] levels of `stack[1..depth]` (the base below them
+    /// The state that holds the top `HELD` levels of `stack[1..depth]` (the base below them
     /// isn't kept, nor the levels below the top `HELD`), the bytes past the top zero, and `arg`
     /// beside them. `stack` is at least `1 + HELD` long.
     #[inline(always)]

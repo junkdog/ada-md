@@ -20,7 +20,8 @@
 //! `cargo xtask names [--check]`: the names, extensions and first-line regexes of bat's syntax
 //! set in `assets/`, from two-face's (`names`, ADR-43); `--check` only compares.
 //!
-//! `cargo xtask size`: ada-parse's bytes in the release binary, by `nm` (`size`, ADR-40).
+//! `cargo xtask size`: ada-parse's bytes in the release binary, by module: code by the line
+//! tables, data by symbol (`size`, ADR-40).
 
 mod lackey;
 mod names;

@@ -172,9 +172,12 @@ fuzz_target!(|data: &[u8]| {
     };
     let text = String::from_utf8_lossy(data);
     let trace = std::env::var_os("ADA_FUZZ_TRACE").is_some();
-    let on = langs::selected(&Lang::ALL);
-    let lexed = on.iter().copied().filter(|l| l.lexed());
-    let mut parsed: Vec<_> = lexed.map(|l| (l, ada_parse::State::default())).collect();
+    let on = langs::selected(Lang::ALL);
+    let mut parsed: Vec<_> = on
+        .iter()
+        .copied()
+        .map(|l| (l, ada_parse::State::default()))
+        .collect();
     let mut ran: Vec<_> = on
         .iter()
         .copied()
@@ -204,7 +207,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     // one language an input, so the check costs a fortieth of the lexing above
-    let lexed: Vec<_> = on.iter().copied().filter(|l| l.lexed()).collect();
+    let lexed: Vec<_> = on.to_vec();
     if !lexed.is_empty() {
         let max = match text.len() % 9 {
             0 => usize::MAX,
