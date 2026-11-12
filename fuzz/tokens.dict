@@ -1780,6 +1780,16 @@
 "builtins.match \""
 "split \""
 "[[:alpha:]]"
+# writers' files in their language (X-153), in a script's interpolation and spliced into (X-156), named outside a
+# writer's call (X-157)
+"writeText \"a.json\" ''"
+"writePython3 \"p\" { } ''"
+"#!/usr/bin/env python3"
+"cp ${writeText \"b.py\" ''"
+"writeTextFile { name = \"c.yaml\"; text = ''"
+"destination = \"/d.toml\";"
+"environment.etc.\"e.lua\".text = ''"
+"\".zshrc\" = { text = ''"
 
 # CMakeCache (X-104): an entry, its type left open across lines, comments
 "# This is the CMakeCache file."

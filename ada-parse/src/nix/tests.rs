@@ -802,7 +802,7 @@ fn writers_files_in_their_language() {
 fn files_and_scripts_apart() {
     let l = [
         "{",
-        // a file in a script's interpolation: a string (the script's state kept)
+        // a file in a script's interpolation (X-156), the script's state kept
         "  postInstall = ''",
         "    cp ${writeText \"a.json\" ''{ \"x\": 1 }''} $out",
         "  '';",
@@ -816,8 +816,13 @@ fn files_and_scripts_apart() {
         "  preBuild = let f = toFile \"f.py\" ''import g''; in ''python ${f}'';",
         "}",
     ];
-    has(&l, "{ \"x\": 1 }", "string.quoted.other.nix");
+    has(
+        &l,
+        "x",
+        "source.json meta.mapping.key.json string.quoted.double.json",
+    );
     has(&l, "cp", COMMAND);
+    has(&l, "out", "variable.other.readwrite.shell");
     has(&l, "touch", COMMAND);
     has(&l, "rm t", "string.quoted.other.nix");
     has(&l, "[1]", "string.quoted.other.nix");
@@ -876,6 +881,17 @@ fn long_file_lines_lex_in_linear_time() {
         ("a = writeText \"a.py\" ''", "f(\"${a}\") "),
         ("a = toFile \"a.toml\" \"", "k = 1\\n"),
         ("a = toFile \"a.php\" \"<?php ", "$a${b}; "),
+        // strings spliced into a file, writers' own in its interpolation, files in a script's
+        // interpolation (X-156)
+        ("a = writeText \"a.json\" ''", "${optionalString c ''1, ''}"),
+        (
+            "a = writeText \"a.json\" ''",
+            "${writeText \"b\" { } ''x''} ",
+        ),
+        (
+            "a = { postInstall = ''",
+            "cp ${writeText \"a.json\" ''[1]''} \"x",
+        ),
     ] {
         let l = String::from(head) + &unit.repeat(20_000);
         let t = std::time::Instant::now();
@@ -1073,6 +1089,38 @@ fn ext_slots_name_as_ada_does() {
     for ext in ["conf", "txt", "nix", "rb", "h", "service"] {
         assert_eq!(ext_slot(ext.as_bytes()), 0, "{ext}");
     }
+    // dotfiles by their whole name (X-157), as ada names them
+    for name in [
+        ".bash_aliases",
+        ".bash_completions",
+        ".bash_functions",
+        ".bash_login",
+        ".bash_logout",
+        ".bash_profile",
+        ".bash_variables",
+        ".bashrc",
+        ".profile",
+        ".zlogin",
+        ".zlogout",
+        ".zprofile",
+        ".zshenv",
+        ".zshrc",
+        ".editorconfig",
+        ".coveragerc",
+        ".pylintrc",
+        ".gitlint",
+        ".hgrc",
+    ] {
+        let slot = name_slot(format!("a/{name}").as_bytes());
+        assert!(slot != 0 && slot != SHEBANG, "{name}");
+        assert_eq!(
+            Lang::from_file_name(name),
+            Some(FILES[usize::from(slot) - 1].lang),
+            "{name}"
+        );
+    }
+    assert_eq!(name_slot(b".unknownrc"), SHEBANG);
+    assert_eq!(name_slot(b"a/b.conf"), 0);
 }
 
 #[test]
@@ -1118,4 +1166,200 @@ fn file_states_pack_and_unpack() {
         t.depth = if f.deep { 16 } else { 1 };
         assert_eq!(pack(f, &t), None, "{:?}", f.lang);
     }
+}
+
+/// `text` lexed as a block on one scan and a line at a time: the same spans, the same state at
+/// the end, which it returns.
+fn block_as_lines(text: &str) -> State {
+    let one = lines(text);
+    let mut state = State::default();
+    let mut all = Vec::new();
+    let mut v = Vec::new();
+    block(&mut state, &mut v, &mut |c| {
+        for l in text.lines() {
+            all.push(c.next(l.as_bytes()).to_vec());
+        }
+        None
+    });
+    assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+    assert_eq!(state, one.last().unwrap().1);
+    state
+}
+
+#[test]
+fn files_in_a_scripts_interpolation() {
+    let l = [
+        "{",
+        "  postInstall = ''",
+        "    cp ${writeText \"a.json\" ''",
+        "      { \"k\": [1, 2] }",
+        "    ''} $out/a.json",
+        "    if [ -e x ]; then",
+        "      install ${writeScript \"b.py\" ''",
+        "        import os",
+        "      ''} $out/bin/b",
+        "    fi",
+        "    echo \"a ${writeText \"c.toml\" ''",
+        "      [t]",
+        "    ''} b\"",
+        "    touch d",
+        "    ln -s ${writeText \"e\" ''",
+        "      #!/bin/sh",
+        "      rm e",
+        "    ''} $out/e",
+        "    cat ${writeText \"f\" ''just f''} ${writeText \"g.sql\" ''SELECT 1''} > h",
+        "  '';",
+        "}",
+    ];
+    has(
+        &l,
+        "k",
+        "source.json meta.mapping.key.json string.quoted.double.json",
+    );
+    has(&l, "cp", COMMAND);
+    has(&l, "import", PY_IMPORT);
+    has(&l, "install", COMMAND);
+    // bash's state kept across the file: its `if` open, then a string open
+    has(&l, "fi", "keyword.control.conditional.end.shell");
+    has(&l, "touch", COMMAND);
+    // a text writer's file named by its shebang
+    has(&l, "rm", COMMAND);
+    has(&l, "ln", COMMAND);
+    has(&l, "just f", "string.quoted.other.nix");
+    has(&l, "SELECT", "source.sql keyword.other.DML.sql");
+    has(&l, "cat", COMMAND);
+    let text = l.join("\n") + "\n";
+    assert_eq!(block_as_lines(&text), State::default());
+}
+
+#[test]
+fn a_file_in_a_deep_script() {
+    // no room above the frames for bash's state: the file a string's text, as before
+    let open = "{ ".repeat(27);
+    let l = [
+        format!("{open}a = {{ postInstall = ''"),
+        "  cp ${writeText \"a.json\" ''[1]''} x".into(),
+        "''; }".into(),
+    ];
+    let r: Vec<&str> = l.iter().map(String::as_str).collect();
+    has(&r, "[1]", "string.quoted.other.nix");
+    has(&r, "cp", COMMAND);
+    // room for it, and the file's interpolation then deeper than the frames keep it: bash's
+    // state lost (fresh after the file), the block as its lines
+    let deep = "{ ".repeat(26);
+    let text = format!(
+        "a = {{ postInstall = ''\n  echo \"${{writeText \"b.json\" ''\n  [${{ {deep} }}\n  {}]\n  ''}}\"\n  \
+         touch c\n''; }}\n",
+        "} ".repeat(26)
+    );
+    assert_eq!(block_as_lines(&text), State::default());
+}
+
+#[test]
+fn strings_spliced_into_a_file() {
+    let l = [
+        "{",
+        "  a = writeText \"a.json\" ''",
+        "    [1${lib.optionalString c '', 2''}, 3,",
+        "    ${lib.concatMapStrings (x: ''",
+        "      \"${x}\",",
+        "    '') xs}",
+        "    ${writeText \"b\" ''not json''}]",
+        "  '';",
+        "}",
+    ];
+    has(&l, "2", "source.json constant.numeric.integer.decimal.json");
+    has(&l, "3", "source.json constant.numeric.integer.decimal.json");
+    has(
+        &l,
+        "\"",
+        "source.json string.quoted.double.json punctuation.definition.string.begin.json",
+    );
+    // a writer's own string, no text of the file's
+    has(&l, "not json", "string.quoted.other.nix");
+    let text = l.join("\n") + "\n";
+    assert_eq!(block_as_lines(&text), State::default());
+}
+
+#[test]
+fn files_named_outside_a_writers_call() {
+    let l = [
+        "{",
+        "  a = writeTextFile {",
+        "    name = \"a.json\";",
+        "    text = ''{ \"k\": 1 }'';",
+        "  };",
+        "  b = pkgs.writeTextFile {",
+        "    name = \"b\";",
+        "    destination = \"/share/b.py\";",
+        "    executable = true;",
+        "    text = ''",
+        "      import os",
+        "    '';",
+        "    checkPhase = ''",
+        "      ls",
+        "    '';",
+        "  };",
+        "  environment.etc.\"c/d.toml\".text = ''",
+        "    [t]",
+        "  '';",
+        "  xdg.configFile.\"e.lua\" = {",
+        "    text = \"local m = 1\";",
+        "    executable = false;",
+        "  };",
+        "  home.file.\".zshrc\".text = ''export Z=1'';",
+        "  environment.etc.\"f.conf\".text = ''x = 1'';",
+        "  environment.etc.\"g.json\".text = lib.concatStringsSep \"\\n\" [ ''[2]'' ];",
+        "  h = writeTextFile { name = \"h.conf\"; text = ''plain h''; };",
+        "  i = writeTextFile { name = \"i\"; text = ''plain i''; };",
+        "  \"j.yaml\".text = ''",
+        "    top: 1",
+        "  '';",
+        "  k = { text = ''plain k''; };",
+        // a writer in a set naming the file: its own mark, the set's language where it names none
+        "  environment.etc.\"l/m.xml\" = {",
+        "    source = pkgs.writeText \"m\" ''",
+        "      <mm/>",
+        "    '';",
+        "  };",
+        "}",
+    ];
+    has(
+        &l,
+        "k",
+        "source.json meta.mapping.key.json string.quoted.double.json",
+    );
+    has(&l, "import", PY_IMPORT);
+    has(&l, "ls", COMMAND);
+    has(&l, "local", "source.lua storage.modifier.lua");
+    has(&l, "export", "storage.modifier.shell");
+    // `.conf` names none, nor a name without an extension and no shebang
+    has(&l, "x = 1", "string.quoted.other.nix");
+    has(&l, "plain h", "string.quoted.other.nix");
+    has(&l, "plain i", "string.quoted.other.nix");
+    has(&l, "plain k", "string.quoted.other.nix");
+    // a function's `"…"` argument no file's string; its list's string deeper
+    has(
+        &l,
+        "\\n",
+        "string.quoted.double.nix constant.character.escape.nix",
+    );
+    has(&l, "[2]", "string.quoted.other.nix");
+    has(
+        &l,
+        "top",
+        "source.yaml string.unquoted.plain.out.yaml entity.name.tag.yaml",
+    );
+    has(
+        &l,
+        "t",
+        "source.toml meta.tag.table.toml entity.name.table.toml",
+    );
+    has(
+        &l,
+        "mm",
+        "text.xml meta.tag.xml entity.name.tag.localname.xml",
+    );
+    let text = l.join("\n") + "\n";
+    assert_eq!(block_as_lines(&text), State::default());
 }
