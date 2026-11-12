@@ -14,8 +14,11 @@
 //!
 //! `MODE` is `lex`, `ada` or both (the default), `lex-in`: the lexer with `str::lines` in the
 //! timed loop, as `lexer_speed`'s `SPLIT=in`, `digest`: a hash of every line's runs in
-//! every built-in theme, for holding a speed step to the same output, or `count`: the corpus's
-//! lines, spans and runs, and its files with a tab or a CR. `SECS` keeps the one mode
+//! every built-in theme, for holding a speed step to the same output, `count`: the corpus's
+//! lines, spans and runs, and its files with a tab or a CR, or `first`: the process's first
+//! pass over the corpus against its second, and a third in another theme: what resolving the
+//! theme's rules costs, and what a cold process adds (X-050).
+//! `SECS` keeps the one mode
 //! running about that long, for a profile. `BLOCK=N` cuts each file into blocks of N lines, each
 //! highlighted (and lexed) from the default state, as a document's code blocks are.
 
@@ -138,6 +141,35 @@ fn main() {
             }
         }
         println!("{lang} {:016x}", h.finish());
+        return;
+    }
+    if mode == "first" {
+        // the first pass over the corpus in a process resolves the theme's rule for each kind
+        // it meets; the second finds them resolved (X-050): their difference is the first
+        // call's cost, page faults and cold caches included
+        // a third pass in another theme resolves every kind again with the code and caches
+        // warm: the third less the second is the rules alone, the first less the third what
+        // a cold process adds
+        let pass = |rule: &SyntaxTheme| {
+            let t = Instant::now();
+            for text in &texts {
+                hint::black_box(highlight::highlight(1, &lang, text, rule));
+            }
+            t.elapsed().as_secs_f64() * 1e6
+        };
+        // the first built-in theme of other rules (gruvbox-light shares dark's, and its id)
+        let other = themes
+            .iter()
+            .map(|t| SyntaxTheme::new(&t.syntax))
+            .find(|t| t.id != rule.id)
+            .expect("a built-in theme of other rules");
+        let (first, second, third) = (pass(&rule), pass(&rule), pass(&other));
+        println!(
+            "{lang}: first {first:.1} µs, second {second:.1} µs, third {third:.1} µs, \
+             resolving {:.1} µs, cold {:.1} µs",
+            third - second,
+            first - third
+        );
         return;
     }
     if mode == "count" {

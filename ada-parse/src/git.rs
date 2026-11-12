@@ -342,9 +342,14 @@ pub fn ignore(b: &[u8], state: &mut State, out: &mut Out) {
 }
 
 /// [`ignore`]'s lexemes written to `k`, a run sink (X-069).
-#[inline(never)]
-pub(crate) fn ignore_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    line_format::line::<Ignore, _>(b, state, out, k);
+/// Inline in a block's loop, [`crate::lex_runs`]' line too (X-050).
+pub(crate) struct IgnoreLine;
+
+impl crate::LineScan for IgnoreLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        line_format::line::<Ignore, _>(b, state, out, k);
+    }
 }
 
 /// Lex `b`, a line of Git Attributes without its `\n`, from `state`.
@@ -354,9 +359,14 @@ pub fn attributes(b: &[u8], state: &mut State, out: &mut Out) {
 }
 
 /// [`attributes`]'s lexemes written to `k`, a run sink (X-069).
-#[inline(never)]
-pub(crate) fn attributes_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    line_format::line::<Attributes, _>(b, state, out, k);
+/// Inline in a block's loop, [`crate::lex_runs`]' line too (X-050).
+pub(crate) struct AttributesLine;
+
+impl crate::LineScan for AttributesLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        line_format::line::<Attributes, _>(b, state, out, k);
+    }
 }
 
 /// Lex `b`, a line of Git Mailmap without its `\n`, from `state`.
@@ -366,9 +376,14 @@ pub fn mailmap(b: &[u8], state: &mut State, out: &mut Out) {
 }
 
 /// [`mailmap`]'s lexemes written to `k`, a run sink (X-069).
-#[inline(never)]
-pub(crate) fn mailmap_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    line_format::line::<Mailmap, _>(b, state, out, k);
+/// Inline in a block's loop, [`crate::lex_runs`]' line too (X-050).
+pub(crate) struct MailmapLine;
+
+impl crate::LineScan for MailmapLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        line_format::line::<Mailmap, _>(b, state, out, k);
+    }
 }
 
 /// Lex `b`, a line of Git Link without its `\n`, from `state`.
@@ -378,9 +393,14 @@ pub fn link(b: &[u8], state: &mut State, out: &mut Out) {
 }
 
 /// [`link`]'s lexemes written to `k`, a run sink (X-069).
-#[inline(never)]
-pub(crate) fn link_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    line_format::line::<Link, _>(b, state, out, k);
+/// Inline in a block's loop, [`crate::lex_runs`]' line too (X-050).
+pub(crate) struct LinkLine;
+
+impl crate::LineScan for LinkLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        line_format::line::<Link, _>(b, state, out, k);
+    }
 }
 
 /// What a line leaves open: an unquoted attributes pattern, or `gitdir`'s separator.

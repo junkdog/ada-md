@@ -174,11 +174,19 @@ pub fn lex_runs(
         spans.clear();
         return scan(line.as_bytes(), state, &mut Out::new(spans), rules, runs);
     }
-    if let Some(scan) = run_scanner(lang) {
+    if let Some(lines) = run_lines(lang) {
+        // the block's loop on the one line, the scan's one copy (X-050)
         spans.clear();
-        let mut k = emit::Runs::new(rules, runs);
-        scan(line.as_bytes(), state, &mut Out::new(spans), &mut k);
-        k.end_line(line.len());
+        lines(
+            line,
+            1,
+            state,
+            (spans, &mut String::new()),
+            None,
+            rules,
+            runs,
+            None,
+        );
         return;
     }
     scanner::<false>(lang)(line, state, spans);
@@ -246,9 +254,9 @@ pub fn lex_lines_runs(
         };
         return block(state, spans, rules, runs, &mut lines);
     }
-    if let Some(scan) = run_scanner(lang) {
-        return lines_run_scanned(
-            scan,
+    if let Some(lines) = run_lines(lang) {
+        // a run scanner's line inline in a loop of its own (X-050)
+        return lines(
             text,
             max,
             state,
@@ -256,7 +264,7 @@ pub fn lex_lines_runs(
             prep,
             rules,
             runs,
-            ends,
+            Some(ends),
         );
     }
     if let Some(block) = carried::<false>(lang) {
@@ -290,12 +298,20 @@ pub fn lex_lines_runs(
 // (X-073): each on its own registers, so that a path added or changed doesn't move another's
 // per-line code (+7 instructions a line on YAML's when Makefile joined `carried`'s table)
 
+/// A run scanner's line ([`run_lines`]' languages) as its block's loop inlines it ([`lines_run`]),
+/// the scan's one copy.
+pub(crate) trait LineScan {
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut emit::Runs);
+}
+
 /// [`lex_lines_runs`] on a run scanner: a line at a time on one run sink, opened once a block
-/// (X-069).
+/// (X-069), the scan's line inline in the loop (X-050): called through a table of line functions
+/// a line, its state's word went through memory and its registers were saved and restored
+/// each line (`.env` −4.1% instructions, +6.7 / +6.2% in ada). With no `ends`, [`lex_runs`]'
+/// one line: `text` lexed whole, as it is, so that the scan has one copy, this one.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn lines_run_scanned(
-    scan: RunScanner,
+fn lines_run<S: LineScan>(
     text: &str,
     max: usize,
     state: &mut State,
@@ -303,14 +319,75 @@ fn lines_run_scanned(
     prep: Option<Prep>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    ends: &mut Vec<u32>,
+    mut ends: Option<&mut Vec<u32>>,
 ) -> Option<usize> {
     let mut k = emit::Runs::new(rules, runs);
     let mut out = Out::new(spans);
-    split_lines(text, max, buf, prepped(prep), |l| {
+    let one = ends.is_none();
+    let mut prep = prepped(prep);
+    let mut nl = Newlines::new(text.as_bytes());
+    let mut p = 0;
+    for _ in 0..max {
+        // split_lines' loop, but for the one line
+        let e = if one { text.len() } else { nl.next() };
+        let line = if one { text } else { line_to(text, p, e) };
+        let l = if prep(line, buf) { buf.as_str() } else { line };
         k.start_line();
-        scan(l.as_bytes(), state, &mut out, &mut k);
-        ends.push(run_count(k.end_line(l.len())));
+        S::scan(l.as_bytes(), state, &mut out, &mut k);
+        let n = k.end_line(l.len());
+        if let Some(ends) = ends.as_deref_mut() {
+            ends.push(run_count(n));
+        }
+        if e == text.len() {
+            return None;
+        }
+        p = e + 1;
+    }
+    Some(p)
+}
+
+/// [`lines_run`] as [`run_lines`] hands it out.
+type RunLinesOf = fn(
+    &str,
+    usize,
+    &mut State,
+    (&mut Vec<Span>, &mut String),
+    Option<Prep>,
+    &mut dyn Rules,
+    &mut Vec<Run>,
+    Option<&mut Vec<u32>>,
+) -> Option<usize>;
+
+/// `lang`'s block on a scan that writes runs a line at a time, its line inline in the loop
+/// (X-050), for [`lex_runs`]' one line too: the line-format engine's (X-069), JSON's, TOML's and
+/// XML's (X-072; YAML's ran 1–2% slower in ada, X-072), Dockerfile's (X-074; Diff's ran 3–4%
+/// slower in ada, its span API 10% slower alone; X-075's SQL and log lexer ran slower in ada,
+/// and X-076's SQL again, on its own and lent its hosts' run sink: the span read it saved, a
+/// tight loop, cost less than a table lookup a token). The carried scans' runs come from
+/// [`carried_runs`] (Rust's, X-068, X-073; X-074's).
+#[inline(always)]
+fn run_lines(lang: Lang) -> Option<RunLinesOf> {
+    Some(match lang {
+        Lang::Ini => lines_run::<ini::RunLine>,
+        Lang::Properties => lines_run::<properties::RunLine>,
+        Lang::DotEnv => lines_run::<dotenv::RunLine>,
+        Lang::GitIgnore => lines_run::<git::IgnoreLine>,
+        Lang::GitAttributes => lines_run::<git::AttributesLine>,
+        Lang::GitMailmap => lines_run::<git::MailmapLine>,
+        Lang::GitLink => lines_run::<git::LinkLine>,
+        Lang::Fstab => lines_run::<fstab::RunLine>,
+        Lang::PkgConfig => lines_run::<pkgconfig::RunLine>,
+        Lang::CMakeCache => lines_run::<cmake_cache::RunLine>,
+        Lang::KnownHosts => lines_run::<known_hosts::RunLine>,
+        Lang::SshConfig => lines_run::<ssh_config::RunLine>,
+        Lang::SshdConfig => lines_run::<ssh_config::SshdRunLine>,
+        Lang::Crontab => lines_run::<crontab::RunLine>,
+        Lang::Nginx => lines_run::<nginx::RunLine>,
+        Lang::Json => lines_run::<json::RunLine>,
+        Lang::Toml => lines_run::<toml_scan::RunLine>,
+        Lang::Xml => lines_run::<xml_scan::RunLine>,
+        Lang::Dockerfile => lines_run::<dockerfile::RunLine>,
+        _ => return None,
     })
 }
 
@@ -483,7 +560,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
 
 /// `lang`'s block on a carried scan, where it has one. Without `SPANS`, the run API's table,
 /// the languages whose scans write runs are none, as in [`scanner`]: XML's runs are a line at a
-/// time on [`run_scanner`]'s path, all its lines hand on being a word.
+/// time on [`run_lines`]' path, all its lines hand on being a word.
 #[inline(always)]
 fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
     Some(match lang {
@@ -664,43 +741,8 @@ impl<'t> Newlines<'t> {
 /// One line's lexer, as [`lex`] calls it.
 type Scanner = fn(&str, &mut State, &mut Vec<Span>);
 
-/// One line's lexer writing to a run sink, as [`lex_runs`] calls it (X-069).
-type RunScanner = fn(&[u8], &mut State, &mut Out, &mut emit::Runs);
-
-/// `lang`'s lexer on a run sink, where its scan writes runs a line at a time: the line-format
-/// engine's (X-069), JSON's, TOML's and XML's (X-072; YAML's ran 1–2% slower in ada, X-072),
-/// Dockerfile's (X-074; Diff's ran 3–4% slower in ada, its span API 10% slower alone; X-075's
-/// SQL and log lexer ran slower in ada, and X-076's SQL again, on its own and lent its hosts'
-/// run sink: the span read it saved, a tight loop, cost less than a table lookup a token).
-/// The carried scans' runs come from [`carried_runs`] (Rust's, X-068, X-073; X-074's).
-#[inline(always)]
-fn run_scanner(lang: Lang) -> Option<RunScanner> {
-    Some(match lang {
-        Lang::Ini => ini::line_runs,
-        Lang::Properties => properties::line_runs,
-        Lang::DotEnv => dotenv::line_runs,
-        Lang::GitIgnore => git::ignore_runs,
-        Lang::GitAttributes => git::attributes_runs,
-        Lang::GitMailmap => git::mailmap_runs,
-        Lang::GitLink => git::link_runs,
-        Lang::Fstab => fstab::line_runs,
-        Lang::PkgConfig => pkgconfig::line_runs,
-        Lang::CMakeCache => cmake_cache::line_runs,
-        Lang::KnownHosts => known_hosts::line_runs,
-        Lang::SshConfig => ssh_config::line_runs,
-        Lang::SshdConfig => ssh_config::sshd_line_runs,
-        Lang::Crontab => crontab::line_runs,
-        Lang::Nginx => nginx::line_runs,
-        Lang::Json => json::line_runs,
-        Lang::Toml => toml_scan::line_runs,
-        Lang::Xml => xml_scan::line_runs,
-        Lang::Dockerfile => dockerfile::line_runs,
-        _ => return None,
-    })
-}
-
 /// `lang`'s lexer: its scanner behind the spans' [`Out`]. Without `SPANS`, the run API's table,
-/// the languages whose scans write runs ([`carried_runs`]'; [`run_scanner`]'s, X-069, X-072) are
+/// the languages whose scans write runs ([`carried_runs`]'; [`run_lines`]', X-069, X-072) are
 /// none, so that a highlighter on runs doesn't carry their span scans.
 #[inline(always)]
 fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {

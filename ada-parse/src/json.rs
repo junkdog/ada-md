@@ -139,10 +139,16 @@ pub fn tokens(line: &str, comment: &mut bool, spans: &mut Vec<Span>) {
 
 /// As [`tokens`], the line's runs written to `k` (X-072): the only state a JSON line hands on is
 /// a `/* */` comment left open.
-pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    let mut comment = state.word() != 0;
-    scan(b, &mut comment, out, k);
-    state.set_word(u64::from(comment));
+/// Inline in a block's loop, [`crate::lex_runs`]' line too (X-050).
+pub(crate) struct RunLine;
+
+impl crate::LineScan for RunLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        let mut comment = state.word() != 0;
+        scan(b, &mut comment, out, k);
+        state.set_word(u64::from(comment));
+    }
 }
 
 /// A line of JSON in a host's text (PHP's `<<<JSON` here-documents, X-099): its spans pushed to

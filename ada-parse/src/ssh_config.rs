@@ -128,9 +128,14 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 }
 
 /// [`line()`]'s lexemes written to `k`, a run sink.
-#[inline(never)]
-pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    crate::line_format::line::<Config<false>, _>(b, state, out, k);
+/// Inline in a block's loop, [`crate::lex_runs`]' line too (X-050).
+pub(crate) struct RunLine;
+
+impl crate::LineScan for RunLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        crate::line_format::line::<Config<false>, _>(b, state, out, k);
+    }
 }
 
 /// Lex `b`, a line of a server's config without its `\n`.
@@ -140,9 +145,14 @@ pub fn sshd_line(b: &[u8], state: &mut State, out: &mut Out) {
 }
 
 /// [`sshd_line`]'s lexemes written to `k`, a run sink.
-#[inline(never)]
-pub(crate) fn sshd_line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    crate::line_format::line::<Config<true>, _>(b, state, out, k);
+/// Inline in a block's loop, [`crate::lex_runs`]' line too (X-050).
+pub(crate) struct SshdRunLine;
+
+impl crate::LineScan for SshdRunLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        crate::line_format::line::<Config<true>, _>(b, state, out, k);
+    }
 }
 
 /// A config, the server's where `SSHD`: the flag [`entry`] reads, its scan one copy for both.

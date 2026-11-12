@@ -326,10 +326,15 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 
 /// As [`line`], the line's runs written to `k` (X-072): a block's lines on one sink, as the
 /// line-format engine's, since all a line hands the next is the word.
-#[inline(never)]
-pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    let w = lex(b, state.word(), out, k);
-    state.set_word(w);
+/// Inline in a block's loop, [`crate::lex_runs`]' line too (X-050).
+pub(crate) struct RunLine;
+
+impl crate::LineScan for RunLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        let w = lex(b, state.word(), out, k);
+        state.set_word(w);
+    }
 }
 
 /// `b` lexed from `w`, the word the line before left: the word it leaves. The scan a local, its fields in registers.
