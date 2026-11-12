@@ -447,6 +447,138 @@ fn shell_state_across_lines() {
 }
 
 #[test]
+fn shell_in_double_quoted_strings() {
+    let l = [
+        "{",
+        "  postInstall = \"wrapProgram $out/bin/a --set X ${x}\";",
+        "  preBuild = lib.optionalString (system == \"x86_64-linux\") \"export A=1\\nmake\";",
+        "  b = runCommand \"b\" {} \"mkdir $out\";",
+        "  c = writeShellScriptBin \"c\" \"rm \\\"$1\\\"\";",
+        "  d = /* sh */ \"ls\";",
+        "  postFixup = lib.concatMapStringsSep \"\\n\" (x: \"ln ${x}\") xs;",
+        "  postPatch = \"",
+        "    substituteInPlace a \\\\",
+        "      --replace b c",
+        "  \" + ''",
+        "    chmod a",
+        "  '';",
+        "  description = \"echo words\";",
+        "  script = writeShellScript \"named\" ''pwd'';",
+        "  preHook = if system == \"x86\" then a else \"cd\";",
+        "}",
+    ];
+    has(
+        &l,
+        "\"",
+        "string.quoted.double.nix punctuation.definition.string.double.start.nix",
+    );
+    // a writer's name under a binding's mark; a comparison's operand
+    has(&l, "named", "string.quoted.double.nix");
+    has(&l, "x86", "string.quoted.double.nix");
+    has(
+        &l,
+        "cd",
+        "meta.function-call.shell support.function.cd.shell",
+    );
+    // a writer's mark ended with a formal's default
+    has(
+        &["{ runCommand ? pkgs.runCommand, tag ? \"latest\" }: x"],
+        "latest",
+        "string.quoted.double.nix",
+    );
+    has(&l, "wrapProgram", COMMAND);
+    has(&l, "out", "variable.other.readwrite.shell");
+    // an argument deeper than the value's level: a condition's string
+    has(&l, "x86_64-linux", "string.quoted.double.nix");
+    // Nix's escape Nix's, a line break to bash
+    has(
+        &l,
+        "\\n",
+        "string.quoted.double.nix constant.character.escape.nix",
+    );
+    has(&l, "make", COMMAND);
+    // a writer's name, its first argument, a string; its script shell
+    has(&l, "b", "string.quoted.double.nix");
+    has(&l, "mkdir", COMMAND);
+    has(&l, "c", "string.quoted.double.nix");
+    has(&l, "rm", COMMAND);
+    // `\"` Nix's escape, bash's quote
+    has(&l, "1", "variable.other.readwrite.shell");
+    has(&l, "ls", COMMAND);
+    // a separator and a lambda's string in parentheses: arguments
+    has(&l, "ln ", "string.quoted.double.nix");
+    // across lines, a `\\` bash's continuation, joined to a `''…''` string
+    has(&l, "substituteInPlace", COMMAND);
+    lacks(&l, "--replace", COMMAND);
+    has(&l, "chmod", COMMAND);
+    has(&l, "echo words", "string.quoted.double.nix");
+}
+
+#[test]
+fn spliced_strings_and_writers() {
+    let l = [
+        "{",
+        "  postInstall = ''",
+        "    ${lib.optionalString x ''",
+        "      cat > a <<EOF",
+        "        EOF",
+        "      EOF",
+        "      touch b",
+        "    ''}",
+        "    cat > c <<B",
+        "      body",
+        "    B",
+        "    cp ${writeText \"a\" ''",
+        "      not shell",
+        "    ''} $out/a",
+        "    ln -s ${pkgs.writeText \"b\" ''echo x''} $out/b",
+        "    install ${builtins.toFile \"c\" ''rm y''} $out",
+        "    ${lib.optionalString c ''chown z''}",
+        "    ${lib.optionalString writeHieFiles ''chgrp h''}",
+        "  '';",
+        "  preConfig = ''local x = 1'';",
+        "  preCheckConfig = ''mkdir d'';",
+        "  postFailureMessage = ''see the log'';",
+        "  mkSetupHook = rc: mkDerivation { setupHook = writeText \"h.sh\" ''source ${rc}''; };",
+        "  preBuild = let script = toFile \"a.py\" ''import os''; in ''python ${script}'';",
+        "  langs = [ /* bash */ ''ls'' /* ruby */ ''puts 1'' ];",
+        "}",
+    ];
+    // a flag, not a writer: no name after it
+    has(&l, "chgrp", COMMAND);
+    // a writer's file named as a shell script's, a script's binding below a mark that isn't
+    // one; and another file a string, the value's script going on after its binding
+    has(&l, "import os", "string.quoted.other.nix");
+    has(&l, "python", COMMAND);
+    has(
+        &l,
+        "source",
+        "meta.function-call.shell support.function.source.shell",
+    );
+    // a comment naming another language
+    has(&l, "puts 1", "string.quoted.other.nix");
+    // a spliced string's own indentation stripped: a closer deeper than it is the body's
+    has(&l, "  EOF", "string.unquoted.heredoc.shell");
+    has(&l, "touch", COMMAND);
+    // the script's indentation learned again after it
+    has(&l, "  body", "string.unquoted.heredoc.shell");
+    has(&l, "B", "keyword.control.heredoc-token.shell");
+    // a writer's string that isn't shell, in the script's interpolation
+    has(&l, "      not shell", "string.quoted.other.nix");
+    has(&l, "cp", COMMAND);
+    has(&l, "echo x", "string.quoted.other.nix");
+    has(&l, "ln", COMMAND);
+    has(&l, "rm y", "string.quoted.other.nix");
+    has(&l, "install", COMMAND);
+    // the hold ended with its interpolation
+    has(&l, "chown", COMMAND);
+    // `pre*` and `post*` that aren't scripts
+    has(&l, "local x = 1", "string.quoted.other.nix");
+    has(&l, "mkdir", COMMAND);
+    has(&l, "see the log", "string.quoted.other.nix");
+}
+
+#[test]
 fn regexes_in_match_and_split() {
     let or = "string.quoted.double.nix keyword.operator.or.regexp";
     let l = [r#"m = builtins.match "([a-z]+)-(.*)\\.nix$" name;"#];
@@ -493,6 +625,33 @@ fn regexes_in_match_and_split() {
     // no string after it, or another name
     lacks(&["u = match (f \"(a|b)\") y;"], "|", or);
     lacks(&["w = matches \"(a|b)\";"], "|", or);
+    // a `''…''` string: its text the regex's as it is, Nix's escapes Nix's, across lines
+    let other = "string.quoted.other.nix keyword.operator.or.regexp";
+    let l = [r"m = builtins.match ''([a-z]+)\.nix(a''$|${b}'' name;"];
+    has(
+        &l,
+        "(",
+        "string.quoted.other.nix punctuation.definition.group.begin.regexp",
+    );
+    has(
+        &l,
+        r"\.",
+        "string.quoted.other.nix constant.character.escape.backslash.regexp",
+    );
+    has(
+        &l,
+        "''$",
+        "string.quoted.other.nix constant.character.escape.nix",
+    );
+    has(&l, "|", other);
+    has(&l, "b", "variable.parameter.name.nix");
+    has(
+        &l,
+        "''",
+        "string.quoted.other.nix punctuation.definition.string.other.end.nix",
+    );
+    has(&l, "name", "variable.parameter.name.nix");
+    has(&["s = lib.split ''(a", "|b)'' t;"], "|", other);
 }
 
 #[test]
@@ -501,7 +660,9 @@ fn a_shell_block_lexes_as_its_lines() {
     // group across an interpolation and lines
     let text = "{ postPatch = ''\n  echo \"$(echo \"$(echo \"$(echo \"$(echo \"$(echo \"$(\n  \
                 x)\")\")\")\")\")\"\n  cat <<A\n  ${f ''\n    y\n  ''}\n  A\n''; m = \
-                builtins.match \"(a\n|${b}\n)\" c; }\n";
+                builtins.match \"(a\n|${b}\n)\" c; postFixup = \"cat <<C\n  ${g ''\n    z\n  \
+                ''}\nC\n\"; n = split ''(d\n|${e}\n)'' f; preBuild = ''${writeText \"h\" ''\n  \
+                i\n''}''; }\n";
     let one = lines(text);
     let mut state = State::default();
     let mut all = Vec::new();
@@ -528,6 +689,12 @@ fn long_shell_lines_lex_in_linear_time() {
         ("{ postPatch = ''${f ''", "${g \""),
         ("m = builtins.match \"", "(a|${b})"),
         ("m = builtins.match \"", "\\\\"),
+        ("{ postPatch = \"", "${a} "),
+        ("{ postPatch = \"", "\\n\\\""),
+        ("{ postPatch = ''", "${writeText \"a\" ''x''} "),
+        ("{ postPatch = ''", "${f ''\n"),
+        ("m = match ''", "(a|${b})"),
+        ("m = match ''", "''$"),
     ] {
         let l = String::from(head) + &unit.repeat(20_000);
         let t = std::time::Instant::now();
@@ -544,6 +711,8 @@ fn marks_past_the_depth_counter() {
         format!("{deep}postPatch = {{ a = ''x''; }}; ''y''"),
         format!("{deep}x = writeShellScript \"a\" ''ls''; m = match \"(a\" b;"),
         format!("{deep}postPatch = {{ a =\n''x'';\n''y''\n}};"),
+        format!("{deep}postPatch = \"x\"; s = match ''(a'' b;"),
+        format!("{deep}postPatch = ''${{writeText \"a\" ''b''}}\n${{f ''\nc''}}'';"),
     ] {
         let one = lines(&l);
         let mut state = State::default();
