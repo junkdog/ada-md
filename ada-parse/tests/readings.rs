@@ -2184,7 +2184,10 @@ fn terraform() {
 /// `let` and `in`, bindings' attribute paths (a name's, a string's and an interpolation's parts), `inherit` and its
 /// source, `with` and `assert`, lambdas, members (a builtin under `builtins` only), the global builtins, strings of
 /// both kinds with their escapes and interpolations, `$${` as text, paths (relative, absolute, home, search paths,
-/// through an interpolation), URIs, floats, operators, comments and their remarks.
+/// through an interpolation), URIs, floats, operators, comments and their remarks. Shell in a phase's `''…''` strings
+/// (X-147: interpolations Nix's, Nix's escapes, a here-document's closer under the string's indentation, a string
+/// spliced from `lib.optionalString`, strings joined by `+` one script, a writer's script but not a string in its
+/// arguments' set) and regexes in `builtins.match` and `lib.split` (X-148: POSIX's ERE, `\\` the regex's `\`).
 #[test]
 fn nix() {
     let text = concat!(
@@ -2226,6 +2229,21 @@ fn nix() {
         "  '';\n",
         "  m = \"multi\n",
         "    line\";\n",
+        "  postPatch = ''\n",
+        "    substituteInPlace Makefile --replace-fail gcc \"${stdenv.cc}/bin/cc\"\n",
+        "    for f in $out/bin/*; do wrapProgram \"$f\" --prefix PATH : ${lib.makeBinPath [ jq ]}; done\n",
+        "    cat > $out/etc/x.conf <<EOF\n",
+        "    home=''${HOME} # ${x}\n",
+        "    EOF\n",
+        "    ${lib.optionalString stdenv.isDarwin ''\n",
+        "      install_name_tool -id $out/lib/libx.dylib $out/lib/libx.dylib\n",
+        "    ''}\n",
+        "  '' + ''\n",
+        "    rm -r $out/share/doc\n",
+        "  '';\n",
+        "  t = runCommand \"t\" { f = writeText \"f\" ''not shell''; } ''ln -s ${f} $out'';\n",
+        "  r = builtins.match \"([a-z]+)-([0-9.]+)\\\\.tar\\\\.gz$\" name;\n",
+        "  q = lib.split \"[[:space:]]+${sep}(,|;)\" str;\n",
         "}\n",
         "# TODO: remarks as words, not in DEBUG\n",
         "/* FIXME a block\n",

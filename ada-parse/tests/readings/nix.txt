@@ -388,17 +388,195 @@
        "    line" string.quoted.double.nix
        "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
        ";" punctuation.terminator.bind.nix
-  39 | }
+  39 |   postPatch = ''
+       "postPatch" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "''" string.quoted.other.nix punctuation.definition.string.other.start.nix
+  40 |     substituteInPlace Makefile --replace-fail gcc "${stdenv.cc}/bin/cc"
+       "substituteInPlace" meta.function-call.shell support.function.command.shell
+       " --" punctuation.definition.parameter.shell
+       "replace-fail" variable.parameter.option.shell
+       "\"" punctuation.definition.string.begin.shell
+       "${" punctuation.section.embedded.begin.nix
+       "stdenv" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "cc" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       "/bin/cc" string.quoted.double.shell
+       "\"" punctuation.definition.string.end.shell
+  41 |     for f in $out/bin/*; do wrapProgram "$f" --prefix PATH : ${lib.makeBinPath [ jq ]}; done
+       "for" keyword.control.loop.for.shell
+       "in" keyword.control.in.shell
+       "$" punctuation.definition.variable.shell
+       "out" variable.other.readwrite.shell
+       "*" keyword.operator.regexp.quantifier.shell
+       ";" keyword.operator.logical.continue.shell
+       "do" keyword.control.loop.do.shell
+       "wrapProgram" meta.function-call.shell support.function.command.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "f" variable.other.readwrite.shell
+       "\"" punctuation.definition.string.end.shell
+       " --" punctuation.definition.parameter.shell
+       "prefix" variable.parameter.option.shell
+       "${" punctuation.section.embedded.begin.nix
+       "lib" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "makeBinPath" variable.parameter.name.nix
+       "[" punctuation.definition.list.nix
+       "jq" variable.parameter.name.nix
+       "]" punctuation.definition.list.nix
+       "}" punctuation.section.embedded.end.nix
+       ";" keyword.operator.logical.continue.shell
+       "done" keyword.control.loop.end.shell
+  42 |     cat > $out/etc/x.conf <<EOF
+       "cat" meta.function-call.shell support.function.command.shell
+       ">" keyword.operator.assignment.redirection.shell
+       "$" punctuation.definition.variable.shell
+       "out" variable.other.readwrite.shell
+       "<<" keyword.operator.assignment.redirection.shell
+       "EOF" keyword.control.heredoc-token.shell
+  43 |     home=''${HOME} # ${x}
+       "home=" string.unquoted.heredoc.shell
+       "''$" string.quoted.other.nix constant.character.escape.nix
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "HOME" variable.other.readwrite.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+       " # " string.unquoted.heredoc.shell
+       "${" punctuation.section.embedded.begin.nix
+       "x" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+  44 |     EOF
+       "EOF" keyword.control.heredoc-token.shell
+  45 |     ${lib.optionalString stdenv.isDarwin ''
+       "${" punctuation.section.embedded.begin.nix
+       "lib" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "optionalString" variable.parameter.name.nix
+       "stdenv" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "isDarwin" variable.parameter.name.nix
+       "''" string.quoted.other.nix punctuation.definition.string.other.start.nix
+  46 |       install_name_tool -id $out/lib/libx.dylib $out/lib/libx.dylib
+       "install_name_tool" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "id" variable.parameter.option.shell
+       "$" punctuation.definition.variable.shell
+       "out" variable.other.readwrite.shell
+       "$" punctuation.definition.variable.shell
+       "out" variable.other.readwrite.shell
+  47 |     ''}
+       "''" string.quoted.other.nix punctuation.definition.string.other.end.nix
+       "}" punctuation.section.embedded.end.nix
+  48 |   '' + ''
+       "''" string.quoted.other.nix punctuation.definition.string.other.end.nix
+       "+" keyword.operator.nix
+       "''" string.quoted.other.nix punctuation.definition.string.other.start.nix
+  49 |     rm -r $out/share/doc
+       "rm" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "r" variable.parameter.option.shell
+       "$" punctuation.definition.variable.shell
+       "out" variable.other.readwrite.shell
+  50 |   '';
+       "''" string.quoted.other.nix punctuation.definition.string.other.end.nix
+       ";" punctuation.terminator.bind.nix
+  51 |   t = runCommand "t" { f = writeText "f" ''not shell''; } ''ln -s ${f} $out'';
+       "t" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "runCommand" variable.parameter.name.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "t" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "{" punctuation.definition.attrset-or-function.nix
+       "f" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "writeText" variable.parameter.name.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "f" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "''" string.quoted.other.nix punctuation.definition.string.other.start.nix
+       "not shell" string.quoted.other.nix
+       "''" string.quoted.other.nix punctuation.definition.string.other.end.nix
+       ";" punctuation.terminator.bind.nix
        "}" punctuation.definition.attrset.nix
-  40 | # TODO: remarks as words, not in DEBUG
+       "''" string.quoted.other.nix punctuation.definition.string.other.start.nix
+       "ln" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "s" variable.parameter.option.shell
+       "${" punctuation.section.embedded.begin.nix
+       "f" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       "$" punctuation.definition.variable.shell
+       "out" variable.other.readwrite.shell
+       "''" string.quoted.other.nix punctuation.definition.string.other.end.nix
+       ";" punctuation.terminator.bind.nix
+  52 |   r = builtins.match "([a-z]+)-([0-9.]+)\\.tar\\.gz$" name;
+       "r" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "builtins" constant.language.nix
+       "." keyword.operator.nix
+       "match" support.function.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "(" string.quoted.double.nix punctuation.definition.group.begin.regexp
+       "[" string.quoted.double.nix constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "a" string.quoted.double.nix constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.quoted.double.nix constant.other.character-class.set.regexp constant.other.character-class.range.regexp punctuation.definition.range.regexp
+       "z" string.quoted.double.nix constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "]" string.quoted.double.nix constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
+       "+" string.quoted.double.nix keyword.operator.quantifier.regexp
+       ")" string.quoted.double.nix punctuation.definition.group.end.regexp
+       "-" string.quoted.double.nix
+       "(" string.quoted.double.nix punctuation.definition.group.begin.regexp
+       "[" string.quoted.double.nix constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "0" string.quoted.double.nix constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.quoted.double.nix constant.other.character-class.set.regexp constant.other.character-class.range.regexp punctuation.definition.range.regexp
+       "9" string.quoted.double.nix constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "." string.quoted.double.nix constant.other.character-class.set.regexp
+       "]" string.quoted.double.nix constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
+       "+" string.quoted.double.nix keyword.operator.quantifier.regexp
+       ")" string.quoted.double.nix punctuation.definition.group.end.regexp
+       "\\\\." string.quoted.double.nix constant.character.escape.backslash.regexp
+       "tar" string.quoted.double.nix
+       "\\\\." string.quoted.double.nix constant.character.escape.backslash.regexp
+       "gz" string.quoted.double.nix
+       "$" string.quoted.double.nix keyword.control.anchor.regexp
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "name" variable.parameter.name.nix
+       ";" punctuation.terminator.bind.nix
+  53 |   q = lib.split "[[:space:]]+${sep}(,|;)" str;
+       "q" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "lib" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "split" variable.parameter.name.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "[" string.quoted.double.nix constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "[:space:]" string.quoted.double.nix constant.other.character-class.set.regexp constant.other.character-class.posix.regexp
+       "]" string.quoted.double.nix constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
+       "+" string.quoted.double.nix keyword.operator.quantifier.regexp
+       "${" punctuation.section.embedded.begin.nix
+       "sep" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       "(" string.quoted.double.nix punctuation.definition.group.begin.regexp
+       "," string.quoted.double.nix
+       "|" string.quoted.double.nix keyword.operator.or.regexp
+       ";" string.quoted.double.nix
+       ")" string.quoted.double.nix punctuation.definition.group.end.regexp
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "str" variable.parameter.name.nix
+       ";" punctuation.terminator.bind.nix
+  54 | }
+       "}" punctuation.definition.attrset.nix
+  55 | # TODO: remarks as words, not in DEBUG
        "# " comment.line.number-sign.nix
        "TODO" comment.line.number-sign.nix markup.bold.comment.nix
        ": remarks as words, not in DEBUG" comment.line.number-sign.nix
-  41 | /* FIXME a block
+  56 | /* FIXME a block
        "/* " comment.block.nix
        "FIXME" comment.block.nix markup.bold.comment.nix
        " a block" comment.block.nix
-  42 |    comment BUG !!! */
+  57 |    comment BUG !!! */
        "   comment " comment.block.nix
        "BUG" comment.block.nix markup.bold.comment.nix
        " " comment.block.nix

@@ -889,6 +889,7 @@ server {
 let
   inherit (lib) optional;
   version = "1.4.2";
+  major = builtins.head (builtins.match "([0-9]+)\\..*" version);
 in
 stdenv.mkDerivation rec {
   pname = "hello";

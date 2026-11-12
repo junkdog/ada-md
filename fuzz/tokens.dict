@@ -1762,6 +1762,25 @@
 "# TODO"
 "!!!"
 
+# Nix's shell in `''…''` strings (X-147): a phase's, NixOS's `script`, a writer's script, `writeShellApplication`'s
+# `text`, `/* bash */`, strings joined by `+`, one spliced from an interpolation, a here-document; regexes in
+# `builtins.match` and `split` (X-148)
+"postPatch = ''"
+"installPhase = ''"
+"preConfigure = ''"
+"script = ''"
+"writeShellScript \"x\" ''"
+"runCommand \"x\" { } ''"
+"writeShellApplication { text = ''"
+"/* bash */ ''"
+"'' + ''"
+"${lib.optionalString x ''"
+"let f = writeText \"f\" ''"
+"<<EOF"
+"builtins.match \""
+"split \""
+"[[:alpha:]]"
+
 # CMakeCache (X-104): an entry, its type left open across lines, comments
 "# This is the CMakeCache file."
 "//Path"

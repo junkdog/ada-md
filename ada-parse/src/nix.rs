@@ -29,11 +29,29 @@
 //!   bat colors a member by its word: `lib.map` and `cfg.placeholder` a builtin,
 //!   `builtins.readFile` a name);
 //! - a name is Nix's, `-` and `'` in it (bat's `\b` finds `import` in `import-cargo`).
+//!
+//! **Languages in strings** (bat reads both as a string's text):
+//! - **shell in a `''…''` string** (X-147) that a derivation's phase or hook, NixOS's `script`
+//!   and their kin hold (a binding's name, [`shell_name`]), that a shell writer's call takes
+//!   (`writeShellScript`, `runCommand`, `writeShellApplication`'s set: [`W_SHELL`]), or that a
+//!   `/* bash */` or `/* sh */` comment names: its text on bash's scanner ([`Scan::view`]), one
+//!   script from the string's `''` to its close, bash's state across its lines in the state's
+//!   spare bytes ([`Ext`]). An interpolation is Nix's island, a word to bash (`x`) where it
+//!   holds no shell text; a `''…''` string inside one (`${lib.optionalString c ''…''}`) is the
+//!   script's text spliced in, read on with the script's state; `''$`, `'''` and `''\x` are
+//!   Nix's escapes, cooked for bash. bash's kinds from [`SH_BASE`], no string scope over them
+//!   (a here-document's body's reading, Ruby's).
+//! - **a regex in the `"…"` string after `builtins.match` or `builtins.split`** (X-148; `match`
+//!   and `split` plain or selected from any set: `lib.match`, `with builtins; match`): POSIX's
+//!   extended syntax, Nix's `std::regex::extended`, on [`crate::regex`]'s ERE, cooked through
+//!   Nix's `\` escapes (`"\\."` is `\.`), `${…}` an island. Its kinds from [`RE_BASE`], under
+//!   the string's scope.
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::prim::{char_len, find_any, find_in};
+use crate::regex;
 use crate::words::{Words, text_len};
-use crate::{Out, State};
+use crate::{Out, Span, State};
 
 /// The leaves: a token's scopes.
 static LEAVES: [&str; 39] = [
@@ -117,8 +135,26 @@ const ATTRSET: u16 = 36;
 const FORMALS_END: u16 = 37;
 const COLON: u16 = 38;
 
+/// A regex in a string (X-148): [`regex::KINDS`] kinds from here, under the string's scope.
+const RE_BASE: u16 = 64;
+const _: () = assert!(LEAVES.len() <= RE_BASE as usize);
+/// Shell in a string (X-147): bash's kinds, its twins too, from here.
+const SH_BASE: u16 = 256;
+const _: () = assert!(RE_BASE as usize + regex::KINDS <= SH_BASE as usize);
+
 /// The scopes under `source.nix` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= SH_BASE {
+        return crate::bash::scopes(kind - SH_BASE);
+    }
+    if kind >= RE_BASE {
+        if usize::from(kind - RE_BASE) >= regex::KINDS {
+            return Vec::new();
+        }
+        let mut out = vec!["string.quoted.double.nix"];
+        out.extend(regex::scopes(kind - RE_BASE));
+        return out;
+    }
     LEAVES.get(usize::from(kind)).map_or_else(Vec::new, |l| {
         l.split(' ').filter(|s| !s.is_empty()).collect()
     })
@@ -313,6 +349,11 @@ const W_INHERIT: u16 = 1 << 11;
 const W_KEYWORD: u16 = 1 << 12;
 /// What a word does past its kind.
 const W_ACTS: u16 = W_LET | W_IN | W_WITH | W_INHERIT;
+/// A name (no kind of its own) whose call takes a script: the `''…''` strings after it, to the
+/// `;` that ends its item, are shell ([`Ext::sh_mark`]).
+const W_SHELL: u16 = 1 << 13;
+/// `match` and `split`: a `"…"` string after it is a regex.
+const W_REGEX: u16 = 1 << 14;
 
 const WORD_LIST: &[(&[u8], u16)] = &[
     (b"let", KEYWORD | W_LET | W_KEYWORD),
@@ -348,6 +389,22 @@ const WORD_LIST: &[(&[u8], u16)] = &[
     (b"fetchMercurial", SUPPORT),
     (b"fromTOML", SUPPORT),
     (b"placeholder", SUPPORT),
+    // names: what their call's string is (X-147, X-148)
+    (b"writeShellScript", W_SHELL),
+    (b"writeShellScriptBin", W_SHELL),
+    (b"writeShellApplication", W_SHELL),
+    (b"runCommand", W_SHELL),
+    (b"runCommandLocal", W_SHELL),
+    (b"runCommandCC", W_SHELL),
+    (b"runCommandNoCC", W_SHELL),
+    (b"runCommandNoCCLocal", W_SHELL),
+    (b"runCommandWith", W_SHELL),
+    (b"writeBash", W_SHELL),
+    (b"writeBashBin", W_SHELL),
+    (b"writeDash", W_SHELL),
+    (b"writeDashBin", W_SHELL),
+    (b"match", W_REGEX),
+    (b"split", W_REGEX),
 ];
 
 const NW: usize = WORD_LIST.len();
@@ -403,6 +460,75 @@ const F_PATH: u8 = 13;
 /// `...` at a line's end in formals: the next line's blanks before its `}` or `,` are the
 /// ellipsis's, as bat's meta scope over them.
 const F_ELLIPSIS: u8 = 14;
+/// A `''…''` string whose text is shell (X-147).
+const F_SH: u8 = 15;
+
+/// How many of bash's levels the state keeps under a shell string (the bottom ones dropped
+/// past them, as bash's own drops its past 28).
+const SH_HELD: usize = 9;
+
+/// What the scan carries for the languages in strings (X-147, X-148), in the state's spare
+/// bytes: `withs[2]` the shell mark, `withs[3]` the regex string's level, `withs[4]` the
+/// string's indentation, `withs[5..14]` bash's levels; `arg` the regex's state (its low seven
+/// bits), [`EXT_LIVE`], bash's depth (bits 8 to 11), [`EXT_CALL`], the hold above the mark
+/// (bits 13 to 15). All zero but under such a
+/// string or a mark, so the state is as before elsewhere.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Ext {
+    /// One more than the level a shell value starts at: a `''…''` string opened at it or above
+    /// is shell (a binding whose name holds a script: its value, `+`-joined strings and
+    /// `lib.optionalString`'s too), or at it only where [`Ext::sh_call`] (a shell writer's
+    /// script after its name and arguments, a `/* bash */` comment's string); to the `;` at
+    /// that level or a closer below it. bash's state is the value's: its strings one script.
+    /// 0 for none.
+    sh_mark: u8,
+    /// The mark is a call's: a string at its level only, not one in its arguments' sets
+    /// (`runCommand "x" { a = writeText "a" ''…''; } ''…''`).
+    sh_call: bool,
+    /// One more than the level of a binding inside a binding's shell value whose name isn't a
+    /// script's (`postPatch = let f = writeText "f" ''…''; in ''…''`): no string is shell in
+    /// its value, to its `;` or a closer below it. Kept at most 7 levels above the mark.
+    /// 0 for none.
+    sh_hold: u8,
+    /// The level of a `"…"` string that is a regex, 0 for none.
+    re_at: u8,
+    /// The regex's state ([`regex::embedded`]'s), while its string is open.
+    re_st: u8,
+    /// One more than the open script's indentation, which Nix strips from each line of a
+    /// `''…''` string (the spaces before its first line's text; Nix takes the least of every
+    /// line's), 0 before it is known.
+    sh_indent: u8,
+    /// bash's state under the open shell string: its levels held, bottom first, and how many.
+    bash_depth: u8,
+    bash: [u8; SH_HELD],
+}
+
+/// `arg`'s bit for a state that holds an [`Ext`].
+const EXT_LIVE: u16 = 0x80;
+/// `arg`'s bit for [`Ext::sh_call`].
+const EXT_CALL: u16 = 0x1000;
+/// Where `arg` keeps [`Ext::sh_hold`], as levels above the mark (1 to 7).
+const EXT_HOLD_SHIFT: u16 = 13;
+const _: () = assert!(SH_HELD < 16);
+
+/// A line's shell text, as bash reads it ([`Scan::view`]).
+#[derive(Default)]
+struct ShellView {
+    /// The script's text: the line's shell text from where the scan meets it, Nix's escapes
+    /// cooked, a placeholder for an interpolation without shell text in it.
+    cooked: Vec<u8>,
+    /// The runs of `cooked` that are the line's bytes as they are: where each starts in
+    /// `cooked`, in the line, and its length.
+    segs: Vec<(u32, u32, u32)>,
+    /// Open interpolations read from shell text: the level and where `cooked` stood.
+    islands: Vec<(u32, u32)>,
+    /// bash's spans on `cooked`.
+    bash: Vec<Span>,
+}
+
+std::thread_local! {
+    static SHELL: std::cell::RefCell<ShellView> = std::cell::RefCell::new(ShellView::default());
+}
 
 /// Lex `b`, a line of Nix without its `\n`, from `state`.
 #[inline(never)]
@@ -502,6 +628,14 @@ struct Scan<'b, 'c, K: Sink> {
     /// before it has the same answer (one search a run, not one a name in it). Not kept between
     /// lines.
     no_path: usize,
+    /// The languages in strings' state ([`Ext`]), kept between lines.
+    ext: Ext,
+    /// The line's shell text has been read from where the scan met it ([`Scan::view`]): its
+    /// spans wait in [`SHELL`], written up to [`Scan::sh_i`] (and the runs of the line's own
+    /// text to [`Scan::sh_j`]). Not kept between lines.
+    sh_view: bool,
+    sh_i: usize,
+    sh_j: usize,
     k: K,
     out: &'b mut Out<'c>,
 }
@@ -517,12 +651,17 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             bind_at: 0,
             bind_depth: 0,
             no_path: 0,
+            ext: Ext::default(),
+            sh_view: false,
+            sh_i: 0,
+            sh_j: 0,
             k,
             out,
         }
     }
 
-    /// The scan's fields from `state`: the frames in its levels and the first two withs.
+    /// The scan's fields from `state`: the frames in its levels and the first two withs, and
+    /// the languages in strings' where it holds them.
     #[inline(always)]
     fn load(&mut self, state: &State) {
         let mut w = [0u8; 16];
@@ -531,6 +670,29 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         w[15] = state.withs[1];
         self.frames = u128::from_le_bytes(w);
         self.depth = state.depth;
+        if state.arg != 0 {
+            self.load_ext(state);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn load_ext(&mut self, state: &State) {
+        let mut bash = [0; SH_HELD];
+        bash.copy_from_slice(&state.withs[5..5 + SH_HELD]);
+        self.ext = Ext {
+            sh_mark: state.withs[2],
+            re_at: state.withs[3],
+            re_st: (state.arg & 0x7f) as u8,
+            sh_call: state.arg & EXT_CALL != 0,
+            sh_hold: match (state.arg >> EXT_HOLD_SHIFT) as u8 {
+                0 => 0,
+                h => state.withs[2].saturating_add(h),
+            },
+            sh_indent: state.withs[4],
+            bash_depth: (state.arg >> 8 & 15) as u8,
+            bash,
+        };
     }
 
     /// The state the scan's last line left: every field as it is, so a block lexes as its
@@ -543,7 +705,25 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[0] = w[14];
         s.withs[1] = w[15];
         s.depth = self.depth;
+        if self.ext.sh_mark | self.ext.re_at | self.ext.sh_indent | self.ext.bash_depth != 0 {
+            self.save_ext(&mut s);
+        }
         s
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn save_ext(&self, s: &mut State) {
+        let x = &self.ext;
+        s.withs[2] = x.sh_mark;
+        s.withs[3] = x.re_at;
+        s.withs[4] = x.sh_indent;
+        s.withs[5..5 + SH_HELD].copy_from_slice(&x.bash);
+        s.arg = u16::from(x.re_st & 0x7f)
+            | EXT_LIVE
+            | u16::from(x.bash_depth) << 8
+            | if x.sh_call { EXT_CALL } else { 0 }
+            | u16::from(x.sh_hold.saturating_sub(x.sh_mark) & 7) << EXT_HOLD_SHIFT;
     }
 
     /// `b`, a block's next line, lexed on this scan, its sink closed; the scan's line an empty
@@ -600,9 +780,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.start = true;
         self.bind_at = 0;
         self.no_path = 0;
+        self.sh_view = false;
         let p = match self.top() {
+            F_DQ if self.depth == self.ext.re_at => self.dq_regex(0),
             F_DQ => self.dq(0),
             F_IND => self.ind(0),
+            F_SH => self.sh(0),
             F_COMMENT => self.comment_rest(0),
             F_ELLIPSIS => self.ellipsis_rest(),
             _ => 0,
@@ -646,6 +829,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     self.dq(p + 1)
                 }
                 C_SQUOTE if b.get(p + 1) == Some(&b'\'') => {
+                    if !SOL && self.ext.sh_mark != 0 && self.shell_here() {
+                        p = self.sh_open(p);
+                        continue;
+                    }
                     self.put_hot(p, p + 2, IND_BEGIN);
                     self.push(F_IND);
                     self.ind(p + 2)
@@ -670,6 +857,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     if self.top() == F_LIST {
                         self.put_hot(p, p + 1, LIST);
                         self.pop();
+                        self.unmark();
                     }
                     p + 1
                 }
@@ -690,6 +878,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         F_PARENS => {
                             self.put_hot(p, p + 1, PARENS);
                             self.pop();
+                            self.unmark();
                         }
                         F_INHERIT_PARENS => {
                             self.put(p, p + 1, INHERIT_PARENS);
@@ -721,6 +910,110 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         while matches!(self.top(), F_WITH | F_INHERIT | F_LET) {
             self.pop();
         }
+    }
+
+    /// After a closer's pop: a shell mark set above the level now on top dropped (its item
+    /// closed with the bracket).
+    #[inline(always)]
+    fn unmark(&mut self) {
+        if self.ext.sh_mark != 0 {
+            self.unmark_on();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn unmark_on(&mut self) {
+        let d1 = self.depth.saturating_add(1);
+        if self.ext.sh_mark > d1 {
+            self.clear_mark();
+        } else if self.ext.sh_hold > d1 {
+            self.ext.sh_hold = 0;
+        }
+    }
+
+    /// A binding's `;`, a mark set: a hold's or the mark's value ended there.
+    #[cold]
+    #[inline(never)]
+    fn semi_mark(&mut self) {
+        let d1 = self.depth.saturating_add(1);
+        if self.ext.sh_hold == d1 {
+            self.ext.sh_hold = 0;
+        } else if self.ext.sh_mark == d1 {
+            self.clear_mark();
+        }
+    }
+
+    /// A binding of name `w` (its `=` read, a mark set or not): the shell value it starts, or a
+    /// hold on a binding's value it sits in.
+    #[inline(always)]
+    fn bound(&mut self, w: &[u8]) {
+        if self.shell_binding(w) {
+            self.mark_shell(false);
+        } else if self.ext.sh_mark != 0 {
+            self.hold();
+        }
+    }
+
+    /// A binding inside a binding's shell value, its name no script's: a hold on its value.
+    #[cold]
+    #[inline(never)]
+    fn hold(&mut self) {
+        let x = &mut self.ext;
+        // none past the depth counter's saturation, where its level is the mark's: the state keeps
+        // a hold as levels above the mark
+        if !x.sh_call
+            && x.sh_hold == 0
+            && self.depth >= x.sh_mark
+            && self.depth - x.sh_mark < 7
+            && self.depth < u8::MAX
+        {
+            x.sh_hold = self.depth.saturating_add(1);
+        }
+    }
+
+    /// The shell value ended: its mark and bash's state dropped.
+    #[cold]
+    #[inline(never)]
+    fn clear_mark(&mut self) {
+        self.ext.sh_mark = 0;
+        self.ext.sh_call = false;
+        self.ext.sh_hold = 0;
+        self.ext.bash_depth = 0;
+        self.ext.bash = [0; SH_HELD];
+    }
+
+    /// A shell mark at the level on top, a call's or a binding's value's, unless one is set (a
+    /// binding's takes a call's place: `writeShellApplication { text = ''…''; }`); bash's
+    /// state fresh.
+    #[inline(always)]
+    fn mark_shell(&mut self, call: bool) {
+        if self.ext.sh_mark == 0 || (self.ext.sh_call && !call) {
+            self.ext.sh_mark = self.depth.saturating_add(1);
+            self.ext.sh_call = call;
+            self.ext.sh_hold = 0;
+            self.ext.bash_depth = 0;
+            self.ext.bash = [0; SH_HELD];
+        }
+    }
+
+    /// Whether a `''` opened here is shell, a mark set: at the mark's level or above (a call's
+    /// at it), or in a shell string's interpolation (spliced into its script).
+    #[inline(always)]
+    fn shell_here(&self) -> bool {
+        let m = self.ext.sh_mark - 1;
+        if self.ext.sh_call {
+            self.depth == m || self.has_sh()
+        } else {
+            self.depth >= m && self.ext.sh_hold == 0
+        }
+    }
+
+    /// Whether a binding of name `w` here holds the shell value's script: a script's name
+    /// ([`shell_name`]), or `text` in a shell writer's set (`writeShellApplication`'s).
+    #[inline(always)]
+    fn shell_binding(&self, w: &[u8]) -> bool {
+        shell_name(w) || (self.ext.sh_call && self.depth == self.ext.sh_mark && w == b"text")
     }
 
     /// A name at `p`: a path or a URI it starts, a word, an attribute's name, a parameter, or a
@@ -766,7 +1059,31 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             _ => NAME,
         };
         self.put_hot(p, e, kind);
+        if !SOL && w != 0 && kind == NAME {
+            return self.call(e, w);
+        }
         e
+    }
+
+    /// After a name whose call's string is a language's (`b[..e]`, [`W_SHELL`], [`W_REGEX`]):
+    /// a shell mark set, or a regex's `"…"` string opened.
+    #[cold]
+    #[inline(never)]
+    fn call(&mut self, e: usize, w: u16) -> usize {
+        if w & W_SHELL != 0 {
+            self.mark_shell(true);
+            return e;
+        }
+        let b = self.b;
+        let q = blanks(b, e);
+        if b.get(q) != Some(&b'"') {
+            return e;
+        }
+        self.put(q, q + 1, DQ_BEGIN);
+        self.push(F_DQ);
+        self.ext.re_at = self.depth;
+        self.ext.re_st = 0;
+        self.dq_regex(q + 1)
     }
 
     /// A keyword's frame: `let`'s pushed, `in`'s popped, `with`'s, `assert`'s and `inherit`'s
@@ -779,6 +1096,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         } else if w & W_IN != 0 {
             if self.top() == F_LET {
                 self.pop();
+                self.unmark();
             }
         } else if w & W_WITH != 0 {
             self.push(F_WITH);
@@ -794,11 +1112,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let b = self.b;
         let q = blanks(b, e);
         // a formal is a name; at a line's end, in formals or a brace's first
-        let formal = w == 0 && top != F_LET;
+        let formal = w & 0xff == 0 && top != F_LET;
         match b.get(q) {
             Some(b'=') if b.get(q + 1) != Some(&b'=') => {
                 self.put_hot(p, e, ATTR);
                 self.put_hot(q, q + 1, BIND);
+                if !SOL {
+                    self.bound(&b[p..e]);
+                }
                 Some(q + 1)
             }
             Some(b'.') => self.binding(p, e),
@@ -824,9 +1145,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let (eq, other) = attr_path(b, e)?;
         let to = if other == 0 { eq } else { other };
         let mut s = p;
+        let mut last = p..e;
         while s < to {
             let t = name_end(b, s);
             self.put(s, t, ATTR);
+            last = s..t;
             s = blanks(b, t);
             if s < to {
                 // the dot
@@ -835,6 +1158,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         if other == 0 {
             self.put_hot(eq, eq + 1, BIND);
+            if !SOL {
+                self.bound(&b[last]);
+            }
             return Some(eq + 1);
         }
         self.bind_at = eq;
@@ -1000,6 +1326,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             let e = name_end(b, q);
             let kind = if after_builtins(b, p) { SUPPORT } else { NAME };
             self.put_hot(q, e, kind);
+            // a call's name whose string is a language's: `match`, `split`, a shell writer's
+            // (the first byte and length first: a lookup only where one can be)
+            if !SOL && matches!((b[q], e - q), (b'm' | b's', 5) | (b'w' | b'r', 9..)) {
+                let w = WORDS.value(&b[q..e], &INFO);
+                if w & (W_SHELL | W_REGEX) != 0 {
+                    return self.call(e, w);
+                }
+            }
             return e;
         }
         q
@@ -1149,6 +1483,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             _ => {
                 self.put_hot(p, p + 1, TERMINATOR);
                 self.start = true;
+                // a binding's end: its shell mark's
+                if self.ext.sh_mark != 0 {
+                    self.semi_mark();
+                }
             }
         }
         p + 1
@@ -1165,8 +1503,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 self.put_hot(p, p + 1, INTERP_END);
                 self.pop();
                 return match self.top() {
+                    F_DQ if self.depth == self.ext.re_at => self.dq_regex(p + 1),
                     F_DQ => self.dq(p + 1),
                     F_IND => self.ind(p + 1),
+                    F_SH => self.sh(p + 1),
                     F_PATH => self.path_rest(p + 1),
                     _ => p + 1,
                 };
@@ -1181,10 +1521,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 };
                 self.put_hot(p, p + 1, kind);
                 self.pop();
+                self.unmark();
             }
             F_FORMALS => {
                 self.put_hot(p, p + 1, FORMALS_END);
                 self.pop();
+                self.unmark();
             }
             _ => {}
         }
@@ -1292,6 +1634,261 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
+    /// Whether a shell string is open, in the frames kept.
+    #[inline(always)]
+    fn has_sh(&self) -> bool {
+        // a nibble of four ones, among the levels open
+        let f = self.frames;
+        let ones = f & f >> 1 & f >> 2 & f >> 3 & 0x1111_1111_1111_1111_1111_1111_1111_1111;
+        let n = u32::from(self.depth.min(32));
+        let open = if n == 32 {
+            u128::MAX
+        } else {
+            (1u128 << (4 * n)) - 1
+        };
+        ones & open != 0
+    }
+
+    /// `''` at `p` opening a shell string: the shell value's script going on (bash's state the
+    /// value's), or text spliced into the open string's (a string in its interpolation).
+    #[cold]
+    #[inline(never)]
+    fn sh_open(&mut self, p: usize) -> usize {
+        self.put(p, p + 2, IND_BEGIN);
+        self.push(F_SH);
+        self.sh(p + 2)
+    }
+
+    /// The outermost shell string closed: its indentation forgotten, the line's view to be
+    /// read again where another opens on it (bash's state goes on, the value's).
+    #[inline(always)]
+    fn end_string(&mut self) {
+        self.ext.sh_indent = 0;
+        self.sh_view = false;
+    }
+
+    /// A shell string's text from `p`: to its close, the line's end, or an interpolation's
+    /// opener, as [`Scan::ind`] reads it, the text bash's spans ([`Scan::view`]).
+    #[cold]
+    #[inline(never)]
+    fn sh(&mut self, mut p: usize) -> usize {
+        if !self.sh_view {
+            self.view(p);
+        }
+        let b = self.b;
+        let n = b.len();
+        let mut s = p;
+        loop {
+            p = find_any(b, p, *b"'$");
+            if p >= n {
+                self.shell_text(s, n);
+                return n;
+            }
+            if b[p] == b'\'' {
+                if b.get(p + 1) != Some(&b'\'') {
+                    p += 1;
+                    continue;
+                }
+                let e = match b.get(p + 2) {
+                    Some(b'$' | b'\'') => p + 3,
+                    Some(b'\\') => (p + 3 + b.get(p + 3).map_or(0, |&c| char_len(c))).min(n),
+                    _ => {
+                        self.shell_text(s, p);
+                        self.put(p, p + 2, IND_END);
+                        self.pop();
+                        if !self.has_sh() {
+                            self.end_string();
+                        }
+                        return p + 2;
+                    }
+                };
+                self.shell_text(s, p);
+                self.put(p, e, IND_ESCAPE);
+                s = e;
+                p = e;
+                continue;
+            }
+            match b.get(p + 1) {
+                Some(b'{') => {
+                    self.shell_text(s, p);
+                    return self.interp(p);
+                }
+                Some(b'$') => p += 2,
+                _ => p += 1,
+            }
+        }
+    }
+
+    /// The line's shell text `b[s..e]`: bash's spans there ([`Scan::view`]'s), laid on the
+    /// line's bytes as they're written (each cut at the runs of the script's text that are the
+    /// line's own, what covers none, a cooked escape or a placeholder, passed), clipped to it.
+    #[inline(never)]
+    fn shell_text(&mut self, s: usize, e: usize) {
+        if s >= e {
+            return;
+        }
+        SHELL.with_borrow(|v| {
+            let (sp, sg) = (&v.bash, &v.segs);
+            let (mut i, mut j) = (self.sh_i, self.sh_j);
+            while i < sp.len() && j < sg.len() {
+                let (cs, ce) = (sp[i].start, sp[i].end);
+                let (c0, r0, len) = sg[j];
+                let c1 = c0 + len;
+                if c1 <= cs {
+                    j += 1;
+                    continue;
+                }
+                if ce <= c0 {
+                    i += 1;
+                    continue;
+                }
+                let (ra, rz) = (
+                    (r0 + cs.max(c0) - c0) as usize,
+                    (r0 + ce.min(c1) - c0) as usize,
+                );
+                if ra >= e {
+                    break;
+                }
+                if rz > s {
+                    self.put(ra.max(s), rz.min(e), SH_BASE + sp[i].kind);
+                }
+                if rz > e {
+                    break;
+                }
+                if c1 >= ce {
+                    i += 1;
+                } else {
+                    j += 1;
+                }
+            }
+            (self.sh_i, self.sh_j) = (i, j);
+        });
+    }
+
+    /// The line's shell text from `p`, where the scan first meets it (a shell string's text,
+    /// its frame on top), read as bash reads it: to the line's end or the script's close, its
+    /// frames followed as the scan follows them (an interpolation's code, a string in it, one
+    /// spliced in), Nix's escapes cooked, an interpolation without shell text in it a word
+    /// (`x`). bash's spans on it wait for the scan's text
+    /// ([`Scan::shell_text`]); bash's state moves to the line's end. A reading of the frames
+    /// apart from the scan's, so where the two part only the colors can be wrong: the scan
+    /// writes bash's spans clipped to its own text.
+    #[cold]
+    #[inline(never)]
+    fn view(&mut self, p: usize) {
+        self.sh_view = true;
+        self.sh_i = 0;
+        self.sh_j = 0;
+        let b = self.b;
+        SHELL.with_borrow_mut(|v| {
+            v.cooked.clear();
+            v.segs.clear();
+            v.islands.clear();
+            v.bash.clear();
+            let known = usize::from(self.depth.min(32));
+            // the levels from the outermost shell string open up to the top
+            let Some(lvl) = (0..known)
+                .rev()
+                .find(|&i| (self.frames >> (4 * i)) & 15 == u128::from(F_SH))
+            else {
+                return;
+            };
+            // a line of the script's own: its indentation stripped, as Nix strips it (the
+            // spaces before the first line's text, at most the line's own)
+            // (a string spliced in: every space, its own indentation unknown)
+            let mut from = p;
+            if p == 0 {
+                let sp = b.iter().take_while(|&&c| c == b' ').count();
+                from = sp;
+                if lvl == 0 {
+                    if self.ext.sh_indent == 0 && sp < b.len() {
+                        self.ext.sh_indent = (sp + 1).min(255) as u8;
+                    }
+                    from = sp.min(usize::from(self.ext.sh_indent.saturating_sub(1)));
+                }
+            }
+            read_shell(b, from, self.frames, lvl + 1, v);
+            let mut st = State {
+                depth: self.ext.bash_depth,
+                ..State::default()
+            };
+            for i in 0..usize::from(self.ext.bash_depth) {
+                st.set_level(i, self.ext.bash[i]);
+            }
+            crate::bash::line_spans(&v.cooked, &mut st, &mut Out::new(&mut v.bash));
+            // bash's levels, its bottom ones dropped past those kept
+            let held = st.held();
+            let from = held.saturating_sub(SH_HELD);
+            for i in 0..SH_HELD {
+                self.ext.bash[i] = if from + i < held {
+                    st.level(from + i)
+                } else {
+                    0
+                };
+            }
+            self.ext.bash_depth = (held - from) as u8;
+        });
+    }
+
+    /// A regex's text in a `"…"` string from `p` (its frame on top, [`Ext::re_at`]), on
+    /// [`crate::regex`]'s ERE: the string's end, its escapes and interpolations Nix's, the rest
+    /// the regex's, its state kept across them and the string's lines.
+    #[cold]
+    #[inline(never)]
+    fn dq_regex(&mut self, mut p: usize) -> usize {
+        static YIELDS: [bool; 256] = regex::table(b"\"\\$");
+        let b = self.b;
+        let n = b.len();
+        let host = regex::Embed {
+            dialect: regex::Dialect::Ere,
+            cooked: true,
+            yields: &YIELDS,
+            stop: |b, p, _| b[p] == b'"' || interp_in_text(b, p),
+            arg: 0,
+            escape: |b, p| (p + 1 + b.get(p + 1).map_or(0, |&c| char_len(c))).min(b.len()),
+            top_only: false,
+            continues: true,
+            base: RE_BASE,
+            text: DQ,
+        };
+        let mut re = self.ext.re_st;
+        while p < n {
+            match b[p] {
+                b'"' => {
+                    self.put(p, p + 1, DQ_END);
+                    self.pop();
+                    self.ext.re_at = 0;
+                    self.ext.re_st = 0;
+                    return p + 1;
+                }
+                b'\\' if b.get(p + 1) != Some(&b'\\') => {
+                    let e = (p + 1 + b.get(p + 1).map_or(0, |&c| char_len(c))).min(n);
+                    self.put(p, e, DQ_ESCAPE);
+                    p = e;
+                    continue;
+                }
+                b'$' if interp_in_text(b, p) => {
+                    self.ext.re_st = re;
+                    return self.interp(p);
+                }
+                _ => {}
+            }
+            self.k.close(self.out);
+            let mut at = p;
+            let r = regex::embedded(b, p, re, &host, &mut at, self.out);
+            self.k.reopen(self.out, 16);
+            match r {
+                Some((e, st)) => {
+                    re = st;
+                    p = e.max(p + 1);
+                }
+                None => break,
+            }
+        }
+        self.ext.re_st = re;
+        n
+    }
+
     /// A `#` comment at `p`.
     #[inline(always)]
     fn line_comment(&mut self, p: usize) -> usize {
@@ -1331,7 +1928,18 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn block_comment(&mut self, p: usize) -> usize {
         self.push(F_COMMENT);
         self.put(p, p + 2, BLOCK_COMMENT);
-        self.comment_rest(p + 2)
+        let r = self.comment_rest(p + 2);
+        // `/* bash */ ''…''`: the string is shell
+        let b = self.b;
+        if !SOL
+            && r >= p + 4
+            && b[r - 2..r] == *b"*/"
+            && matches!(b[p + 2..r - 2].trim_ascii(), b"bash" | b"sh")
+            && b[blanks(b, r)..].starts_with(b"''")
+        {
+            self.mark_shell(true);
+        }
+        r
     }
 
     /// An open `/* */` comment from `p`: to its `*/`, or the line's end.
@@ -1389,6 +1997,294 @@ fn attr_path(b: &[u8], mut r: usize) -> Option<(usize, usize)> {
         }
         if r >= n {
             return None;
+        }
+    }
+}
+
+/// Whether a binding of this name holds a script (X-147): a derivation's phase or hook
+/// (`installPhase`, `postPatch`, `preConfigure`, `shellHook`), NixOS's `script` (and
+/// `preStart`, `postStop`), and their kin (`buildCommand`, `unpackCmd`, `setSourceRoot`,
+/// `extraInstallCommands`, devenv's `enterShell` and `enterTest`). tree-sitter-nix's injections
+/// read `*Phase`, `pre*`, `post*` and `script` the same.
+#[inline(always)]
+fn shell_name(w: &[u8]) -> bool {
+    let n = w.len();
+    if n < 5 {
+        return false;
+    }
+    // the last byte first: most names end in neither
+    match w[n - 1] {
+        b'e' if w.ends_with(b"Phase") && n > 5 => return true,
+        b'k' if w.ends_with(b"Hook") => return true,
+        _ => {}
+    }
+    match w[0] {
+        b'p' => {
+            (w[1] == b'r' && w[2] == b'e' && w[3].is_ascii_uppercase())
+                || (w[1] == b'o' && w[2] == b's' && w[3] == b't' && w[4].is_ascii_uppercase())
+        }
+        b's' => matches!(w, b"script" | b"setSourceRoot"),
+        b'b' => w == b"buildCommand",
+        b'u' => w == b"unpackCmd",
+        b'e' => matches!(w, b"extraInstallCommands" | b"enterShell" | b"enterTest"),
+        _ => false,
+    }
+}
+
+/// Whether `$` at `p` in a string's text opens an interpolation: `${`, after an even run of
+/// `$`s (`$$` is two dollars, so `$${` is text).
+fn interp_in_text(b: &[u8], p: usize) -> bool {
+    if b[p] != b'$' || b.get(p + 1) != Some(&b'{') {
+        return false;
+    }
+    let mut i = p;
+    while i > 0 && b[i - 1] == b'$' {
+        i -= 1;
+    }
+    (p - i).is_multiple_of(2)
+}
+
+/// [`Scan::view`]'s reading of the line's shell text from `q`, the frames `f` above the
+/// outermost shell string's (`rel` levels, it among them) followed as the scan follows them,
+/// into `v`'s cooked text and its runs of the line's bytes. Ends at the line's end, the
+/// outermost string's close, a `#` comment in code, or past the levels the scan keeps.
+fn read_shell(b: &[u8], mut q: usize, mut f: u128, mut rel: usize, v: &mut ShellView) {
+    let n = b.len();
+    let seg = |v: &mut ShellView, s: usize, e: usize| {
+        if e > s {
+            v.segs
+                .push((v.cooked.len() as u32, s as u32, (e - s) as u32));
+            v.cooked.extend_from_slice(&b[s..e]);
+        }
+    };
+    macro_rules! push {
+        ($frame:expr) => {{
+            if rel >= 32 {
+                return;
+            }
+            f = f << 4 | u128::from($frame);
+            rel += 1;
+        }};
+    }
+    macro_rules! pop {
+        () => {{
+            f >>= 4;
+            rel -= 1;
+            if rel == 0 {
+                return;
+            }
+        }};
+    }
+    let top = |f: u128| (f & 15) as u8;
+    while q < n {
+        match top(f) {
+            F_SH => {
+                let mut s = q;
+                loop {
+                    let r = find_any(b, q, *b"'$");
+                    if r >= n {
+                        seg(v, s, n);
+                        return;
+                    }
+                    if b[r] == b'\'' {
+                        if b.get(r + 1) != Some(&b'\'') {
+                            q = r + 1;
+                            continue;
+                        }
+                        seg(v, s, r);
+                        match b.get(r + 2) {
+                            Some(b'$') => {
+                                v.cooked.push(b'$');
+                                q = r + 3;
+                            }
+                            Some(b'\'') => {
+                                v.cooked.extend_from_slice(b"''");
+                                q = r + 3;
+                            }
+                            Some(b'\\') => {
+                                let c = b.get(r + 3).copied();
+                                let e = (r + 3 + c.map_or(0, char_len)).min(n);
+                                match c {
+                                    Some(b'n' | b'r') => v.cooked.push(b' '),
+                                    Some(b't') => v.cooked.push(b'\t'),
+                                    _ => v.cooked.extend_from_slice(&b[r + 3..e]),
+                                }
+                                q = e;
+                            }
+                            _ => {
+                                q = r + 2;
+                                pop!();
+                                break;
+                            }
+                        }
+                        s = q;
+                        continue;
+                    }
+                    match b.get(r + 1) {
+                        Some(b'{') => {
+                            seg(v, s, r);
+                            push!(F_INTERP);
+                            v.islands.push((rel as u32, v.cooked.len() as u32));
+                            q = r + 2;
+                            break;
+                        }
+                        Some(b'$') => q = r + 2,
+                        _ => q = r + 1,
+                    }
+                }
+            }
+            F_DQ => {
+                let r = find_any(b, q, *b"\"\\$");
+                if r >= n {
+                    return;
+                }
+                q = match b[r] {
+                    b'"' => {
+                        pop!();
+                        r + 1
+                    }
+                    b'\\' => (r + 1 + b.get(r + 1).map_or(0, |&c| char_len(c))).min(n),
+                    _ => match b.get(r + 1) {
+                        Some(b'{') => {
+                            push!(F_INTERP);
+                            r + 2
+                        }
+                        Some(b'$') => r + 2,
+                        _ => r + 1,
+                    },
+                };
+            }
+            F_IND => {
+                let r = find_any(b, q, *b"'$");
+                if r >= n {
+                    return;
+                }
+                q = if b[r] == b'\'' {
+                    match (b.get(r + 1), b.get(r + 2)) {
+                        (Some(b'\''), Some(b'$' | b'\'')) => r + 3,
+                        (Some(b'\''), Some(b'\\')) => {
+                            (r + 3 + b.get(r + 3).map_or(0, |&c| char_len(c))).min(n)
+                        }
+                        (Some(b'\''), _) => {
+                            pop!();
+                            r + 2
+                        }
+                        _ => r + 1,
+                    }
+                } else {
+                    match b.get(r + 1) {
+                        Some(b'{') => {
+                            push!(F_INTERP);
+                            r + 2
+                        }
+                        Some(b'$') => r + 2,
+                        _ => r + 1,
+                    }
+                };
+            }
+            F_COMMENT => {
+                let Some(r) = b[q..].windows(2).position(|w| w == b"*/") else {
+                    return;
+                };
+                q += r + 2;
+                pop!();
+            }
+            F_PATH => {
+                // a path's rest after its interpolation, as `path_rest` reads it
+                while q < n && (PATH_BYTE[usize::from(b[q])] || b[q] == b'/') {
+                    q += 1;
+                }
+                if interp_at(b, q) {
+                    push!(F_INTERP);
+                    q += 2;
+                } else {
+                    pop!();
+                }
+            }
+            _ => {
+                let c = b[q];
+                q = match CLASS[usize::from(c)] {
+                    C_NAME => name_end(b, q),
+                    C_DQUOTE => {
+                        push!(F_DQ);
+                        q + 1
+                    }
+                    C_SQUOTE if b.get(q + 1) == Some(&b'\'') => {
+                        // a string in the script's interpolation: its text spliced in
+                        push!(F_SH);
+                        q + 2
+                    }
+                    C_HASH => return,
+                    C_SLASH if b.get(q + 1) == Some(&b'*') => {
+                        push!(F_COMMENT);
+                        q + 2
+                    }
+                    C_LBRACE => {
+                        push!(F_BRACE);
+                        q + 1
+                    }
+                    C_LPAREN => {
+                        push!(F_PARENS);
+                        q + 1
+                    }
+                    C_LBRACKET => {
+                        push!(F_LIST);
+                        q + 1
+                    }
+                    C_RBRACE => {
+                        while matches!(top(f), F_WITH | F_INHERIT | F_LET) {
+                            pop!();
+                        }
+                        match top(f) {
+                            F_INTERP => {
+                                // an interpolation without shell text in it: a word to bash
+                                if let Some(&(l, c)) = v.islands.last()
+                                    && l as usize == rel
+                                {
+                                    v.islands.pop();
+                                    if v.cooked.len() == c as usize {
+                                        v.cooked.push(b'x');
+                                    }
+                                }
+                                pop!();
+                            }
+                            F_BRACE | F_FORMALS => pop!(),
+                            _ => {}
+                        }
+                        q + 1
+                    }
+                    C_RPAREN => {
+                        while matches!(top(f), F_WITH | F_INHERIT | F_LET) {
+                            pop!();
+                        }
+                        if matches!(top(f), F_PARENS | F_INHERIT_PARENS) {
+                            pop!();
+                        }
+                        q + 1
+                    }
+                    C_RBRACKET => {
+                        while matches!(top(f), F_WITH | F_INHERIT | F_LET) {
+                            pop!();
+                        }
+                        if top(f) == F_LIST {
+                            pop!();
+                        }
+                        q + 1
+                    }
+                    C_SEMI => {
+                        if matches!(top(f), F_WITH | F_INHERIT) {
+                            pop!();
+                        }
+                        q + 1
+                    }
+                    C_DOLLAR if b.get(q + 1) == Some(&b'{') => {
+                        push!(F_INTERP);
+                        q + 2
+                    }
+                    C_WIDE => q + char_len(c),
+                    _ => q + 1,
+                };
+            }
         }
     }
 }
