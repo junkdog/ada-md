@@ -39,6 +39,7 @@ use crate::{Out, State};
 
 mod makefile;
 
+pub(crate) use makefile::RunLine as MakeRunLine;
 pub use makefile::{line as make_line, scopes as make_scopes};
 
 macro_rules! kinds {

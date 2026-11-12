@@ -1166,9 +1166,11 @@ mod tests {
         );
     }
 
-    /// bash's and Makefile's runs written by their scan (X-075) are those their spans give:
-    /// bash's through here-documents, `$(…)`, `${…}`, arithmetic, tests and strings over lines;
-    /// Makefile's through rules, variables, conditionals, `define` and recipes in bash.
+    /// bash's and Makefile's runs written by their scan (X-075, X-095) are those their spans
+    /// give: bash's through here-documents, `$(…)`, `${…}`, arithmetic, tests and strings over
+    /// lines; Makefile's through rules, variables, conditionals, `define` and its shell regions
+    /// (recipes, `$(shell …)` nested and open over lines, `!=`, `bash -c`, tokens standing in the
+    /// shell's text, a recipe's comment over tokens).
     #[test]
     fn bash_and_makefile_runs_are_their_spans() {
         runs_are_spans(
@@ -1188,6 +1190,9 @@ mod tests {
                 "ifeq ($(OS),Windows_NT)\n  EXE := .exe\nelse\n  EXE :=\nendif\n",
                 "define tmpl\n$(1): ; @echo $(1)\nendef\n%.o: %.c\n\t@if [ -f $< ]; then \\\n\t  cc -c $<; fi\n",
                 "export A = 1\nvpath %.h inc\n-include deps.mk\n",
+                "V := $(shell git describe $(shell echo --tags) 2>/dev/null)\nW != ls -1 | wc -l\n",
+                "U := $(shell printf '%s' \\\n  \"x y\")\nx:\n\t$(Q)echo $(ENV) CC=gcc $$f; bash -c 'a $$1' # $(X) c\n",
+                "\t$(MAKE) -C sub $(build)=dir $(call f,$(shell \\\n\t  date)) $$$$ ok\n",
             ),
         );
     }

@@ -42,9 +42,15 @@
 //! Between lines the state holds the frames, a byte each, their count in `arg`, and above them
 //! bash's state for the topmost shell region open past the line (a recipe's `\`, an open
 //! `$(shell …)`).
+//!
+//! **The scan writes to a sink** (X-095, X-068's): the span API's spans ([`Push`]), or ada's
+//! runs by theme rule ([`Runs`], [`RunLine`], a line inline in its block's loop as X-050's run
+//! scanners are). A shell region's spans are laid on the spans' vector, make's tokens' among
+//! them, and handed to the sink once laid ([`Scan::shell`]).
 
 use std::mem::MaybeUninit;
 
+use crate::emit::{Push, Runs, Sink};
 use crate::prim::{char_len, find_in};
 use crate::stack::HELD;
 use crate::{Out, State};
@@ -527,7 +533,7 @@ struct Frame {
 /// The frames a scan holds.
 const MAX: usize = 128;
 
-struct Scan<'a, 'o, 'p> {
+struct Scan<'a, 'o, 'p, K: Sink> {
     b: &'a [u8],
     n: usize,
     /// The frames below `depth` are written; those above are not.
@@ -536,6 +542,12 @@ struct Scan<'a, 'o, 'p> {
     /// Where the spans so far end.
     emitted: usize,
     out: &'o mut Out<'p>,
+    /// The sink, by reference: a line's scan is made afresh each line, and a run sink held by
+    /// value, copied in and out each line, ran Makefile 5% slower in ada (X-095).
+    k: &'o mut K,
+    /// In a shell region ([`Scan::shell`]): make's writes go to `out`, where the region's spans
+    /// are laid, not to the sink.
+    region: bool,
     /// The `\` a line continuation is at (`\` and spaces to the line's end), or `usize::MAX`.
     cont: usize,
     parens: Option<Parens>,
@@ -667,6 +679,24 @@ impl Cuts {
 /// Lex `b`, a line of a Makefile without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    line_on(b, state, out, &mut Push);
+}
+
+/// [`line`]'s runs by theme rule written to `k` (X-095), inline in a block's loop,
+/// [`crate::lex_runs`]' line too (X-050). A block isn't carried: a line's state round trip is ~6
+/// of its ~870 instructions in ada.
+pub(crate) struct RunLine;
+
+impl crate::LineScan for RunLine {
+    #[inline(always)]
+    fn scan(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+        line_on(b, state, out, k);
+    }
+}
+
+/// [`line`] on a sink.
+#[inline(always)]
+fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut Out, sink: &mut K) {
     let n = b.len();
     // the line continuation: a `\` then spaces to the line's end
     let mut k = n;
@@ -685,6 +715,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         depth: 1,
         emitted: 0,
         out,
+        k: sink,
+        region: false,
         cont,
         parens: None,
         var_memo: (usize::MAX, None),
@@ -708,7 +740,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 /// frames as they are.
 type Step = Result<usize, ()>;
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     // ---- the line
 
     /// The byte at `i`: past the line's end a `\n` (syntect's line ends in one), then 0.
@@ -863,7 +895,11 @@ impl Scan<'_, '_, '_> {
             } else {
                 kind
             };
-            self.out.push_merged(s, e, kind);
+            if self.region {
+                self.out.push_merged(s, e, kind);
+            } else {
+                self.k.merge(&mut self.out, s, e, kind);
+            }
         }
         if e > self.emitted {
             self.emitted = e;
@@ -2055,6 +2091,12 @@ impl Scan<'_, '_, '_> {
             self.keep_shell(d, st);
             return Err(());
         }
+        // the region's spans are laid on `out`, make's tokens' among them, and handed to the sink
+        // once laid; a region in one of its tokens (`$(shell $(shell …))`) lays onto the outer's
+        let outer = std::mem::replace(&mut self.region, true);
+        if !outer {
+            self.k.close(self.out);
+        }
         // the make tokens, and where the region's text on the line ends; the tokens' text that
         // no make scope takes is bash's at the token's byte, so the region's kind is out of it
         let frame = *self.top();
@@ -2212,6 +2254,10 @@ impl Scan<'_, '_, '_> {
         }
         self.lay(p, end, region, &cuts, (mark, own_at, own_end), comment);
         self.emitted = end;
+        self.region = outer;
+        if !outer {
+            self.k.reopen(self.out, 0);
+        }
         match stop {
             Stop::At(t) => {
                 self.pop();
