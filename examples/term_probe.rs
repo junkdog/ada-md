@@ -1,5 +1,6 @@
 //! CS-2's terminal survey (the clean-slate plan): in the terminal it runs in, the raw replies
-//! to ada's own probe (`probe::QUERY`), what `probe::Replies` reads from them, and what ada
+//! to ada's own probe (`images::query`: kitty's shared memory query where ada asks it, then
+//! `probe::QUERY`), what `probe::Replies` reads from them, and what ada
 //! decides from that (`images::plan` and `images::decide`, as the TUI does). The report goes to
 //! a file, since the terminal's window may close when it ends.
 //!
@@ -19,7 +20,8 @@ use std::time::{Duration, Instant};
 
 use ada::geom::Size;
 use ada::images::{self, ImageMode};
-use ada::probe::{QUERY, Replies};
+use ada::kitty;
+use ada::probe::Replies;
 use crossterm::terminal::{self, disable_raw_mode, enable_raw_mode};
 
 /// How long the probe waits for the `CSI 5n` reply, as CS-2 plans it.
@@ -85,8 +87,9 @@ fn main() {
         }
     });
 
+    let query = images::query();
     let t = Instant::now();
-    tty.write_all(QUERY)
+    tty.write_all(&query)
         .and_then(|()| tty.flush())
         .expect("query");
     let mut replies = Replies::new();
@@ -103,9 +106,10 @@ fn main() {
         replies.feed(&chunk, &mut keys);
     }
     let elapsed = t.elapsed();
+    kitty::shm_query_done();
     disable_raw_mode().expect("cooked mode");
 
-    writeln!(report, "query {}", escaped(QUERY)).unwrap();
+    writeln!(report, "query {}", escaped(&query)).unwrap();
     writeln!(report, "raw {}", escaped(&raw)).unwrap();
     writeln!(report, "reads (µs, bytes) {reads:?}").unwrap();
     let done = replies.done();
@@ -119,10 +123,11 @@ fn main() {
         let g = images::decide(plan, &found, env, Size::new(w, h), images::winsize_cell());
         writeln!(
             report,
-            "ada {plan:?}: {} at {}x{}",
+            "ada {plan:?}: {} at {}x{}, kitty images {}",
             g.proto.name(),
             g.cell.width,
-            g.cell.height
+            g.cell.height,
+            g.wire.name()
         )
         .unwrap();
     }

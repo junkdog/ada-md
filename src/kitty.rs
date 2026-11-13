@@ -87,6 +87,85 @@ pub fn transmit(
     }
 }
 
+/// Send image `id`, `image`'s pixels, through a POSIX shared memory object (`t=s`), which the
+/// terminal reads and unlinks: the escape carries only the object's name. The TUI's way when the
+/// probe found the terminal can read one (it shares the machine). Each call makes a new object,
+/// since the terminal unlinks each it reads. On a photo in kitty, 3.4 ms from the write to the
+/// image stored, against 21.5 for the PNG and 0.25 ms against 4.0 to make it (IMG-002).
+#[cfg(target_os = "linux")]
+pub fn transmit_shm(
+    out: &mut String,
+    id: u32,
+    image: &DynamicImage,
+    cols: u16,
+    rows: u16,
+) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static OBJECTS: AtomicU32 = AtomicU32::new(0);
+    let name = format!(
+        "/ada-{}-{}",
+        std::process::id(),
+        OBJECTS.fetch_add(1, Ordering::Relaxed)
+    );
+    shm_object(&name, image.as_bytes())?;
+    let f = if image.color().has_alpha() { 32 } else { 24 };
+    let (w, h) = (image.width(), image.height());
+    let mut b64 = Vec::with_capacity(name.len() / 3 * 4 + 4);
+    base64(name.as_bytes(), &mut b64);
+    let b64 = String::from_utf8(b64).map_err(io::Error::other)?;
+    out.push_str(&format!(
+        "\x1b_Ga=T,U=1,q=2,i={id},c={cols},r={rows},f={f},s={w},v={h},t=s;{b64}\x1b\\"
+    ));
+    Ok(())
+}
+
+/// A shared memory object `name` holding `bytes`, readable by the user alone. One left from an
+/// earlier process of the same pid is replaced.
+#[cfg(target_os = "linux")]
+fn shm_object(name: &str, bytes: &[u8]) -> io::Result<()> {
+    use rustix::fs::Mode;
+    use rustix::shm::{self, OFlags};
+    let flags = OFlags::CREATE | OFlags::TRUNC | OFlags::RDWR;
+    let fd = shm::open(name, flags, Mode::RUSR | Mode::WUSR)?;
+    if let Err(e) = File::from(fd).write_all(bytes) {
+        let _ = shm::unlink(name);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// The shared memory query's image id: the probe's kitty query is 31.
+pub const SHM_QUERY_ID: &str = "32";
+
+/// Kitty's graphics query (id 32) with its 1×1 pixel in a shared memory object: an OK says the
+/// terminal reads them, so it shares this machine. `None` where ada makes none, or when the object
+/// can't be made. [`shm_query_done`] unlinks the object once the replies are in, since a terminal
+/// that can't reach it leaves it.
+pub fn shm_query() -> Option<Vec<u8>> {
+    #[cfg(target_os = "linux")]
+    {
+        let name = shm_query_name();
+        shm_object(&name, &[0; 3]).ok()?;
+        let mut q = b"\x1b_Gi=32,s=1,v=1,a=q,t=s,f=24;".to_vec();
+        base64(name.as_bytes(), &mut q);
+        q.extend_from_slice(b"\x1b\\");
+        Some(q)
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+/// Unlink [`shm_query`]'s object, if the terminal didn't.
+pub fn shm_query_done() {
+    #[cfg(target_os = "linux")]
+    let _ = rustix::shm::unlink(shm_query_name());
+}
+
+#[cfg(target_os = "linux")]
+fn shm_query_name() -> String {
+    format!("/ada-{}-query", std::process::id())
+}
+
 /// `image`, RGB or RGBA, as a PNG streamed to `w`. png's fast level (fdeflate) behind the Paeth
 /// filter: 3–4× faster than zlib's fast level on the pixels and, on photos, smaller (experiment
 /// 24). An image whose every pixel is gray goes as gray: fdeflate, unlike zlib, doesn't fold
@@ -555,6 +634,23 @@ static DIACRITICS: [char; 297] = [
 mod tests {
 
     use super::*;
+
+    /// The shared memory query names a 1×1 pixel's object, which `shm_query_done` unlinks.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_shared_memory_query() {
+        let q = shm_query().unwrap();
+        let q = std::str::from_utf8(&q).unwrap();
+        let name = format!("/dev/shm{}", shm_query_name());
+        let mut b64 = Vec::new();
+        base64(shm_query_name().as_bytes(), &mut b64);
+        let b64 = String::from_utf8(b64).unwrap();
+        assert_eq!(q, format!("\x1b_Gi=32,s=1,v=1,a=q,t=s,f=24;{b64}\x1b\\"));
+        assert_eq!(std::fs::read(&name).unwrap(), [0; 3]);
+        shm_query_done();
+        assert!(!Path::new(&name).exists());
+        shm_query_done();
+    }
 
     #[test]
     fn base64_matches_the_rfc() {

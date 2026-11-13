@@ -27,7 +27,7 @@ use crate::doc::{CodeId, Doc, LineRange, LinkId};
 use crate::filetype::FileType;
 use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Epoch, Highlights, Job, SyntaxTheme};
-use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto};
+use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto, Wire};
 use crate::layout::{
     self, ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, TableMode,
 };
@@ -88,11 +88,12 @@ pub enum Msg {
     Init {
         size: Size,
     },
-    /// The terminal can show images: its protocol, and its font's cell size in pixels. Sent
-    /// after `Init` when images are on.
+    /// The terminal can show images: its protocol, its font's cell size in pixels, and how kitty
+    /// images reach it. Sent after `Init` when images are on.
     Graphics {
         proto: Proto,
         cell: Size,
+        wire: Wire,
     },
     Resize {
         size: Size,
@@ -1307,9 +1308,12 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.relayout();
             state.visible_jobs()
         }
-        Msg::Graphics { proto, cell } => {
+        Msg::Graphics { proto, cell, wire } => {
             let cell = crate::geom::Size::new(cell.w.max(1), cell.h.max(1));
-            let first = state.graphics.replace(Graphics { proto, cell }).is_none();
+            let first = state
+                .graphics
+                .replace(Graphics { proto, cell, wire })
+                .is_none();
             state.relayout();
             let mut cmds = state.visible_jobs();
             if first {
@@ -3140,6 +3144,7 @@ mod tests {
                 Msg::Graphics {
                     proto: Proto::Halfblocks,
                     cell: Size { w: 10, h: 20 },
+                    wire: Wire::Stream,
                 },
             );
         }
@@ -3308,6 +3313,7 @@ mod tests {
         let graphics = Msg::Graphics {
             proto: Proto::Halfblocks,
             cell: Size { w: 10, h: 20 },
+            wire: Wire::Stream,
         };
         let cmds = update(&mut state, graphics.clone());
         assert_eq!(
@@ -3329,6 +3335,7 @@ mod tests {
         let graphics = Msg::Graphics {
             proto: Proto::Halfblocks,
             cell: Size { w: 10, h: 20 },
+            wire: Wire::Stream,
         };
         update(&mut state, graphics);
         let doc = state.doc.as_ref().unwrap();
@@ -3495,6 +3502,7 @@ mod tests {
             Msg::Graphics {
                 proto: Proto::Halfblocks,
                 cell: Size { w: 10, h: 20 },
+                wire: Wire::Stream,
             },
         );
         let cmds = load_at(&mut state, "pics/cat.png", "");

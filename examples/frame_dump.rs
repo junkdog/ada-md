@@ -21,7 +21,7 @@ use std::{env, fs};
 use ada::app::{Cmd, Computed, Config, Cursor, Dir, Effects, Msg, ScrollBy, Size, State, update};
 use ada::geom::Size as Cells;
 use ada::grid::Screen;
-use ada::images::{Encoder, Proto};
+use ada::images::{Encoder, Proto, Wire};
 use ada::theme::Theme;
 use ada::ui;
 use regex::bytes::{Captures, Regex};
@@ -143,6 +143,7 @@ fn main() {
                             w: CELL.width,
                             h: CELL.height,
                         },
+                        wire: Wire::Stream,
                     },
                 );
             }

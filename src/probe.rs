@@ -1,6 +1,7 @@
 //! The terminal probe's replies, read from the tty's raw bytes (the clean-slate plan's CS-2): what
-//! the terminal says to kitty's graphics query, the primary device attributes (`CSI c`) and the
-//! pixel sizes (`CSI 16t`, `CSI 14t`), until it answers the `CSI 5n` sent last.
+//! the terminal says to kitty's graphics queries (one with its pixel in shared memory, where ada
+//! asks it, [`kitty::shm_query`]), the primary device attributes (`CSI c`) and the pixel sizes
+//! (`CSI 16t`, `CSI 14t`), until it answers the `CSI 5n` sent last.
 //!
 //! The probe reads the tty itself, not through crossterm: crossterm's parser turns a reply it
 //! doesn't know into keys (kitty's `ESC _ G…` becomes Alt+`_`, then `G`, …). Keys typed while the
@@ -12,13 +13,16 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::kitty;
+
 /// How long the probe waits for the replies (Q2 of the clean-slate plan): generous, since only
 /// images and the keys typed meanwhile wait for it, and fixed, so keys don't extend it.
 pub const WAIT: Duration = Duration::from_secs(2);
 
 /// The queries, in order: kitty's graphics query (a 1×1 RGB image, id 31, `a=q`: checked, not
 /// stored), the primary device attributes, the cell's size in pixels, the text area's, and the
-/// device status, which every terminal answers, last.
+/// device status, which every terminal answers, last. [`crate::images::query`] puts kitty's shared
+/// memory query before them.
 pub const QUERY: &[u8] = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c\x1b[16t\x1b[14t\x1b[5n";
 
 /// The kitty query's image id.
@@ -33,6 +37,9 @@ const MAX_PENDING: usize = 4096;
 pub struct Found {
     /// The answer to kitty's graphics query: `Some(true)` for OK, `Some(false)` for an error.
     pub kitty: Option<bool>,
+    /// The answer to the same query with its pixel in shared memory ([`kitty::shm_query`]), when
+    /// it was asked: OK when the terminal reads them.
+    pub kitty_shm: Option<bool>,
     /// The primary device attributes (`CSI ? Ps ; … c`).
     pub attributes: Option<Vec<u16>>,
     /// The cell's size in pixels, width and height (`CSI 6 ; h ; w t`).
@@ -184,8 +191,13 @@ impl Replies {
         let Some((keys, message)) = body.split_once(';') else {
             return;
         };
-        if keys.split(',').any(|kv| kv == format!("i={KITTY_ID}")) {
-            self.found.kitty = Some(message == "OK");
+        let ok = Some(message == "OK");
+        for kv in keys.split(',') {
+            match kv.strip_prefix("i=") {
+                Some(KITTY_ID) => self.found.kitty = ok,
+                Some(kitty::SHM_QUERY_ID) => self.found.kitty_shm = ok,
+                _ => {}
+            }
         }
     }
 }
@@ -422,12 +434,23 @@ mod tests {
             found,
             Found {
                 kitty: Some(true),
+                kitty_shm: None,
                 attributes: Some(vec![62, 22]),
                 cell: Some((10, 20)),
                 text_area: Some((1000, 800)),
             }
         );
         assert!(!found.sixel());
+    }
+
+    /// The shared memory query's answer, apart from the plain query's.
+    #[test]
+    fn kittys_shared_memory_reply() {
+        let both = b"\x1b_Gi=32;EBADF:Failed to open\x1b\\\x1b_Gi=31;OK\x1b\\\x1b[0n";
+        let (found, ..) = read(&[both]);
+        assert_eq!((found.kitty, found.kitty_shm), (Some(true), Some(false)));
+        let (found, ..) = read(&[b"\x1b_Gi=32;OK\x1b\\\x1b_Gi=31;OK\x1b\\\x1b[0n"]);
+        assert_eq!((found.kitty, found.kitty_shm), (Some(true), Some(true)));
     }
 
     #[test]

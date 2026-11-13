@@ -156,30 +156,26 @@ fn keep_screen(terminal: &mut Term, state: &State) {
     while rows > 0 && (0..size.width).all(|x| shown[(x, rows - 1)] == blank[(0, 0)]) {
         rows -= 1;
     }
-    // the kitty images in the kept rows, sent to the main screen's image store first, but for those
-    // the frame sends itself: the frame that first painted an image holds its transmission
-    let (mut colors, mut sent) = (HashSet::new(), HashSet::new());
+    // the kitty images in the kept rows, sent to the main screen's image store first, all of them:
+    // the kept frame leaves out the transmission the first frame to paint an image carried, which
+    // named a shared memory object the terminal has unlinked since (IMG-002)
+    let mut colors = HashSet::new();
     for y in 0..rows {
         for x in 0..size.width {
             if let (true, Kind::Rgb(r, g, b)) =
                 (shown[(x, y)].is_image(), shown[(x, y)].fg().kind())
             {
-                let color = u32::from_be_bytes([0, r, g, b]);
-                colors.insert(color);
-                if shown.symbol((x, y)).starts_with("\x1b_G") {
-                    sent.insert(color);
-                }
+                colors.insert(u32::from_be_bytes([0, r, g, b]));
             }
         }
     }
-    colors.retain(|c| !sent.contains(c));
     let mut out = io::stdout();
     for t in state
         .images
         .transmits()
         .filter(|t| colors.contains(&t.color))
     {
-        let _ = out.write_all(t.seq.as_bytes());
+        let _ = out.write_all(t.seq().as_bytes());
     }
     let _ = terminal.keep(rows);
 }
@@ -230,7 +226,7 @@ fn event_loop(
     let plan = images::plan(state.config.images, |name| env::var(name).ok());
     if plan.is_some_and(|p| p.ask) {
         let mut out = io::stdout();
-        out.write_all(probe::QUERY)
+        out.write_all(&images::query())
             .and_then(|()| out.flush())
             .map_err(|e| format!("terminal: {e}"))?;
     }
@@ -257,8 +253,9 @@ fn event_loop(
             if let Some(rec) = recorder.as_deref_mut() {
                 rec.log(&msg).map_err(|e| format!("recording: {e}"))?;
             }
-            if let Msg::Graphics { proto, cell } = msg {
-                effects.set_encoder(images::Encoder::new(proto, Cells::new(cell.w, cell.h)));
+            if let Msg::Graphics { proto, cell, wire } = msg {
+                let cell = Cells::new(cell.w, cell.h);
+                effects.set_encoder(images::Encoder::new(proto, cell).wire(wire));
             }
             let edit = msg == Msg::Edit;
             let listing = msg.may_list_themes();
@@ -512,12 +509,14 @@ fn ask_terminal(
     let before = terminal::size().ok();
     let mut gone = false;
     let found = if plan.ask {
-        probe::read(deadline, |key| {
+        let found = probe::read(deadline, |key| {
             gone = keymap
                 .map(key)
                 .is_some_and(|msg| !send(msg, tx, resume, keymap));
             !gone
-        })
+        });
+        crate::kitty::shm_query_done();
+        found
     } else {
         Found::default()
     };

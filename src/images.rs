@@ -3,9 +3,10 @@
 //! ([`probe`](mod@crate::probe), CS-2), and sixel and iTerm2 ([`sixel`], [`iterm`]; CS-3).
 //!
 //! The terminal is queried once at startup, and answers on the input thread while the text paints
-//! (O-06); its protocol and font cell size reach `update` as `Msg::Graphics`, and start the image
-//! worker. Reading an image's header touches the filesystem, so it is a world effect
-//! (`Cmd::ProbeImages`) whose result is recorded. Decoding and encoding run on a worker
+//! (O-06); its protocol, font cell size and how kitty images go (in shared memory where it reads
+//! them, IMG-002) reach `update` as `Msg::Graphics`, and start the image worker. Reading an
+//! image's header touches the filesystem, so it is a world effect (`Cmd::ProbeImages`) whose
+//! result is recorded. Decoding and encoding run on a worker
 //! (`Cmd::DecodeImage`) and are cached by `(path, mtime, cells)`. Hermetic replay has no image
 //! bytes to recompute them from, so replayed images stay placeholders.
 
@@ -62,6 +63,32 @@ impl Proto {
     }
 }
 
+/// How kitty images reach the terminal: in the output, or in shared memory (IMG-002), which the
+/// probe offers when the terminal reads its shared memory query.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Wire {
+    /// A PNG, base64 in the escape sequence.
+    #[default]
+    Stream,
+    /// The pixels in a shared memory object the escape names ([`kitty::transmit_shm`]).
+    Shm,
+}
+
+impl Wire {
+    pub fn name(self) -> &'static str {
+        match self {
+            Wire::Stream => "stream",
+            Wire::Shm => "shm",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Wire> {
+        [Wire::Stream, Wire::Shm]
+            .into_iter()
+            .find(|w| w.name() == name)
+    }
+}
+
 /// Whether to show images: `--no-images`, `--image-protocol P`, or what the terminal supports.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImageMode {
@@ -77,6 +104,8 @@ pub struct Graphics {
     pub proto: Proto,
     /// The font's cell size in pixels.
     pub cell: Size,
+    /// How kitty images go.
+    pub wire: Wire,
 }
 
 impl Graphics {
@@ -88,6 +117,7 @@ impl Graphics {
                 w: self.cell.width,
                 h: self.cell.height,
             },
+            wire: self.wire,
         }
     }
 }
@@ -95,7 +125,7 @@ impl Graphics {
 /// What the environment decides before the terminal is asked anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Plan {
-    /// Write [`probe::QUERY`] and read the replies.
+    /// Write [`query`] and read the replies.
     pub ask: bool,
     /// The protocol, whatever the terminal says: the cell size is still asked for.
     pub forced: Option<Proto>,
@@ -132,7 +162,8 @@ pub fn plan(mode: ImageMode, env: impl Fn(&str) -> Option<String>) -> Option<Pla
 /// answer kitty's query but draw no Unicode placeholders, and Konsole's sixel is buggy
 /// (ratatui-image's compatibility matrix), so neither is taken from them. The cell size comes
 /// from `CSI 16t`, else `CSI 14t` over the terminal's `cells`, else `TIOCGWINSZ` (`winsize`);
-/// with none of them, half-blocks at 10×20.
+/// with none of them, half-blocks at 10×20. Kitty images go in shared memory when the terminal
+/// read the shared memory query.
 pub fn decide(
     plan: Plan,
     found: &probe::Found,
@@ -174,10 +205,24 @@ pub fn decide(
         Some(_) if iterm2 => Proto::Iterm2,
         Some(_) => Proto::Halfblocks,
     });
+    let wire = if proto == Proto::Kitty && found.kitty_shm == Some(true) {
+        Wire::Shm
+    } else {
+        Wire::Stream
+    };
     Graphics {
         proto,
         cell: cell.unwrap_or(Size::new(10, 20)),
+        wire,
     }
+}
+
+/// What the probe writes: the shared memory query where ada makes one ([`kitty::shm_query`]),
+/// then [`probe::QUERY`]. Once the replies are in, [`kitty::shm_query_done`].
+pub fn query() -> Vec<u8> {
+    let mut q = kitty::shm_query().unwrap_or_default();
+    q.extend_from_slice(probe::QUERY);
+    q
 }
 
 /// Ask the terminal and wait for its answer, for a tool that reads nothing else meanwhile (the TUI
@@ -187,10 +232,10 @@ pub fn detect(mode: ImageMode) -> Option<Graphics> {
     let plan = plan(mode, env)?;
     let found = if plan.ask {
         let mut out = std::io::stdout();
-        out.write_all(probe::QUERY)
-            .and_then(|()| out.flush())
-            .ok()?;
-        probe::read(Instant::now() + probe::WAIT, |_| true)
+        let sent = out.write_all(&query()).and_then(|()| out.flush());
+        let found = sent.map(|()| probe::read(Instant::now() + probe::WAIT, |_| true));
+        kitty::shm_query_done();
+        found.ok()?
     } else {
         probe::Found::default()
     };
@@ -198,17 +243,33 @@ pub fn detect(mode: ImageMode) -> Option<Graphics> {
     Some(decide(plan, &found, env, Size::new(w, h), winsize_cell()))
 }
 
-/// What encodes images for the terminal: its protocol and the font's cell size.
+/// What encodes images for the terminal: its protocol, the font's cell size, and how kitty
+/// images go.
 #[derive(Clone, Copy, Debug)]
 pub struct Encoder {
     proto: Proto,
     cell: Size,
+    wire: Wire,
 }
 
 impl Encoder {
     pub fn new(proto: Proto, cell: Size) -> Encoder {
         let cell = Size::new(cell.width.max(1), cell.height.max(1));
-        Encoder { proto, cell }
+        Encoder {
+            proto,
+            cell,
+            wire: Wire::Stream,
+        }
+    }
+
+    /// Kitty images go by `wire`. Shared memory is Linux's only: elsewhere they're streamed.
+    pub fn wire(self, wire: Wire) -> Encoder {
+        let wire = if cfg!(target_os = "linux") {
+            wire
+        } else {
+            Wire::Stream
+        };
+        Encoder { wire, ..self }
     }
 
     /// Half-blocks at 10×20, for a terminal that wasn't asked.
@@ -382,11 +443,57 @@ struct Shown {
 /// What transmits a kitty image to the terminal. The first frame that paints the image sends it,
 /// but the main screen has an image store of its own, which a frame kept on quit has to send it
 /// to again.
-#[derive(Debug)]
 pub struct Transmit {
     /// The image's id: its placeholders' foreground color.
     pub color: u32,
-    pub seq: Box<str>,
+    how: How,
+}
+
+enum How {
+    /// The escape sequences, the PNG in them.
+    Stream(Box<str>),
+    /// The pixels, put in a new shared memory object for each send: the terminal unlinks the one
+    /// it reads. Held instead of a stream's sequence, about the same size on a photo.
+    Shm {
+        pixels: image::DynamicImage,
+        size: Size,
+    },
+}
+
+impl Transmit {
+    /// The escape sequence that sends the image. In shared memory, each call makes the object
+    /// the sequence names; should that fail, the pixels go in the sequence, as a PNG.
+    pub fn seq(&self) -> String {
+        match &self.how {
+            How::Stream(seq) => seq.to_string(),
+            How::Shm { pixels, size } => {
+                let mut seq = String::new();
+                #[cfg(target_os = "linux")]
+                if kitty::transmit_shm(&mut seq, self.color, pixels, size.width, size.height)
+                    .is_ok()
+                {
+                    return seq;
+                }
+                let payload = kitty::Payload::Pixels(pixels);
+                let mut out = Vec::new();
+                let sent = kitty::transmit(&mut out, self.color, &payload, size.width, size.height);
+                if sent.is_ok() {
+                    seq = String::from_utf8(out).unwrap_or_default();
+                }
+                seq
+            }
+        }
+    }
+}
+
+impl fmt::Debug for Transmit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let how = match &self.how {
+            How::Stream(seq) => format!("stream of {} bytes", seq.len()),
+            How::Shm { pixels, .. } => format!("shm of {} bytes", pixels.as_bytes().len()),
+        };
+        write!(f, "Transmit({:06x}, {how})", self.color)
+    }
 }
 
 impl Encoded {
@@ -427,7 +534,8 @@ static KITTY_IMAGES: AtomicU32 = AtomicU32::new(0);
 
 /// Decode an image and encode it for the terminal, fitted to `key.size` cells. It's decoded
 /// straight to the pixels those cells hold ([`pixels::decode`]), so there is nothing left to
-/// resize. Kitty and half-blocks are drawn as print draws them. A sixel image is mapped to its
+/// resize. Kitty and half-blocks are drawn as print draws them, but for kitty images in shared
+/// memory, whose pixels are kept for the paint to put in an object. A sixel image is mapped to its
 /// palette here and written by the paint, which knows which rows are on screen; iTerm2's rows are
 /// all encoded here.
 pub fn encode(encoder: &Encoder, key: &ImageKey) -> Result<Encoded, String> {
@@ -449,20 +557,26 @@ pub fn encode(encoder: &Encoder, key: &ImageKey) -> Result<Encoded, String> {
                 Probe::Failed(why) => return Err(why),
             };
             let pixels = kitty::pixels(&key.path, px, max)?;
-            let payload = match &pixels {
-                Some(image) => kitty::Payload::Pixels(image),
-                None => kitty::Payload::Png(&key.path),
-            };
             let id = kitty::image_id(KITTY_IMAGES.fetch_add(1, Ordering::Relaxed), false);
-            let mut seq = Vec::new();
-            kitty::transmit(&mut seq, id, &payload, cols, rows).map_err(|e| e.to_string())?;
-            let seq = String::from_utf8(seq).map_err(|e| e.to_string())?;
+            let size = Size::new(cols, rows);
+            let how = match pixels {
+                // A PNG that fits goes as the file in either wire. Decoded for shared memory, fit.png
+                // showed 4.5 ms sooner but cost ada 5.3 ms more CPU and its pixels 1.2 MB (IMG-005)
+                Some(pixels) if encoder.wire == Wire::Shm => How::Shm { pixels, size },
+                pixels => {
+                    let payload = match &pixels {
+                        Some(image) => kitty::Payload::Pixels(image),
+                        None => kitty::Payload::Png(&key.path),
+                    };
+                    let mut seq = Vec::new();
+                    kitty::transmit(&mut seq, id, &payload, cols, rows)
+                        .map_err(|e| e.to_string())?;
+                    How::Stream(String::from_utf8(seq).map_err(|e| e.to_string())?.into())
+                }
+            };
             Image::Kitty {
-                size: Size::new(cols, rows),
-                transmit: Transmit {
-                    color: id,
-                    seq: seq.into(),
-                },
+                size,
+                transmit: Transmit { color: id, how },
                 sent: AtomicBool::new(false),
             }
         }
@@ -651,7 +765,7 @@ pub fn render(image: &Encoded, grid: &mut Grid, area: Rect, x: u16, y: i32) {
             }
             // the first cell painted carries the transmission, the first time
             if !rows.is_empty() && cols > 0 && !sent.swap(true, Ordering::Relaxed) {
-                let mut first = String::from(&*transmit.seq);
+                let mut first = transmit.seq();
                 first.extend(kitty::placeholder(rows.start, 0));
                 grid.image_cell(at(rows.start, 0), &first, color);
             }
@@ -799,6 +913,7 @@ pub(crate) mod tests {
         let cells = Size::new(100, 40);
         let found = |kitty, attributes: &[u16], cell, text_area| probe::Found {
             kitty,
+            kitty_shm: None,
             attributes: Some(attributes.to_vec()),
             cell,
             text_area,
@@ -849,6 +964,72 @@ pub(crate) mod tests {
         };
         let g = super::decide(forced, &kitty, env(&[]), cells, None);
         assert_eq!((g.proto, g.cell), (Proto::Iterm2, Size::new(9, 18)));
+        // kitty images in shared memory when the terminal read the shared memory query, and only
+        // for kitty's protocol
+        let wire =
+            |found: &probe::Found, plan| super::decide(plan, found, env(&[]), cells, None).wire;
+        let shm = |found: &probe::Found, ok| probe::Found {
+            kitty_shm: ok,
+            ..found.clone()
+        };
+        assert_eq!(wire(&kitty, ask), Wire::Stream);
+        assert_eq!(wire(&shm(&kitty, Some(true)), ask), Wire::Shm);
+        assert_eq!(wire(&shm(&kitty, Some(false)), ask), Wire::Stream);
+        assert_eq!(wire(&shm(&kitty, Some(true)), forced), Wire::Stream);
+        assert_eq!(wire(&shm(&sixel, Some(true)), ask), Wire::Stream);
+    }
+
+    /// In shared memory, a kitty image's transmission names an object holding its pixels, a new
+    /// one each time it's sent, since the terminal unlinks the one it reads.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn kitty_images_in_shared_memory() {
+        let path = png("kitty-shm", 60, 40);
+        let encoder = Encoder::new(Proto::Kitty, Size::new(10, 20)).wire(Wire::Shm);
+        let key = ImageKey {
+            path: path.clone(),
+            mtime: None,
+            size: Size::new(3, 1),
+        };
+        let image = encode(&encoder, &key).unwrap();
+        let transmit = image.transmit().expect("kitty");
+        let (first, again) = (transmit.seq(), transmit.seq());
+        for seq in [&first, &again] {
+            let (params, name) = seq
+                .strip_prefix("\x1b_G")
+                .and_then(|s| s.strip_suffix("\x1b\\"))
+                .and_then(|s| s.split_once(';'))
+                .unwrap();
+            for p in [
+                "a=T", "U=1", "q=2", "c=3", "r=1", "f=24", "s=30", "v=20", "t=s",
+            ] {
+                assert!(params.split(',').any(|kv| kv == p), "{p} in {params}");
+            }
+            let name = String::from_utf8(base64_decode(name)).unwrap();
+            let file = format!("/dev/shm{name}");
+            assert_eq!(fs::read(&file).unwrap().len(), 30 * 20 * 3);
+            fs::remove_file(file).unwrap();
+        }
+        assert_ne!(first, again);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    fn base64_decode(s: &str) -> Vec<u8> {
+        const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let bits: Vec<u32> = s
+            .bytes()
+            .filter(|&b| b != b'=')
+            .map(|b| ABC.iter().position(|&c| c == b).unwrap() as u32)
+            .collect();
+        bits.chunks(4)
+            .flat_map(|q| {
+                let n = q
+                    .iter()
+                    .enumerate()
+                    .fold(0, |n, (i, &v)| n | v << (18 - 6 * i));
+                (0..q.len() - 1).map(move |i| (n >> (16 - 8 * i)) as u8)
+            })
+            .collect()
     }
 
     #[test]
@@ -995,8 +1176,8 @@ pub(crate) mod tests {
         };
         let image = encode(&encoder, &key).unwrap();
         let transmit = image.transmit().expect("kitty");
-        let params = transmit
-            .seq
+        let seq = transmit.seq();
+        let params = seq
             .strip_prefix("\x1b_G")
             .unwrap()
             .split(';')
@@ -1018,9 +1199,9 @@ pub(crate) mod tests {
         let first = frame(&mut screen, &out, |g| render(&image, g, area, 1, 1));
         assert_eq!(
             first.matches("\x1b_G").count(),
-            transmit.seq.matches("\x1b_G").count()
+            seq.matches("\x1b_G").count()
         );
-        let cells = format!("{}{r0}\x1b[2;3H{}{p}", transmit.seq, placeholder(0, 1));
+        let cells = format!("{seq}{r0}\x1b[2;3H{}{p}", placeholder(0, 1));
         assert!(
             first.contains(&format!("\x1b[2;2H{color}{cells}\x1b[0m")),
             "{first:?}"

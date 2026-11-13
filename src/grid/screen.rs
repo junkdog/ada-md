@@ -128,7 +128,8 @@ impl<W: Write> Screen<W> {
 /// Rows of `grid` as lines from the cursor, which is where the shell's next line would go, so
 /// nothing about where they land is known. Each line is its cells left to right, with the style
 /// reset before the newline so that a scroll brings in a default blank row. Kitty images' cells
-/// are text like the rest (the image goes to the terminal before). Other images' cells go as
+/// are text like the rest, without the transmission the first cell may carry (the image goes to
+/// the terminal before, again: a transmission in shared memory can't be read twice). Other images' cells go as
 /// blanks on their background; then, from the saved cursor below the last line, each image's
 /// escape sequence is written up and across at its first cell.
 fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
@@ -153,7 +154,13 @@ fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
                 continue;
             }
             pen.set(pen.wants(c), out);
-            symbol(grid, i, out);
+            match grid.symbol_at(i) {
+                s if placeholder && s.starts_with("\x1b_G") => {
+                    let at = s.find(KITTY_PLACEHOLDER).unwrap_or(0);
+                    out.extend_from_slice(&s.as_bytes()[at..]);
+                }
+                _ => symbol(grid, i, out),
+            }
             let width = usize::from(c.width()).max(1);
             x += width;
             // terminals disagree on how wide some graphemes are: the next cell goes where the
@@ -1517,6 +1524,28 @@ mod tests {
                 .iter()
                 .all(|(s, st)| s == " " && st.bg == Some(Color::RESET))
         );
+    }
+
+    /// A kitty image's cells are kept as placeholders, without the transmission the first one
+    /// carried: the caller sends the image again before.
+    #[test]
+    fn kept_kitty_cells_leave_out_the_transmission() {
+        let mut screen = Screen::new(Vec::new(), Size::new(4, 1));
+        let (cell, color) = (kitty::placeholder(0, 0), Color::rgb(0, 0, 7));
+        let cell: String = cell.iter().collect();
+        screen
+            .draw(|g| {
+                let first = format!("\x1b_Ga=T,i=7,t=s;L2FkYQ==\x1b\\{cell}");
+                g.image_cell((0, 0), &first, color);
+                g.placeholder((1, 0), (0, 1), color);
+            })
+            .unwrap();
+        assert!(String::from_utf8_lossy(&screen.out).contains("\x1b_G"));
+        screen.out.clear();
+        screen.keep(1).unwrap();
+        let out = String::from_utf8(screen.out).unwrap();
+        assert!(!out.contains("\x1b_G"), "{out:?}");
+        assert!(out.contains(&cell), "{out:?}");
     }
 
     /// An image's cells are kept as blanks, then its escape sequence goes over them, moved to

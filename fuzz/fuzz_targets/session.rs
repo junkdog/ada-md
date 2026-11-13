@@ -45,7 +45,7 @@ use ada::config;
 use ada::geom::Size as Cells;
 use ada::grid::{Grid, Screen};
 use ada::highlight;
-use ada::images::{Encoder, Probe, Proto};
+use ada::images::{Encoder, Probe, Proto, Wire};
 use ada::kitty;
 use ada::layout::{LineNumbers, TableMode};
 use ada::links::{LocalTarget, Resolved};
@@ -1012,7 +1012,7 @@ impl Session<'_> {
             eprintln!("msg {msg:?}");
         }
         // the encoder follows the probe's answer, as in the interactive loop
-        if let Msg::Graphics { proto, cell } = msg {
+        if let Msg::Graphics { proto, cell, .. } = msg {
             self.effects
                 .set_encoder(Encoder::new(proto, Cells::new(cell.w, cell.h)));
             self.proto = Some(proto);
@@ -1166,6 +1166,8 @@ impl Session<'_> {
                     w: u16::from(w),
                     h: u16::from(h),
                 },
+                // never shared memory: no terminal reads (and unlinks) the objects
+                wire: Wire::Stream,
             },
             Op::Rows(n) => Msg::Scroll {
                 by: ScrollBy::Rows(i32::from(n)),

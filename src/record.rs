@@ -30,7 +30,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{self, Computed, Cursor, Dir, Effects, Msg, ScrollBy, Size, State};
 use crate::grid::Grid;
-use crate::images::{self, Probe, Proto};
+use crate::images::{self, Probe, Proto, Wire};
 use crate::links::Resolved;
 use crate::ui;
 
@@ -61,7 +61,7 @@ macro_rules! messages {
 
 messages! {
     "init" => Init { size },
-    "graphics" => Graphics { proto, cell },
+    "graphics" => Graphics { proto, cell, wire },
     "resize" => Resize { size },
     "open" => Open { path },
     "scroll" => Scroll { by },
@@ -362,6 +362,24 @@ impl Field for Vec<Probe> {
                 _ => None,
             })
             .collect()
+    }
+}
+
+/// Absent from recordings made before IMG-002, whose images were streamed.
+impl Field for Wire {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        inline(key, line, self.name());
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Ident(s) => Wire::parse(&s),
+            _ => None,
+        }
+    }
+
+    fn absent() -> Option<Self> {
+        Some(Wire::Stream)
     }
 }
 
@@ -711,9 +729,9 @@ pub fn replay(
 fn step(state: &mut State, msg: Msg, effects: &mut Effects, live: bool) {
     let mut queue = VecDeque::from([msg]);
     while let Some(msg) = queue.pop_front() {
-        if live && let Msg::Graphics { proto, cell } = &msg {
+        if live && let Msg::Graphics { proto, cell, wire } = &msg {
             let cell = crate::geom::Size::new(cell.w, cell.h);
-            effects.set_encoder(images::Encoder::new(*proto, cell));
+            effects.set_encoder(images::Encoder::new(*proto, cell).wire(*wire));
         }
         let marker = matches!(msg, Msg::Highlighted { .. });
         for cmd in app::update(state, msg) {
@@ -833,6 +851,7 @@ mod tests {
             Msg::Graphics {
                 proto: Proto::Kitty,
                 cell: Size { w: 9, h: 18 },
+                wire: Wire::Shm,
             },
             Msg::Resize {
                 size: Size { w: 100, h: 30 },
@@ -1118,6 +1137,7 @@ mod tests {
                 Msg::Graphics {
                     proto,
                     cell: Size { w: 10, h: 20 },
+                    wire: Wire::Stream,
                 },
                 Msg::Open { path: doc.clone() },
             ]

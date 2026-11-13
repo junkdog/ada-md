@@ -55,10 +55,10 @@ toml = { version = "1.1", default-features = false, features = ["std", "parse"] 
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
 
-# Live reload by inotify (ADR-26), and the image probe's wait for the terminal's replies (CS-2);
-# already in the tree through crossterm.
+# Live reload by inotify (ADR-26), the image probe's wait for the terminal's replies (CS-2), and
+# the TUI's kitty images in shared memory (IMG-002); already in the tree through crossterm.
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", default-features = false, features = ["std", "fs", "event"] }
+rustix = { version = "1.1", default-features = false, features = ["std", "fs", "event", "shm"] }
 
 # One glibc malloc arena for the TUI (`mallopt`, ADR-27); already in the tree through crossterm.
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
