@@ -29,7 +29,7 @@ use crate::layout::{self, Layout, LayoutParams, LineNumbers};
 use crate::theme::Theme;
 use crate::ui::Painter;
 
-use super::{Overlay, end_line, start_line};
+use super::{Overlay, Sgr, end_line, start_line};
 
 /// Inputs smaller than this print whole: streaming them saves little.
 const FIRST: usize = 1 << 20;
@@ -304,16 +304,9 @@ impl Paint<'_> {
         let from = usize::from(!piece.first);
         let to = rows - usize::from(!piece.last);
         let mut out = Vec::with_capacity(piece.text.len() * 2);
-        let mut scratch = Vec::new();
+        let mut sgr = Sgr::new();
         for (r, row) in layout.rows.iter().enumerate().take(to).skip(from) {
-            let line = start_line(
-                &painter,
-                &Overlay::default(),
-                r,
-                row,
-                &mut out,
-                &mut scratch,
-            );
+            let line = start_line(&painter, &Overlay::default(), r, row, &mut out, &mut sgr);
             end_line(&line, &mut out);
         }
         (out, layout)

@@ -177,11 +177,11 @@ pub fn write(
     }
     let mut out = Vec::with_capacity(PIECE * 2);
     out.resize(pad, b'\n');
-    let mut scratch = Vec::new();
+    let mut sgr = Sgr::new();
     let mut image: Option<(u32, Drawn)> = None;
     let rows = layout.rows.iter().enumerate().skip(skip);
     for (r, row) in rows.take(opts.rows.unwrap_or(usize::MAX)) {
-        let mut line = start_line(&painter, &overlay, r, row, &mut out, &mut scratch);
+        let mut line = start_line(&painter, &overlay, r, row, &mut out, &mut sgr);
         if let (RowKind::Image { slot }, Some(pictures)) = (row.kind, opts.images)
             && let Some(at) = layout.images.get(slot as usize)
         {
@@ -193,7 +193,7 @@ pub fn write(
             }
             if let Some((_, drawn)) = &image {
                 let frame = Pen::of(theme.style(StyleKey::ImageFrame));
-                drawn.row(r as u32 - at.row, frame, &mut line, &mut out, &mut scratch);
+                drawn.row(r as u32 - at.row, frame, &mut line, &mut out, &mut sgr);
             }
         }
         end_line(&line, &mut out);
@@ -225,13 +225,13 @@ fn paint_on(
                 let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
                 let rows = rows.clone();
                 s.spawn(move || {
-                    let mut scratch = Vec::new();
+                    let mut sgr = Sgr::new();
                     for b in (i..batches).step_by(n) {
                         let from = rows.start + b * BATCH;
                         let mut out = Vec::with_capacity(PIECE * 2);
                         for r in from..(from + BATCH).min(rows.end) {
                             let row = &painter.layout.rows[r];
-                            let line = start_line(painter, overlay, r, row, &mut out, &mut scratch);
+                            let line = start_line(painter, overlay, r, row, &mut out, &mut sgr);
                             end_line(&line, &mut out);
                         }
                         if tx.send(out).is_err() {
@@ -260,11 +260,11 @@ fn start_line(
     r: usize,
     row: &Row,
     out: &mut Vec<u8>,
-    scratch: &mut Vec<u8>,
+    sgr: &mut Sgr,
 ) -> Line {
     let mut line = Line::default();
     let mut emit = |text: &str, style| {
-        line.span(text, Pen::of(style), out, scratch);
+        line.span(text, Pen::of(style), out, sgr);
     };
     painter.number(r as u32, &mut emit);
     overlay.row(painter, r as u32, row, &mut emit);
@@ -468,35 +468,24 @@ impl Drawn {
     }
 
     /// Row `y` of the image.
-    fn row(&self, y: u32, frame: Pen, line: &mut Line, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
+    fn row(&self, y: u32, frame: Pen, line: &mut Line, out: &mut Vec<u8>, sgr: &mut Sgr) {
         match self {
             Drawn::Kitty { id, cols } => {
                 let (r, g, b) = kitty::id_color(*id);
                 let mut cells = String::new();
                 kitty::placeholders(y as u16, *cols, &mut cells);
-                let pen = Pen {
-                    fg: Some(Color::rgb(r, g, b)),
-                    ..Pen::default()
-                };
-                line.span(&cells, pen, out, scratch);
+                let pen = Pen::new(Modifier::empty(), Some(Color::rgb(r, g, b)), None, None);
+                line.span(&cells, pen, out, sgr);
             }
             Drawn::Halfblocks { image, cols, rows } => {
                 let rgb = |c: Option<pixels::Rgb>| c.map(|(r, g, b)| Color::rgb(r, g, b));
                 for x in 0..u32::from(*cols) {
                     let (text, fg, bg) = HalfBlock::of(image, (*cols, *rows), (x, y)).cell();
-                    line.span(
-                        text,
-                        Pen {
-                            fg: rgb(fg),
-                            bg: rgb(bg),
-                            ..Pen::default()
-                        },
-                        out,
-                        scratch,
-                    );
+                    let pen = Pen::new(Modifier::empty(), rgb(fg), rgb(bg), None);
+                    line.span(text, pen, out, sgr);
                 }
             }
-            Drawn::Failed(why) if y == 0 && !why.is_empty() => line.span(why, frame, out, scratch),
+            Drawn::Failed(why) if y == 0 && !why.is_empty() => line.span(why, frame, out, sgr),
             Drawn::Failed(_) => {}
         }
     }
@@ -512,66 +501,141 @@ struct Line {
 }
 
 impl Line {
-    fn span(&mut self, text: &str, style: Pen, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
-        let blank = text.bytes().all(|b| b == b' ') && !style.modifier.intersects(VISIBLE_ON_BLANK);
-        if blank && style.bg.is_none() {
+    fn span(&mut self, text: &str, style: Pen, out: &mut Vec<u8>, sgr: &mut Sgr) {
+        let blank =
+            text.bytes().all(|b| b == b' ') && !style.modifier().intersects(VISIBLE_ON_BLANK);
+        if blank && style.bg().is_none() {
             self.spaces += text.len();
             return;
         }
         if self.spaces > 0 {
             // with this span's style, if that draws them
-            let fits = style.bg.is_none() && !style.modifier.intersects(VISIBLE_ON_BLANK);
-            self.blank(if fits { style } else { Pen::default() }, out, scratch);
+            let fits = style.bg().is_none() && !style.modifier().intersects(VISIBLE_ON_BLANK);
+            self.blank(if fits { style } else { Pen::default() }, out, sgr);
             out.resize(out.len() + self.spaces, b' ');
             self.spaces = 0;
         }
         if blank {
-            self.blank(style, out, scratch);
+            self.blank(style, out, sgr);
         } else {
-            self.set(style, out, scratch);
+            self.set(style, out, sgr);
         }
         out.extend_from_slice(text.as_bytes());
     }
 
     /// For blanks, which show only their background: keep the pen if it draws them so.
-    fn blank(&mut self, style: Pen, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
-        if self.pen.bg != style.bg || self.pen.modifier.intersects(VISIBLE_ON_BLANK) {
-            self.set(style, out, scratch);
+    fn blank(&mut self, style: Pen, out: &mut Vec<u8>, sgr: &mut Sgr) {
+        if self.pen.bg() != style.bg() || self.pen.modifier().intersects(VISIBLE_ON_BLANK) {
+            self.set(style, out, sgr);
         }
     }
 
-    /// Change the pen to `to`: what differs, or a reset and all of `to`, whichever is shorter.
-    /// Only a change that turns something off can be longer than the reset. Every parameter is
-    /// written after a `;`, and the first `;` becomes the `[` (pens that differ write at least one).
-    fn set(&mut self, to: Pen, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
-        if self.pen == to {
+    /// Change the pen to `to`, through the pen changes `sgr` holds.
+    fn set(&mut self, to: Pen, out: &mut Vec<u8>, sgr: &mut Sgr) {
+        if self.pen != to {
+            sgr.write(self.pen, to, out);
+            self.pen = to;
+        }
+    }
+}
+
+/// Pen changes already written, keyed by the pens on either side (PRN-005): a theme has a few
+/// colors, and striped rows, borders and code spans switch between the same pens cell by cell,
+/// so most changes are a lookup and one fixed-size copy. Direct-mapped; a miss writes the change
+/// and takes the slot.
+struct Sgr {
+    slots: Box<[Slot]>,
+    /// The reset form of a change, beside the diff.
+    scratch: Vec<u8>,
+}
+
+/// One change: the pens' bits, and the sequence from `ESC` to `m`. Two cache lines.
+#[derive(Clone, Copy)]
+#[repr(align(64))]
+struct Slot {
+    from: u128,
+    to: u128,
+    len: u8,
+    bytes: [u8; SGR_MAX],
+}
+
+/// [`Sgr`]'s slots, a power of two.
+const SLOTS: usize = 64;
+
+/// Room for the longest pen change, six modifiers and RGB foreground, background and underline
+/// color (65 bytes; a reset form is chosen only when shorter than the diff, and the diff turns
+/// something off only when `to` lacks something), rounded up to fill a [`Slot`].
+const SGR_MAX: usize = 95;
+
+impl Sgr {
+    fn new() -> Sgr {
+        // pens that are the same are never looked up, so no slot is taken while both keys are 0
+        let empty = Slot {
+            from: 0,
+            to: 0,
+            len: 0,
+            bytes: [0; SGR_MAX],
+        };
+        Sgr {
+            slots: vec![empty; SLOTS].into_boxed_slice(),
+            scratch: Vec::new(),
+        }
+    }
+
+    /// The change from `from` to `to`, which differ.
+    fn write(&mut self, from: Pen, to: Pen, out: &mut Vec<u8>) {
+        let (f, t) = (from.0, to.0);
+        // one multiply for both keys takes 7× the misses on tables
+        let fold = |k: u128| (k as u64) ^ ((k >> 64) as u64).rotate_left(32);
+        let hash = (fold(f).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ fold(t))
+            .wrapping_mul(0xff51_afd7_ed55_8ccd);
+        let slot = &mut self.slots[(hash >> (64 - SLOTS.trailing_zeros())) as usize];
+        let start = out.len();
+        if (slot.from, slot.to) == (f, t) {
+            out.extend_from_slice(&slot.bytes);
+            out.truncate(start + usize::from(slot.len));
             return;
         }
-        let start = out.len();
-        out.push(b'\x1b');
-        if diff(self.pen, to, out) {
-            scratch.clear();
-            scratch.extend_from_slice(b"[0");
-            diff(Pen::default(), to, scratch);
-            if scratch.len() < out.len() - (start + 1) {
-                out.truncate(start + 1);
-                out.extend_from_slice(scratch);
-            }
+        change(from, to, out, &mut self.scratch);
+        let written = &out[start..];
+        if written.len() > SGR_MAX {
+            return;
         }
-        out[start + 1] = b'[';
-        out.push(b'm');
-        self.pen = to;
+        *slot = Slot {
+            from: f,
+            to: t,
+            len: written.len() as u8,
+            bytes: [0; SGR_MAX],
+        };
+        slot.bytes[..written.len()].copy_from_slice(written);
     }
 }
 
-/// What shows of a style in print: six modifiers, the colors, and an RGB underline color.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Pen {
-    modifier: Modifier,
-    fg: Option<Color>,
-    bg: Option<Color>,
-    underline: Option<(u8, u8, u8)>,
+/// The SGR sequence from `from` to `to`: what differs, or a reset and all of `to`, whichever is
+/// shorter. Only a change that turns something off can be longer than the reset. Every parameter
+/// is written after a `;`, and the first `;` becomes the `[` (pens that differ write at least one).
+fn change(from: Pen, to: Pen, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
+    let start = out.len();
+    out.push(b'\x1b');
+    if diff(from, to, out) {
+        scratch.clear();
+        scratch.extend_from_slice(b"[0");
+        diff(Pen::default(), to, scratch);
+        if scratch.len() < out.len() - (start + 1) {
+            out.truncate(start + 1);
+            out.extend_from_slice(scratch);
+        }
+    }
+    out[start + 1] = b'[';
+    out.push(b'm');
 }
+
+/// What shows of a style in print: six modifiers, the colors, and an RGB underline color, in one
+/// number that is the same for the same pen only (PRN-005), so that a pen change compares two and
+/// looks them up in [`Sgr`] as they are. From the top: the modifiers (16 bits), then the
+/// foreground, background and underline colors (32 each) as a cell holds them, 0 for none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Pen(u128);
 
 const PRINTED: Modifier = Modifier::BOLD
     .union(Modifier::DIM)
@@ -589,28 +653,52 @@ impl Pen {
     fn of(style: Style) -> Pen {
         let modifier = style.add_modifier & PRINTED;
         let set = |c: Option<Color>| c.filter(|&c| c != Color::RESET);
-        Pen {
-            modifier,
-            fg: set(style.fg),
-            bg: set(style.bg),
-            underline: match style.underline_color.map(Color::kind) {
-                Some(Kind::Rgb(r, g, b)) if modifier.contains(Modifier::UNDERLINED) => {
-                    Some((r, g, b))
-                }
-                _ => None,
-            },
-        }
+        let underline = match style.underline_color.map(Color::kind) {
+            Some(Kind::Rgb(r, g, b)) if modifier.contains(Modifier::UNDERLINED) => {
+                Some(Color::rgb(r, g, b))
+            }
+            _ => None,
+        };
+        Pen::new(modifier, set(style.fg), set(style.bg), underline)
     }
+
+    /// Colors as [`Pen::of`] leaves them: none for the default, an RGB underline color.
+    fn new(modifier: Modifier, fg: Option<Color>, bg: Option<Color>, ul: Option<Color>) -> Pen {
+        let color = |c: Option<Color>| u128::from(c.map_or(0, Color::bits));
+        Pen(u128::from(modifier.bits()) << 96 | color(fg) << 64 | color(bg) << 32 | color(ul))
+    }
+
+    fn modifier(self) -> Modifier {
+        Modifier::from_bits_truncate((self.0 >> 96) as u16)
+    }
+
+    fn fg(self) -> Option<Color> {
+        color_at(self.0 >> 64)
+    }
+
+    fn bg(self) -> Option<Color> {
+        color_at(self.0 >> 32)
+    }
+
+    fn underline(self) -> Option<Color> {
+        color_at(self.0)
+    }
+}
+
+/// The color in the low 32 bits, none for 0.
+fn color_at(bits: u128) -> Option<Color> {
+    let bits = bits as u32;
+    (bits != 0).then(|| Color::from_bits(bits))
 }
 
 /// SGR parameters from `from` to `to`, each after a `;`. Returns whether any turns something off.
 fn diff(from: Pen, to: Pen, out: &mut Vec<u8>) -> bool {
-    let removed = from.modifier - to.modifier;
-    let mut added = to.modifier - from.modifier;
+    let removed = from.modifier() - to.modifier();
+    let mut added = to.modifier() - from.modifier();
     if removed.intersects(Modifier::BOLD | Modifier::DIM) {
         // 22 ends both bold and dim
         out.extend_from_slice(b";22");
-        added |= to.modifier & (Modifier::BOLD | Modifier::DIM);
+        added |= to.modifier() & (Modifier::BOLD | Modifier::DIM);
     }
     for (flag, code) in [
         (Modifier::ITALIC, b";23"),
@@ -635,20 +723,18 @@ fn diff(from: Pen, to: Pen, out: &mut Vec<u8>) -> bool {
         }
     }
     let mut off = !removed.is_empty();
-    if from.fg != to.fg {
-        off |= to.fg.is_none();
-        color(to.fg.unwrap_or(Color::RESET), 30, out);
+    if from.fg() != to.fg() {
+        off |= to.fg().is_none();
+        color(to.fg().unwrap_or(Color::RESET), 30, out);
     }
-    if from.bg != to.bg {
-        off |= to.bg.is_none();
-        color(to.bg.unwrap_or(Color::RESET), 40, out);
+    if from.bg() != to.bg() {
+        off |= to.bg().is_none();
+        color(to.bg().unwrap_or(Color::RESET), 40, out);
     }
-    if from.underline != to.underline {
-        match to.underline {
-            Some((r, g, b)) => {
-                out.extend_from_slice(b";58;2");
-                rgb(r, g, b, out);
-            }
+    if from.underline() != to.underline() {
+        match to.underline() {
+            // RGB, as Pen::of keeps it: `;58;2;r;g;b`
+            Some(c) => color(c, 50, out),
             None => {
                 off = true;
                 out.extend_from_slice(b";59");
@@ -757,7 +843,7 @@ mod tests {
             spaces: 0,
         };
         let mut out = Vec::new();
-        line.set(Pen::of(to), &mut out, &mut Vec::new());
+        line.set(Pen::of(to), &mut out, &mut Sgr::new());
         String::from_utf8(out).unwrap()
     }
 
@@ -790,6 +876,48 @@ mod tests {
     }
 
     #[test]
+    fn the_longest_change_fits_a_slot() {
+        let white = Color::rgb(255, 255, 255);
+        let all = Style::new()
+            .fg(white)
+            .bg(white)
+            .underline_color(white)
+            .add_modifier(PRINTED);
+        let longest = sgr(Style::new(), all);
+        assert_eq!(longest.len(), 65);
+        assert!(longest.len() <= SGR_MAX);
+        assert_eq!(size_of::<Slot>(), 128);
+    }
+
+    #[test]
+    fn a_change_from_the_cache_is_the_change_written() {
+        // more pairs than slots, each written twice, so that slots are taken, hit and replaced
+        let pens: Vec<Pen> = (0..24u8)
+            .map(|i| {
+                let style = Style::new()
+                    .fg(Color::rgb(i, 200, 255 - i))
+                    .add_modifier(Modifier::from_bits_truncate(u16::from(i) * 37) & PRINTED);
+                Pen::of(if i % 3 == 0 {
+                    style.bg(Color::indexed(i))
+                } else {
+                    style
+                })
+            })
+            .collect();
+        let mut cache = Sgr::new();
+        for _ in 0..2 {
+            for &from in &pens {
+                for &to in pens.iter().filter(|&&to| to != from) {
+                    let (mut cached, mut fresh) = (Vec::new(), Vec::new());
+                    cache.write(from, to, &mut cached);
+                    change(from, to, &mut fresh, &mut Vec::new());
+                    assert_eq!(cached, fresh);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn numbers_are_written_after_a_separator() {
         for n in 0..=u8::MAX {
             let mut out = b"x".to_vec();
@@ -803,7 +931,7 @@ mod tests {
         let mut line = Line::default();
         let mut out = Vec::new();
         for &(text, style) in spans {
-            line.span(text, Pen::of(style), &mut out, &mut Vec::new());
+            line.span(text, Pen::of(style), &mut out, &mut Sgr::new());
         }
         String::from_utf8(out).unwrap()
     }
@@ -1295,10 +1423,10 @@ mod tests {
                 landed: Some(painter.layout.rows[7 + BATCH].src),
                 ..Overlay::default()
             };
-            let (mut one, mut scratch) = (Vec::new(), Vec::new());
+            let (mut one, mut sgr) = (Vec::new(), Sgr::new());
             for r in rows.clone() {
                 let row = &painter.layout.rows[r];
-                let line = start_line(painter, &overlay, r, row, &mut one, &mut scratch);
+                let line = start_line(painter, &overlay, r, row, &mut one, &mut sgr);
                 end_line(&line, &mut one);
             }
             for n in [2, 3, 5] {
