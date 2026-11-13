@@ -276,7 +276,7 @@ struct Paint<'a> {
 
 impl Paint<'_> {
     /// Paint a piece; `spare` is a layout no longer needed, and comes back for the next piece.
-    fn piece(&self, piece: Piece, spare: Layout) -> (String, Layout) {
+    fn piece(&self, piece: Piece, spare: Layout) -> (Vec<u8>, Layout) {
         let text = Arc::clone(&piece.text);
         let doc = doc::file::code_piece(text, self.lang, piece.first_line, piece.index as u64);
         let BlockKind::Code(code) = &doc.blocks[0].kind else {
@@ -303,8 +303,8 @@ impl Paint<'_> {
         let rows = layout.rows.len();
         let from = usize::from(!piece.first);
         let to = rows - usize::from(!piece.last);
-        let mut out = String::with_capacity(piece.text.len() * 2);
-        let mut scratch = String::new();
+        let mut out = Vec::with_capacity(piece.text.len() * 2);
+        let mut scratch = Vec::new();
         for (r, row) in layout.rows.iter().enumerate().take(to).skip(from) {
             let line = start_line(
                 &painter,
@@ -422,7 +422,7 @@ impl Stream {
 /// Write the painted pieces as they come back, in order, handing back a token for each to let
 /// the reader read on. A piece that comes back unpainted stops the writing.
 fn write_in_order(
-    done: Receiver<(usize, Option<String>)>,
+    done: Receiver<(usize, Option<Vec<u8>>)>,
     tokens: &SyncSender<()>,
     w: &mut impl Write,
 ) -> io::Result<()> {
@@ -434,7 +434,7 @@ fn write_in_order(
             let Some(out) = out else {
                 return Err(io::Error::other("a piece of the file failed to print"));
             };
-            w.write_all(out.as_bytes())?;
+            w.write_all(&out)?;
             next += 1;
             let _ = tokens.send(());
         }

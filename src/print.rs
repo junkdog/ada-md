@@ -175,9 +175,9 @@ pub fn write(
         w.write_all("\n".repeat(pad).as_bytes())?;
         return paint_on(&painter, &overlay, skip..end, painters, w);
     }
-    let mut out = String::with_capacity(PIECE * 2);
-    out.extend(std::iter::repeat_n('\n', pad));
-    let mut scratch = String::new();
+    let mut out = Vec::with_capacity(PIECE * 2);
+    out.resize(pad, b'\n');
+    let mut scratch = Vec::new();
     let mut image: Option<(u32, Drawn)> = None;
     let rows = layout.rows.iter().enumerate().skip(skip);
     for (r, row) in rows.take(opts.rows.unwrap_or(usize::MAX)) {
@@ -187,7 +187,7 @@ pub fn write(
         {
             if image.as_ref().is_none_or(|(s, _)| *s != slot) {
                 // a kitty image is sent before the first of its rows that shows
-                w.write_all(out.as_bytes())?;
+                w.write_all(&out)?;
                 out.clear();
                 image = Some((slot, Drawn::new(pictures, at, slot, w)?));
             }
@@ -198,11 +198,11 @@ pub fn write(
         }
         end_line(&line, &mut out);
         if out.len() >= PIECE {
-            w.write_all(out.as_bytes())?;
+            w.write_all(&out)?;
             out.clear();
         }
     }
-    w.write_all(out.as_bytes())
+    w.write_all(&out)
 }
 
 /// Rows a painting thread takes at a time: about 80 KB of output on XL.
@@ -222,13 +222,13 @@ fn paint_on(
     thread::scope(|s| {
         let painted: Vec<_> = (0..n)
             .map(|i| {
-                let (tx, rx) = mpsc::sync_channel::<String>(1);
+                let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
                 let rows = rows.clone();
                 s.spawn(move || {
-                    let mut scratch = String::new();
+                    let mut scratch = Vec::new();
                     for b in (i..batches).step_by(n) {
                         let from = rows.start + b * BATCH;
-                        let mut out = String::with_capacity(PIECE * 2);
+                        let mut out = Vec::with_capacity(PIECE * 2);
                         for r in from..(from + BATCH).min(rows.end) {
                             let row = &painter.layout.rows[r];
                             let line = start_line(painter, overlay, r, row, &mut out, &mut scratch);
@@ -247,7 +247,7 @@ fn paint_on(
             let Ok(out) = painted[b % n].recv() else {
                 break;
             };
-            w.write_all(out.as_bytes())?;
+            w.write_all(&out)?;
         }
         Ok(())
     })
@@ -259,8 +259,8 @@ fn start_line(
     overlay: &Overlay,
     r: usize,
     row: &Row,
-    out: &mut String,
-    scratch: &mut String,
+    out: &mut Vec<u8>,
+    scratch: &mut Vec<u8>,
 ) -> Line {
     let mut line = Line::default();
     let mut emit = |text: &str, style| {
@@ -406,11 +406,11 @@ impl<'a> Overlay<'a> {
 }
 
 /// End an output line with no style left on.
-fn end_line(line: &Line, out: &mut String) {
+fn end_line(line: &Line, out: &mut Vec<u8>) {
     if line.pen != Pen::default() {
-        out.push_str("\x1b[0m");
+        out.extend_from_slice(b"\x1b[0m");
     }
-    out.push('\n');
+    out.push(b'\n');
 }
 
 /// A block image, ready for its rows.
@@ -468,7 +468,7 @@ impl Drawn {
     }
 
     /// Row `y` of the image.
-    fn row(&self, y: u32, frame: Pen, line: &mut Line, out: &mut String, scratch: &mut String) {
+    fn row(&self, y: u32, frame: Pen, line: &mut Line, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
         match self {
             Drawn::Kitty { id, cols } => {
                 let (r, g, b) = kitty::id_color(*id);
@@ -512,7 +512,7 @@ struct Line {
 }
 
 impl Line {
-    fn span(&mut self, text: &str, style: Pen, out: &mut String, scratch: &mut String) {
+    fn span(&mut self, text: &str, style: Pen, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
         let blank = text.bytes().all(|b| b == b' ') && !style.modifier.intersects(VISIBLE_ON_BLANK);
         if blank && style.bg.is_none() {
             self.spaces += text.len();
@@ -522,7 +522,7 @@ impl Line {
             // with this span's style, if that draws them
             let fits = style.bg.is_none() && !style.modifier.intersects(VISIBLE_ON_BLANK);
             self.blank(if fits { style } else { Pen::default() }, out, scratch);
-            out.extend(std::iter::repeat_n(' ', self.spaces));
+            out.resize(out.len() + self.spaces, b' ');
             self.spaces = 0;
         }
         if blank {
@@ -530,34 +530,36 @@ impl Line {
         } else {
             self.set(style, out, scratch);
         }
-        out.push_str(text);
+        out.extend_from_slice(text.as_bytes());
     }
 
     /// For blanks, which show only their background: keep the pen if it draws them so.
-    fn blank(&mut self, style: Pen, out: &mut String, scratch: &mut String) {
+    fn blank(&mut self, style: Pen, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
         if self.pen.bg != style.bg || self.pen.modifier.intersects(VISIBLE_ON_BLANK) {
             self.set(style, out, scratch);
         }
     }
 
     /// Change the pen to `to`: what differs, or a reset and all of `to`, whichever is shorter.
-    /// Only a change that turns something off can be longer than the reset.
-    fn set(&mut self, to: Pen, out: &mut String, scratch: &mut String) {
+    /// Only a change that turns something off can be longer than the reset. Every parameter is
+    /// written after a `;`, and the first `;` becomes the `[` (pens that differ write at least one).
+    fn set(&mut self, to: Pen, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
         if self.pen == to {
             return;
         }
         let start = out.len();
-        out.push_str("\x1b[");
+        out.push(b'\x1b');
         if diff(self.pen, to, out) {
             scratch.clear();
-            scratch.push('0');
+            scratch.extend_from_slice(b"[0");
             diff(Pen::default(), to, scratch);
-            if scratch.len() < out.len() - start - 2 {
-                out.truncate(start + 2);
-                out.push_str(scratch);
+            if scratch.len() < out.len() - (start + 1) {
+                out.truncate(start + 1);
+                out.extend_from_slice(scratch);
             }
         }
-        out.push('m');
+        out[start + 1] = b'[';
+        out.push(b'm');
         self.pen = to;
     }
 }
@@ -601,36 +603,35 @@ impl Pen {
     }
 }
 
-/// SGR parameters from `from` to `to`, separated by `;`. Returns whether any turns something off.
-/// One right after the `[` takes no `;`, so none needs removing later.
-fn diff(from: Pen, to: Pen, out: &mut String) -> bool {
+/// SGR parameters from `from` to `to`, each after a `;`. Returns whether any turns something off.
+fn diff(from: Pen, to: Pen, out: &mut Vec<u8>) -> bool {
     let removed = from.modifier - to.modifier;
     let mut added = to.modifier - from.modifier;
     if removed.intersects(Modifier::BOLD | Modifier::DIM) {
         // 22 ends both bold and dim
-        param(";22", out);
+        out.extend_from_slice(b";22");
         added |= to.modifier & (Modifier::BOLD | Modifier::DIM);
     }
     for (flag, code) in [
-        (Modifier::ITALIC, ";23"),
-        (Modifier::UNDERLINED, ";24"),
-        (Modifier::REVERSED, ";27"),
-        (Modifier::CROSSED_OUT, ";29"),
+        (Modifier::ITALIC, b";23"),
+        (Modifier::UNDERLINED, b";24"),
+        (Modifier::REVERSED, b";27"),
+        (Modifier::CROSSED_OUT, b";29"),
     ] {
         if removed.contains(flag) {
-            param(code, out);
+            out.extend_from_slice(code);
         }
     }
     for (flag, code) in [
-        (Modifier::BOLD, ";1"),
-        (Modifier::DIM, ";2"),
-        (Modifier::ITALIC, ";3"),
-        (Modifier::UNDERLINED, ";4"),
-        (Modifier::REVERSED, ";7"),
-        (Modifier::CROSSED_OUT, ";9"),
+        (Modifier::BOLD, b";1"),
+        (Modifier::DIM, b";2"),
+        (Modifier::ITALIC, b";3"),
+        (Modifier::UNDERLINED, b";4"),
+        (Modifier::REVERSED, b";7"),
+        (Modifier::CROSSED_OUT, b";9"),
     ] {
         if added.contains(flag) {
-            param(code, out);
+            out.extend_from_slice(code);
         }
     }
     let mut off = !removed.is_empty();
@@ -645,12 +646,12 @@ fn diff(from: Pen, to: Pen, out: &mut String) -> bool {
     if from.underline != to.underline {
         match to.underline {
             Some((r, g, b)) => {
-                param(";58;2", out);
+                out.extend_from_slice(b";58;2");
                 rgb(r, g, b, out);
             }
             None => {
                 off = true;
-                param(";59", out);
+                out.extend_from_slice(b";59");
             }
         }
     }
@@ -690,51 +691,60 @@ pub fn run(doc: &Doc, theme: &Theme, params: LayoutParams, opts: Options) -> io:
     }
 }
 
-fn color(c: Color, base: u8, out: &mut String) {
-    if !out.ends_with('[') {
-        out.push(';');
-    }
+/// A color's SGR parameters, each after a `;`.
+fn color(c: Color, base: u8, out: &mut Vec<u8>) {
     // the 16 named colors go as `3x`/`9x` (and `4x`/`10x`), the rest by index
-    let n = match c.kind() {
-        Kind::Reset => base + 9,
+    match c.kind() {
+        Kind::Reset => number(base + 9, out),
         Kind::Rgb(r, g, b) => {
             number(base + 8, out);
-            out.push_str(";2");
-            return rgb(r, g, b, out);
+            out.extend_from_slice(b";2");
+            rgb(r, g, b, out);
         }
-        Kind::Indexed(n @ 0..8) => base + n,
-        Kind::Indexed(n @ 8..16) => base + 60 + n - 8,
+        Kind::Indexed(n @ 0..8) => number(base + n, out),
+        Kind::Indexed(n @ 8..16) => number(base + 60 + n - 8, out),
         Kind::Indexed(n) => {
             number(base + 8, out);
-            out.push_str(";5;");
-            return number(n, out);
+            out.extend_from_slice(b";5");
+            number(n, out);
         }
-    };
-    number(n, out);
+    }
 }
 
 /// `;r;g;b`.
-fn rgb(r: u8, g: u8, b: u8, out: &mut String) {
+fn rgb(r: u8, g: u8, b: u8, out: &mut Vec<u8>) {
     for n in [r, g, b] {
-        out.push(';');
         number(n, out);
     }
 }
 
-/// A parameter `code`, which starts with its `;`: left out when it's the sequence's first.
-fn param(code: &str, out: &mut String) {
-    out.push_str(if out.ends_with('[') { &code[1..] } else { code });
+/// `;n`: four bytes from [`PARAMS`] in one store, then cut to its length (PRN-004).
+fn number(n: u8, out: &mut Vec<u8>) {
+    let len = 2 + usize::from(n >= 10) + usize::from(n >= 100);
+    let at = out.len();
+    out.extend_from_slice(&PARAMS[usize::from(n)]);
+    out.truncate(at + len);
 }
 
-fn number(n: u8, out: &mut String) {
-    if n >= 100 {
-        out.push(char::from(b'0' + n / 100));
+/// `;` and the decimal digits of each of 0 to 255, padded to four bytes.
+const PARAMS: [[u8; 4]; 256] = {
+    let mut table = [[0; 4]; 256];
+    let mut n = 0;
+    while n < 256 {
+        let digits = match n {
+            0..10 => [b'0' + n as u8, 0, 0],
+            10..100 => [b'0' + (n / 10) as u8, b'0' + (n % 10) as u8, 0],
+            _ => [
+                b'0' + (n / 100) as u8,
+                b'0' + (n / 10 % 10) as u8,
+                b'0' + (n % 10) as u8,
+            ],
+        };
+        table[n] = [b';', digits[0], digits[1], digits[2]];
+        n += 1;
     }
-    if n >= 10 {
-        out.push(char::from(b'0' + n / 10 % 10));
-    }
-    out.push(char::from(b'0' + n % 10));
-}
+    table
+};
 
 #[cfg(test)]
 mod tests {
@@ -746,9 +756,9 @@ mod tests {
             pen: Pen::of(from),
             spaces: 0,
         };
-        let mut out = String::new();
-        line.set(Pen::of(to), &mut out, &mut String::new());
-        out
+        let mut out = Vec::new();
+        line.set(Pen::of(to), &mut out, &mut Vec::new());
+        String::from_utf8(out).unwrap()
     }
 
     #[test]
@@ -779,14 +789,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn numbers_are_written_after_a_separator() {
+        for n in 0..=u8::MAX {
+            let mut out = b"x".to_vec();
+            number(n, &mut out);
+            assert_eq!(out, format!("x;{n}").as_bytes());
+        }
+    }
+
     /// A line's spans, printed.
     fn line(spans: &[(&str, Style)]) -> String {
         let mut line = Line::default();
-        let mut out = String::new();
+        let mut out = Vec::new();
         for &(text, style) in spans {
-            line.span(text, Pen::of(style), &mut out, &mut String::new());
+            line.span(text, Pen::of(style), &mut out, &mut Vec::new());
         }
-        out
+        String::from_utf8(out).unwrap()
     }
 
     #[test]
@@ -1138,9 +1157,12 @@ mod tests {
     /// The SGR parameters of color `c`, as a print writes them: base 30 a foreground, 40 a
     /// background.
     fn sgr_of(c: Color, base: u8) -> String {
-        let mut out = String::new();
+        let mut out = Vec::new();
         color(c, base, &mut out);
-        out.trim_start_matches(';').to_owned()
+        String::from_utf8(out)
+            .unwrap()
+            .trim_start_matches(';')
+            .to_owned()
     }
 
     fn bg_of(key: StyleKey) -> String {
@@ -1273,7 +1295,7 @@ mod tests {
                 landed: Some(painter.layout.rows[7 + BATCH].src),
                 ..Overlay::default()
             };
-            let (mut one, mut scratch) = (String::new(), String::new());
+            let (mut one, mut scratch) = (Vec::new(), Vec::new());
             for r in rows.clone() {
                 let row = &painter.layout.rows[r];
                 let line = start_line(painter, &overlay, r, row, &mut one, &mut scratch);
@@ -1282,7 +1304,7 @@ mod tests {
             for n in [2, 3, 5] {
                 let mut out = Vec::new();
                 paint_on(painter, &overlay, rows.clone(), n, &mut out).unwrap();
-                assert!(out == one.as_bytes(), "{n} threads");
+                assert!(out == one, "{n} threads");
             }
         });
     }
