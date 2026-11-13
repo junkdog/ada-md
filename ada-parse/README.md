@@ -52,8 +52,8 @@ nothing.
 
 Single-threaded, on an AMD Ryzen AI MAX+ PRO 395 (November 2026):
 
-- **Code:** 270–790 MB/s, most languages between 450 and 720 (Go is the slowest, PHP the
-  fastest).
+- **Code:** 370–790 MB/s, most languages between 450 and 730 (Scheme and Racket are the
+  slowest, PHP the fastest).
 - **Config and data:** 0.45–7.7 GB/s, most above 0.8 (JSON 1.4, TOML 1.2, YAML 0.9, diff
   7.7); Makefile, mostly shell, is the slowest.
 - **Against syntect** on bat's grammars, which ada used before: 100–400× faster for most

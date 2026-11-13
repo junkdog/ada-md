@@ -29,15 +29,6 @@ pub const fn char_len(c: u8) -> usize {
     }
 }
 
-/// The character after the one at `p` (`p + 1` at the line's end or past it).
-#[inline]
-pub fn next_char(b: &[u8], p: usize) -> usize {
-    match b.get(p) {
-        Some(&c) => (p + char_len(c)).min(b.len()),
-        None => p + 1,
-    }
-}
-
 /// The character that starts at byte `i` of `b`, past ASCII.
 #[cold]
 pub fn wide_char(b: &[u8], i: usize) -> Option<char> {
@@ -105,11 +96,6 @@ pub fn word_end(b: &[u8], mut p: usize) -> usize {
             return p.min(b.len());
         }
     }
-}
-
-/// Whether `\b` holds before `p`, at a word's start ([`is_word`]).
-pub fn starts_word(b: &[u8], p: usize) -> bool {
-    p == 0 || !is_word(b, p - 1)
 }
 
 /// Whether the character at `i` can start a name, `[[:alpha:]_]`.

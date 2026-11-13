@@ -909,8 +909,8 @@ fn string_end(b: &[u8], mut p: usize, text_block: bool) -> usize {
     }
 }
 
-/// The character after the one at `i`, which must be in the line (no end test: `prim::next_char`'s
-/// costs Java ~0.25% of its instructions).
+/// The character after the one at `i`, which must be in the line (no end test: one cost Java
+/// ~0.25% of its instructions).
 #[inline]
 fn next(b: &[u8], i: usize) -> usize {
     (i + char_len(b[i])).min(b.len())

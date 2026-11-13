@@ -120,11 +120,11 @@
   26 | \tPair[K comparable, V any] struct {
        "Pair" entity.name.type.go
        "[" punctuation.section.brackets.begin.go
-       "K" variable.other.go
-       "comparable" variable.other.go
+       "K" variable.parameter.go
+       "comparable" storage.type.go support.type.builtin.go
        "," punctuation.separator.go
-       "V" variable.other.go
-       "any" variable.other.go
+       "V" variable.parameter.go
+       "any" storage.type.go support.type.builtin.go
        "]" punctuation.section.brackets.end.go
        "struct" storage.type.keyword.struct.go
        "{" punctuation.section.braces.begin.go
@@ -154,9 +154,9 @@
        "=" keyword.operator.assignment.go
        "Pair" storage.type.go
        "[" punctuation.section.brackets.begin.go
-       "string" entity.name.type.go
+       "string" storage.type.go support.type.builtin.go
        "," punctuation.separator.go
-       "int" entity.name.type.go
+       "int" storage.type.go support.type.builtin.go
        "]" punctuation.section.brackets.end.go
   33 | \tI     interface {
        "I" entity.name.type.go
@@ -197,9 +197,11 @@
        "p" variable.parameter.go
        "*" keyword.operator.go
        "Pair" storage.type.go
-       "K" variable.parameter.go
+       "[" punctuation.section.brackets.begin.go
+       "K" storage.type.go
        "," punctuation.separator.go
-       "V" variable.parameter.go
+       "V" storage.type.go
+       "]" punctuation.section.brackets.end.go
        ")" punctuation.section.parens.end.go
        "Swap" entity.name.function.go
        "(" punctuation.section.parens.begin.go
@@ -215,9 +217,11 @@
        "(" punctuation.section.parens.begin.go
        "r" variable.parameter.go
        "Pair" storage.type.go
-       "V" variable.parameter.go
+       "[" punctuation.section.brackets.begin.go
+       "V" storage.type.go
        "," punctuation.separator.go
-       "K" variable.parameter.go
+       "K" storage.type.go
+       "]" punctuation.section.brackets.end.go
        ")" punctuation.section.parens.end.go
        "{" punctuation.section.braces.begin.go
   41 | \tx, y := 0x1F, 0o17i + 1.5e-3 + .5 + 0x1p-2 + 089 + 1_000 + '\n' + '\x41' + 'é'
@@ -257,13 +261,11 @@
        "'é'" constant.character.go
   42 | \tx &^= y; x <<= 1; x >>= 2; ok := x != y && !(x <= y) || x >= y
        "x" variable.other.go
-       "&" keyword.operator.go
-       "^=" keyword.operator.assignment.go
+       "&^=" keyword.operator.assignment.go
        "y" variable.other.go
        ";" punctuation.terminator.go
        "x" variable.other.go
-       "<<" keyword.operator.go
-       "=" keyword.operator.assignment.go
+       "<<=" keyword.operator.assignment.go
        "1" constant.numeric.integer.decimal.go
        ";" punctuation.terminator.go
        "x" variable.other.go
@@ -279,13 +281,12 @@
        "!" keyword.operator.go
        "(" punctuation.section.parens.begin.go
        "x" variable.other.go
-       "<" keyword.operator.go
-       "=" keyword.operator.assignment.go
+       "<=" keyword.operator.go
        "y" variable.other.go
        ")" punctuation.section.parens.end.go
        "||" keyword.operator.go
        "x" variable.other.go
-       ">=" keyword.operator.assignment.go
+       ">=" keyword.operator.go
        "y" variable.other.go
   43 | \ts := "%5.2f %[1]q %% {{.Name | printf \"%v\" | html}} \u00e9\t" + `raw {{ $v := .X }}
        "s" variable.declaration.go
@@ -304,14 +305,19 @@
        "|" meta.interpolation.go keyword.operator.template.pipe.go
        " " meta.interpolation.go
        "printf" meta.interpolation.go variable.function.go support.function.builtin.go
-       " \\" meta.interpolation.go
-       "\"" string.quoted.double.go punctuation.definition.string.begin.go
+       " " meta.interpolation.go
+       "\\\"" string.quoted.double.go punctuation.definition.string.begin.go
        "%v" string.quoted.double.go constant.other.placeholder.go
-       "\\\"" string.quoted.double.go constant.character.escape.go
-       " | html}} " string.quoted.double.go
+       "\\\"" string.quoted.double.go punctuation.definition.string.end.go
+       " " meta.interpolation.go
+       "|" meta.interpolation.go keyword.operator.template.pipe.go
+       " " meta.interpolation.go
+       "html" meta.interpolation.go variable.function.go support.function.builtin.go
+       "}}" meta.interpolation.go punctuation.section.interpolation.end.go
+       " " string.quoted.double.go
        "\\u00e9\\t" string.quoted.double.go constant.character.escape.go
        "\"" string.quoted.double.go punctuation.definition.string.end.go
-       " + " meta.interpolation.go
+       "+" keyword.operator.go
        "`" string.quoted.other.go punctuation.definition.string.begin.go
        "raw " string.quoted.other.go
        "{{" meta.interpolation.go punctuation.section.interpolation.begin.go
@@ -330,77 +336,407 @@
        "%d" string.quoted.other.go constant.other.placeholder.go
        "`" string.quoted.other.go punctuation.definition.string.end.go
   45 | \tv := make([]map[string]int, 3); w := new(Pair[int, int]); n := len(v) + cap(v)
-       "\tv " meta.interpolation.go
-       ":=" meta.interpolation.go keyword.operator.assignment.go
-       " make([]map[string]int, 3); w " meta.interpolation.go
-       ":=" meta.interpolation.go keyword.operator.assignment.go
-       " new(Pair[int, int]); n " meta.interpolation.go
-       ":=" meta.interpolation.go keyword.operator.assignment.go
-       " " meta.interpolation.go
-       "len" meta.interpolation.go variable.function.go support.function.builtin.go
-       "(v) + cap(v)" meta.interpolation.go
+       "v" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "make" variable.function.go support.function.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "[" punctuation.section.brackets.begin.go
+       "]" punctuation.section.brackets.end.go
+       "map" storage.type.keyword.map.go
+       "[" punctuation.section.brackets.begin.go
+       "string" storage.type.go support.type.builtin.go
+       "]" punctuation.section.brackets.end.go
+       "int" storage.type.go support.type.builtin.go
+       "," punctuation.separator.go
+       "3" constant.numeric.integer.decimal.go
+       ")" punctuation.section.parens.end.go
+       ";" punctuation.terminator.go
+       "w" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "new" variable.function.go support.function.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "Pair" storage.type.go
+       "[" punctuation.section.brackets.begin.go
+       "int" storage.type.go support.type.builtin.go
+       "," punctuation.separator.go
+       "int" storage.type.go support.type.builtin.go
+       "]" punctuation.section.brackets.end.go
+       ")" punctuation.section.parens.end.go
+       ";" punctuation.terminator.go
+       "n" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "len" variable.function.go support.function.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "v" variable.other.go
+       ")" punctuation.section.parens.end.go
+       "+" keyword.operator.go
+       "cap" variable.function.go support.function.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "v" variable.other.go
+       ")" punctuation.section.parens.end.go
   46 | \tswitch t := any(v).(type) { case int, string: fallthrough; default: _ = t }
-       "\tswitch t " meta.interpolation.go
-       ":=" meta.interpolation.go keyword.operator.assignment.go
-       " any(v)" meta.interpolation.go
-       "." meta.interpolation.go variable.other.template.go
-       "(type) { case int, string: fallthrough; default: _ " meta.interpolation.go
-       "=" meta.interpolation.go keyword.operator.assignment.go
-       " t }" meta.interpolation.go
+       "switch" keyword.control.go
+       "t" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "any" variable.function.go support.type.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "v" variable.other.go
+       ")" punctuation.section.parens.end.go
+       "." punctuation.accessor.dot.go
+       "(" punctuation.section.parens.begin.go
+       "type" storage.type.keyword.type.go
+       ")" punctuation.section.parens.end.go
+       "{" punctuation.section.braces.begin.go
+       "case" keyword.control.go
+       "int" storage.type.go support.type.builtin.go
+       "," punctuation.separator.go
+       "string" storage.type.go support.type.builtin.go
+       ":" punctuation.separator.go
+       "fallthrough" keyword.control.go
+       ";" punctuation.terminator.go
+       "default" keyword.control.go
+       ":" punctuation.separator.go
+       "_" variable.language.blank.go
+       "=" keyword.operator.assignment.go
+       "t" variable.other.go
+       "}" punctuation.section.braces.end.go
   47 | \tfor i := range v { if i > 0 { continue } else { break } }
-       "\tfor i " meta.interpolation.go
-       ":=" meta.interpolation.go keyword.operator.assignment.go
-       " " meta.interpolation.go
-       "range" meta.interpolation.go keyword.control.go
-       " v { " meta.interpolation.go
-       "if" meta.interpolation.go keyword.control.go
-       " i > 0 { continue } " meta.interpolation.go
-       "else" meta.interpolation.go keyword.control.go
-       " { break } }" meta.interpolation.go
+       "for" keyword.control.go
+       "i" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "range" keyword.other.go
+       "v" variable.other.go
+       "{" punctuation.section.braces.begin.go
+       "if" keyword.control.go
+       "i" variable.other.go
+       ">" keyword.operator.go
+       "0" constant.numeric.integer.decimal.go
+       "{" punctuation.section.braces.begin.go
+       "continue" keyword.control.go
+       "}" punctuation.section.braces.end.go
+       "else" keyword.control.go
+       "{" punctuation.section.braces.begin.go
+       "break" keyword.control.go
+       "}" punctuation.section.braces.end.go
+       "}" punctuation.section.braces.end.go
   48 | \tgo func() { defer close(ch2) }(); select { case <-done: return }
-       "\tgo func() { defer close(ch2) }(); select { case <-done: return }" meta.interpolation.go
+       "go" keyword.control.go
+       "func" storage.type.keyword.function.go
+       "(" punctuation.section.parens.begin.go
+       ")" punctuation.section.parens.end.go
+       "{" punctuation.section.braces.begin.go
+       "defer" keyword.control.go
+       "close" variable.function.go support.function.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "ch2" variable.other.go
+       ")" punctuation.section.parens.end.go
+       "}" punctuation.section.braces.end.go
+       "(" punctuation.section.parens.begin.go
+       ")" punctuation.section.parens.end.go
+       ";" punctuation.terminator.go
+       "select" keyword.control.go
+       "{" punctuation.section.braces.begin.go
+       "case" keyword.control.go
+       "<-" keyword.operator.go
+       "done" variable.other.go
+       ":" punctuation.separator.go
+       "return" keyword.control.go
+       "}" punctuation.section.braces.end.go
   49 | \tf := func(a int) int { return a * 2 }; _ = (f(1)); goto end
-       "\tf " meta.interpolation.go
-       ":=" meta.interpolation.go keyword.operator.assignment.go
-       " func(a int) int { return a * 2 }; _ " meta.interpolation.go
-       "=" meta.interpolation.go keyword.operator.assignment.go
-       " (f(1)); goto " meta.interpolation.go
-       "end" meta.interpolation.go keyword.control.go
+       "f" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "func" storage.type.keyword.function.go
+       "(" punctuation.section.parens.begin.go
+       "a" variable.parameter.go
+       "int" storage.type.go support.type.builtin.go
+       ")" punctuation.section.parens.end.go
+       "int" storage.type.go support.type.builtin.go
+       "{" punctuation.section.braces.begin.go
+       "return" keyword.control.go
+       "a" variable.other.go
+       "*" keyword.operator.go
+       "2" constant.numeric.integer.decimal.go
+       "}" punctuation.section.braces.end.go
+       ";" punctuation.terminator.go
+       "_" variable.language.blank.go
+       "=" keyword.operator.assignment.go
+       "(" punctuation.section.parens.begin.go
+       "f" variable.function.go
+       "(" punctuation.section.parens.begin.go
+       "1" constant.numeric.integer.decimal.go
+       "))" punctuation.section.parens.end.go
+       ";" punctuation.terminator.go
+       "goto" keyword.control.go
+       "end" variable.other.go
   50 | end:
-       "end" meta.interpolation.go keyword.control.go
-       ":" meta.interpolation.go
+       "end" variable.other.go
+       ":" punctuation.separator.go
   51 | \tfmt.Println(str.ToUpper("x"), int64(x), []byte(s), true, false, nil, ٣, x.y.z)
-       "\tfmt" meta.interpolation.go
-       "." meta.interpolation.go punctuation.accessor.dot.go
-       "Println" meta.interpolation.go variable.other.member.go
-       "(str" meta.interpolation.go
-       "." meta.interpolation.go punctuation.accessor.dot.go
-       "ToUpper" meta.interpolation.go variable.other.member.go
-       "(" meta.interpolation.go
+       "fmt" variable.other.go
+       "." punctuation.accessor.dot.go
+       "Println" variable.function.go
+       "(" punctuation.section.parens.begin.go
+       "str" variable.other.go
+       "." punctuation.accessor.dot.go
+       "ToUpper" variable.function.go
+       "(" punctuation.section.parens.begin.go
        "\"" string.quoted.double.go punctuation.definition.string.begin.go
        "x" string.quoted.double.go
        "\"" string.quoted.double.go punctuation.definition.string.end.go
-       "), int64(x), []byte(s), true, false, " meta.interpolation.go
-       "nil" meta.interpolation.go keyword.control.go
-       ", ٣, x" meta.interpolation.go
-       "." meta.interpolation.go punctuation.accessor.dot.go
-       "y" meta.interpolation.go variable.other.member.go
-       "." meta.interpolation.go punctuation.accessor.dot.go
-       "z" meta.interpolation.go variable.other.member.go
-       ")" meta.interpolation.go
+       ")" punctuation.section.parens.end.go
+       "," punctuation.separator.go
+       "int64" variable.function.go support.type.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "x" variable.other.go
+       ")" punctuation.section.parens.end.go
+       "," punctuation.separator.go
+       "[" punctuation.section.brackets.begin.go
+       "]" punctuation.section.brackets.end.go
+       "byte" storage.type.go support.type.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "s" variable.other.go
+       ")" punctuation.section.parens.end.go
+       "," punctuation.separator.go
+       "true" constant.language.go
+       "," punctuation.separator.go
+       "false" constant.language.go
+       "," punctuation.separator.go
+       "nil" constant.language.go
+       "," punctuation.separator.go
+       "," punctuation.separator.go
+       "x" variable.other.go
+       "." punctuation.accessor.dot.go
+       "y" variable.other.member.go
+       "." punctuation.accessor.dot.go
+       "z" variable.other.member.go
+       ")" punctuation.section.parens.end.go
   52 | \tvar q struct{ a, b int }; var e error = nil; const k, l = 1, 2
-       "\tvar q struct{ a, b int }; var e error " meta.interpolation.go
-       "=" meta.interpolation.go keyword.operator.assignment.go
-       " " meta.interpolation.go
-       "nil" meta.interpolation.go keyword.control.go
-       "; const k, l " meta.interpolation.go
-       "=" meta.interpolation.go keyword.operator.assignment.go
-       " 1, 2" meta.interpolation.go
+       "var" storage.type.keyword.var.go
+       "q" variable.declaration.go
+       "struct" storage.type.keyword.struct.go
+       "{" punctuation.section.braces.begin.go
+       "a" variable.other.member.declaration.go
+       "," punctuation.separator.go
+       "b" variable.other.member.declaration.go
+       "int" storage.type.go support.type.builtin.go
+       "}" punctuation.section.braces.end.go
+       ";" punctuation.terminator.go
+       "var" storage.type.keyword.var.go
+       "e" variable.declaration.go
+       "error" storage.type.go support.type.builtin.go
+       "=" keyword.operator.assignment.go
+       "nil" constant.language.go
+       ";" punctuation.terminator.go
+       "const" storage.type.keyword.const.go
+       "k" variable.other.constant.declaration.go
+       "," punctuation.separator.go
+       "l" variable.other.constant.declaration.go
+       "=" keyword.operator.assignment.go
+       "1" constant.numeric.integer.decimal.go
+       "," punctuation.separator.go
+       "2" constant.numeric.integer.decimal.go
   53 | \tm := map[string]
-       "\tm " meta.interpolation.go
-       ":=" meta.interpolation.go keyword.operator.assignment.go
-       " map[string]" meta.interpolation.go
+       "m" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "map" storage.type.keyword.map.go
+       "[" punctuation.section.brackets.begin.go
+       "string" storage.type.go support.type.builtin.go
+       "]" punctuation.section.brackets.end.go
   54 | \treturn
-       "\treturn" meta.interpolation.go
+       "return" keyword.control.go
   55 | }
-       "}" meta.interpolation.go
+       "}" punctuation.section.braces.end.go
+  56 | 
+  57 | // X-168: Go's readings where bat's grammar has none or derails
+       "//" comment.line.go punctuation.definition.comment.go
+       " X-168: Go's readings where bat's grammar has none or derails" comment.line.go
+  58 | func Map[T any, U comparable](xs []T, f func(T) U) (out []U) { return }
+       "func" storage.type.keyword.function.go
+       "Map" entity.name.function.go
+       "[" punctuation.section.brackets.begin.go
+       "T" variable.parameter.go
+       "any" storage.type.go support.type.builtin.go
+       "," punctuation.separator.go
+       "U" variable.parameter.go
+       "comparable" storage.type.go support.type.builtin.go
+       "]" punctuation.section.brackets.end.go
+       "(" punctuation.section.parens.begin.go
+       "xs" variable.parameter.go
+       "[" punctuation.section.brackets.begin.go
+       "]" punctuation.section.brackets.end.go
+       "T" storage.type.go
+       "," punctuation.separator.go
+       "f" variable.parameter.go
+       "func" storage.type.keyword.function.go
+       "(" punctuation.section.parens.begin.go
+       "T" storage.type.go
+       ")" punctuation.section.parens.end.go
+       "U" storage.type.go
+       ")" punctuation.section.parens.end.go
+       "(" punctuation.section.parens.begin.go
+       "out" variable.parameter.go
+       "[" punctuation.section.brackets.begin.go
+       "]" punctuation.section.brackets.end.go
+       "U" storage.type.go
+       ")" punctuation.section.parens.end.go
+       "{" punctuation.section.braces.begin.go
+       "return" keyword.control.go
+       "}" punctuation.section.braces.end.go
+  59 | type Num interface { ~int | ~float64 }
+       "type" storage.type.keyword.type.go
+       "Num" entity.name.type.go
+       "interface" storage.type.keyword.interface.go
+       "{" punctuation.section.braces.begin.go
+       "~" keyword.operator.go
+       "int" storage.type.go support.type.builtin.go
+       "|" keyword.operator.go
+       "~" keyword.operator.go
+       "float64" storage.type.go support.type.builtin.go
+       "}" punctuation.section.braces.end.go
+  60 | func max(a, b int) int { x := y[0] * z; return min(a, b) }
+       "func" storage.type.keyword.function.go
+       "max" entity.name.function.go
+       "(" punctuation.section.parens.begin.go
+       "a" variable.parameter.go
+       "," punctuation.separator.go
+       "b" variable.parameter.go
+       "int" storage.type.go support.type.builtin.go
+       ")" punctuation.section.parens.end.go
+       "int" storage.type.go support.type.builtin.go
+       "{" punctuation.section.braces.begin.go
+       "x" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "y" variable.other.go
+       "[" punctuation.section.brackets.begin.go
+       "0" constant.numeric.integer.decimal.go
+       "]" punctuation.section.brackets.end.go
+       "*" keyword.operator.go
+       "z" variable.other.go
+       ";" punctuation.terminator.go
+       "return" keyword.control.go
+       "min" variable.function.go support.function.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "a" variable.other.go
+       "," punctuation.separator.go
+       "b" variable.other.go
+       ")" punctuation.section.parens.end.go
+       "}" punctuation.section.braces.end.go
+  61 | func (c *conn) close(done chan<- os.Signal) { clear(c.m); rune, n := 'x', 1 }
+       "func" storage.type.keyword.function.go
+       "(" punctuation.section.parens.begin.go
+       "c" variable.parameter.go
+       "*" keyword.operator.go
+       "conn" storage.type.go
+       ")" punctuation.section.parens.end.go
+       "close" entity.name.function.go
+       "(" punctuation.section.parens.begin.go
+       "done" variable.parameter.go
+       "chan" storage.type.keyword.chan.go
+       "<-" keyword.operator.go
+       "os" variable.other.go
+       "." punctuation.accessor.dot.go
+       "Signal" storage.type.go
+       ")" punctuation.section.parens.end.go
+       "{" punctuation.section.braces.begin.go
+       "clear" variable.function.go support.function.builtin.go
+       "(" punctuation.section.parens.begin.go
+       "c" variable.other.go
+       "." punctuation.accessor.dot.go
+       "m" variable.other.member.go
+       ")" punctuation.section.parens.end.go
+       ";" punctuation.terminator.go
+       "rune" variable.declaration.go
+       "," punctuation.separator.go
+       "n" variable.declaration.go
+       ":=" keyword.operator.assignment.go
+       "'x'" constant.character.go
+       "," punctuation.separator.go
+       "1" constant.numeric.integer.decimal.go
+       "}" punctuation.section.braces.end.go
+  62 | func t(v any) { switch v.(type) { case *pkg.T, []byte, nil: } }
+       "func" storage.type.keyword.function.go
+       "t" entity.name.function.go
+       "(" punctuation.section.parens.begin.go
+       "v" variable.parameter.go
+       "any" storage.type.go support.type.builtin.go
+       ")" punctuation.section.parens.end.go
+       "{" punctuation.section.braces.begin.go
+       "switch" keyword.control.go
+       "v" variable.other.go
+       "." punctuation.accessor.dot.go
+       "(" punctuation.section.parens.begin.go
+       "type" storage.type.keyword.type.go
+       ")" punctuation.section.parens.end.go
+       "{" punctuation.section.braces.begin.go
+       "case" keyword.control.go
+       "*" keyword.operator.go
+       "pkg" variable.other.go
+       "." punctuation.accessor.dot.go
+       "T" storage.type.go
+       "," punctuation.separator.go
+       "[" punctuation.section.brackets.begin.go
+       "]" punctuation.section.brackets.end.go
+       "byte" storage.type.go support.type.builtin.go
+       "," punctuation.separator.go
+       "nil" constant.language.go
+       ":" punctuation.separator.go
+       "}" punctuation.section.braces.end.go
+       "}" punctuation.section.braces.end.go
+  63 | var tmpl = "{{ if eq .A \"x\" }}y{{ end }}" + "50% off %d %z \q"
+       "var" storage.type.keyword.var.go
+       "tmpl" variable.declaration.go
+       "=" keyword.operator.assignment.go
+       "\"" string.quoted.double.go punctuation.definition.string.begin.go
+       "{{" meta.interpolation.go punctuation.section.interpolation.begin.go
+       " " meta.interpolation.go
+       "if" meta.interpolation.go keyword.control.go
+       " " meta.interpolation.go
+       "eq" meta.interpolation.go variable.function.go support.function.builtin.go
+       " " meta.interpolation.go
+       "." meta.interpolation.go punctuation.accessor.dot.go
+       "A" meta.interpolation.go variable.other.member.go
+       " " meta.interpolation.go
+       "\\\"" string.quoted.double.go punctuation.definition.string.begin.go
+       "x" string.quoted.double.go
+       "\\\"" string.quoted.double.go punctuation.definition.string.end.go
+       " " meta.interpolation.go
+       "}}" meta.interpolation.go punctuation.section.interpolation.end.go
+       "y" string.quoted.double.go
+       "{{" meta.interpolation.go punctuation.section.interpolation.begin.go
+       " " meta.interpolation.go
+       "end" meta.interpolation.go keyword.control.go
+       " " meta.interpolation.go
+       "}}" meta.interpolation.go punctuation.section.interpolation.end.go
+       "\"" string.quoted.double.go punctuation.definition.string.end.go
+       "+" keyword.operator.go
+       "\"" string.quoted.double.go punctuation.definition.string.begin.go
+       "50% off " string.quoted.double.go
+       "%d" string.quoted.double.go constant.other.placeholder.go
+       " %z " string.quoted.double.go
+       "\\q" string.quoted.double.go invalid.illegal.unknown-escape.go
+       "\"" string.quoted.double.go punctuation.definition.string.end.go
+  64 | var after = []pkg.T{{A: 1}}
+       "var" storage.type.keyword.var.go
+       "after" variable.declaration.go
+       "=" keyword.operator.assignment.go
+       "[" punctuation.section.brackets.begin.go
+       "]" punctuation.section.brackets.end.go
+       "pkg" variable.other.go
+       "." punctuation.accessor.dot.go
+       "T" storage.type.go
+       "{{" punctuation.section.braces.begin.go
+       "A" variable.other.go
+       ":" punctuation.separator.go
+       "1" constant.numeric.integer.decimal.go
+       "}}" punctuation.section.braces.end.go
+  65 | var unclosed = "no end
+       "var" storage.type.keyword.var.go
+       "unclosed" variable.declaration.go
+       "=" keyword.operator.assignment.go
+       "\"" string.quoted.double.go punctuation.definition.string.begin.go
+       "no end" string.quoted.double.go
+  66 | var next = 2
+       "var" storage.type.keyword.var.go
+       "next" variable.declaration.go
+       "=" keyword.operator.assignment.go
+       "2" constant.numeric.integer.decimal.go

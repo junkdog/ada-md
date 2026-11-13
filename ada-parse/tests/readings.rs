@@ -1058,6 +1058,17 @@ fn go() {
         "\tm := map[string]\n",
         "\treturn\n",
         "}\n",
+        "\n",
+        "// X-168: Go's readings where bat's grammar has none or derails\n",
+        "func Map[T any, U comparable](xs []T, f func(T) U) (out []U) { return }\n",
+        "type Num interface { ~int | ~float64 }\n",
+        "func max(a, b int) int { x := y[0] * z; return min(a, b) }\n",
+        "func (c *conn) close(done chan<- os.Signal) { clear(c.m); rune, n := 'x', 1 }\n",
+        "func t(v any) { switch v.(type) { case *pkg.T, []byte, nil: } }\n",
+        "var tmpl = \"{{ if eq .A \\\"x\\\" }}y{{ end }}\" + \"50% off %d %z \\q\"\n",
+        "var after = []pkg.T{{A: 1}}\n",
+        "var unclosed = \"no end\n",
+        "var next = 2\n",
     );
     readings("go", Lang::Go, text);
 }
