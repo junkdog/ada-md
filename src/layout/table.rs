@@ -104,6 +104,7 @@ impl Cells {
             }
         }
         self.rows.push(self.flat.len() as u32);
+        self.flat.seal();
     }
 
     /// Row `r`'s cells, as indices into `flat`.

@@ -3,7 +3,8 @@
 //! Runs are flattened into one buffer of styled pieces, split into words at whitespace and after
 //! `-` and `/`, and packed greedily. A word longer than the line is hard-broken. Style changes
 //! inside a word (`**foo**bar`) never create a break opportunity. Every line keeps the source
-//! lines of the pieces on it.
+//! lines of the pieces on it. Where the text is ASCII with single spaces, a line is filled to its
+//! last word in one step, from masks of the buffer's word ends ([`Cuts`]), not a word at a time.
 //!
 //! A piece may have a searchable *body* between decorations (inline code padding, an image icon).
 //! The bodies of a [`Wrapped`], in order, are its search unit's text (ADR-12), so layout can map
@@ -165,9 +166,12 @@ fn any_suspect(bytes: &[u8]) -> bool {
 
 /// Wrap `runs` to `avail` columns, into `w` (empty, from [`Wrapped::new`] or
 /// [`Wrapped::recycle`]). `key` is the base style of the text; `suffix` is glued to the last
-/// word (a heading's trailing pad). `marks`, the document's, spare its runs a scan.
+/// word (a heading's trailing pad). `marks`, the document's, spare its runs a scan; `cuts` is
+/// a scratch for [`pack`]'s masks, kept for the next paragraph's.
+#[allow(clippy::too_many_arguments)]
 pub fn wrap(
     mut w: Wrapped,
+    cuts: &mut Cuts,
     runs: &[Run],
     key: StyleKey,
     avail: u16,
@@ -184,7 +188,7 @@ pub fn wrap(
             .collect();
         push_piece(&mut w, &text, key, InlineStyle::NONE, None, line);
     }
-    pack(&mut w, avail.max(1));
+    pack(&mut w, avail.max(1), Masks::Build(cuts));
     w
 }
 
@@ -230,6 +234,9 @@ fn measure_buf(buf: &str) -> (u16, u16, u16) {
 pub(crate) struct Flat {
     all: Wrapped,
     cells: Vec<FlatCell>,
+    /// [`pack`]'s masks of `all`'s buffer, built once for every wrap of every cell
+    /// ([`Flat::seal`]; LAY-007: a table wraps a cell at more than one width).
+    cuts: Cuts,
 }
 
 /// One cell of a [`Flat`]: its bytes and pieces there.
@@ -250,6 +257,12 @@ impl Flat {
         self.all.buf.clear();
         self.all.pieces.clear();
         self.cells.clear();
+        self.cuts.bits.clear();
+    }
+
+    /// Every cell pushed: the masks [`Flat::wrap`] reads.
+    pub fn seal(&mut self) {
+        self.cuts.build(self.all.buf.as_bytes());
     }
 
     /// The number of cells.
@@ -336,7 +349,11 @@ impl Flat {
             ..*p
         }));
         (w.pads, w.nbsp) = (c.pads, c.nbsp);
-        pack(&mut w, avail.max(1));
+        let masks = match self.cuts.bits.is_empty() {
+            true => Masks::Off,
+            false => Masks::At(&self.cuts, c.start as usize),
+        };
+        pack(&mut w, avail.max(1), masks);
         w
     }
 }
@@ -355,7 +372,7 @@ pub fn unit_text(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> String {
 pub fn wrap_plain(text: &str, key: StyleKey, src_line: u32, avail: u16) -> Wrapped {
     let mut w = Wrapped::default();
     push_piece(&mut w, text, key, InlineStyle::NONE, None, src_line);
-    pack(&mut w, avail.max(1));
+    pack(&mut w, avail.max(1), Masks::Off);
     w
 }
 
@@ -370,7 +387,7 @@ pub fn wrap_unit(
     let mut w = Wrapped::new(Some(unit));
     let look = (key, InlineStyle::NONE, None);
     push_parts(&mut w, [pre, body, post], look, src_line, false);
-    pack(&mut w, avail.max(1));
+    pack(&mut w, avail.max(1), Masks::Off);
     w
 }
 
@@ -786,6 +803,199 @@ fn word(bytes: &[u8], start: usize) -> (usize, usize, bool) {
     (start, i, wide)
 }
 
+/// Where a word of a buffer ends, and where the buffer turns rough, a bit a byte (LAY-007), for
+/// [`pack`]'s fast path: from a byte up to the next rough one, the buffer is ASCII with single
+/// spaces, so a line's width is its length and the greedy fill is the furthest word end the line
+/// has room for, found without reading the words between.
+///
+/// - `ends`, bit `e`: a word ends right before byte `e`, a byte after the word's last: a space
+///   that starts a run, a newline, a word's first byte after a `-` or `/` it may break after
+///   ([`word`]), or the buffer's end.
+/// - `rough`, bit `k`: byte `k` is past ASCII (a word's width isn't its length), a newline, a
+///   space or newline after one (a run of spaces is one), the end of the buffer, or a `-` or `/`
+///   after one (where a word may break after a break depends on the one before: [`word`] reads
+///   those).
+///
+/// `ends` is only read up to the first rough byte, where it agrees with [`Tokens`]: a `-` or `/`
+/// is taken to start its word only after a space, a newline or the start, which is right unless
+/// the byte before is another break, rough. Past it, spaces and newlines are told apart no
+/// further than `ends` and `rough` need up to it: three masks of a block, not four.
+#[derive(Debug, Default)]
+pub struct Cuts {
+    /// `[ends, rough]`, a word for each 64 bytes, through the bit of the buffer's end.
+    bits: Vec<[u64; 2]>,
+}
+
+impl Cuts {
+    /// The masks of `buf`, in place of the last ones. Out of line: once a wrap, and inlined it
+    /// made every [`pack`] a larger frame (a table's cells are many short ones).
+    #[inline(never)]
+    fn build(&mut self, buf: &[u8]) {
+        let blocks = buf.len() / 64 + 1;
+        self.bits.clear();
+        self.bits.reserve(blocks);
+        // before the buffer, as after it: a newline
+        let (mut prev, mut brk_prev) = (Classes::NEWLINES, 0u64);
+        let mut cur = Classes::of(buf, 0);
+        for i in 0..blocks {
+            let next = match i + 1 < blocks {
+                true => Classes::of(buf, i + 1),
+                false => Classes::NEWLINES,
+            };
+            let Classes { gap, brk, rough } = cur;
+            // bit k of each: byte k - 1's, and byte k + 1's
+            let gap_before = gap << 1 | prev.gap >> 63;
+            let gap_after = gap >> 1 | next.gap << 63;
+            let brk_before = brk << 1 | prev.brk >> 63;
+            // a `-` or `/` a word breaks after: not its word's first byte, a word's byte next
+            let breaks = brk & !gap_before & !gap_after;
+            let ends = (gap & !gap_before) | breaks << 1 | brk_prev >> 63;
+            let rough = rough | (gap & gap_before) | (brk & brk_before);
+            self.bits.push([ends, rough]);
+            (prev, brk_prev, cur) = (cur, breaks, next);
+        }
+    }
+
+    /// The furthest word end `e` in `from + 1 ..= from + room` with no rough byte in `from..e`,
+    /// and so `e - from` columns wide: `from` is where a line goes on, a single space before the
+    /// next word. `None` when the next word doesn't fit or the buffer turns rough before it ends.
+    ///
+    /// The buffer is bytes `..end` of the masks' (a cell of a [`Flat`]'s, whose next cell's bytes
+    /// follow), `gap_last` whether its last is a space or a newline: a word ends at `end` unless
+    /// it is, whatever the masks' bits there say.
+    #[inline(always)]
+    fn furthest(&self, from: usize, room: usize, end: usize, gap_last: bool) -> Option<usize> {
+        let last = (from + room).min(end);
+        let hi = self.first_rough(from, last);
+        if hi == end && !gap_last {
+            return Some(end);
+        }
+        self.last_end(from + 1, hi.min(end - 1))
+    }
+
+    /// The first rough byte in `from..=last`, `last` when none.
+    #[inline(always)]
+    fn first_rough(&self, from: usize, last: usize) -> usize {
+        let (mut w, end_w) = (from / 64, (last / 64).min(self.bits.len() - 1));
+        let mut bits = self.bits[w][1] & (!0 << (from % 64));
+        loop {
+            if bits != 0 {
+                return (w * 64 + bits.trailing_zeros() as usize).min(last);
+            }
+            if w >= end_w {
+                return last;
+            }
+            w += 1;
+            bits = self.bits[w][1];
+        }
+    }
+
+    /// The last word end in `lo..=hi`.
+    #[inline(always)]
+    fn last_end(&self, lo: usize, hi: usize) -> Option<usize> {
+        if lo > hi {
+            return None;
+        }
+        let (lo_w, mut w) = (lo / 64, hi / 64);
+        let mut bits = self.bits[w][0] & (!0 >> (63 - hi % 64));
+        loop {
+            if w == lo_w {
+                bits &= !0 << (lo % 64);
+            }
+            if bits != 0 {
+                return Some(w * 64 + 63 - bits.leading_zeros() as usize);
+            }
+            if w == lo_w {
+                return None;
+            }
+            w -= 1;
+            bits = self.bits[w][0];
+        }
+    }
+}
+
+/// The bytes of a 64-byte block of interest to [`Cuts`], a bit a byte.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Classes {
+    /// A space or a newline.
+    gap: u64,
+    /// `-` and `/`
+    brk: u64,
+    /// Past ASCII, or a newline.
+    rough: u64,
+}
+
+impl Classes {
+    /// Past the buffer's end, and before its start.
+    const NEWLINES: Classes = Classes {
+        gap: !0,
+        brk: 0,
+        rough: !0,
+    };
+
+    /// Block `i` of `buf`, newlines past its end.
+    #[inline(always)]
+    fn of(buf: &[u8], i: usize) -> Classes {
+        match buf.get(i * 64..).and_then(<[u8]>::first_chunk::<64>) {
+            Some(c) => Classes::block(c),
+            None => {
+                let mut c = [b'\n'; 64];
+                let rest = &buf[(i * 64).min(buf.len())..];
+                c[..rest.len()].copy_from_slice(rest);
+                Classes::block(&c)
+            }
+        }
+    }
+
+    /// SSE2's compares on x86-64 (a byte past ASCII has its top bit set: `rough` is the bytes or
+    /// the newlines' compare, `movemask`ed), a byte at a time elsewhere.
+    #[inline(always)]
+    fn block(c: &[u8; 64]) -> Classes {
+        #[cfg(target_arch = "x86_64")]
+        {
+            use std::arch::x86_64::*;
+            // SAFETY: SSE2 is part of x86-64; each load reads 16 of `c`'s 64 bytes, unaligned
+            unsafe {
+                let (sp, lf) = (_mm_set1_epi8(b' ' as i8), _mm_set1_epi8(b'\n' as i8));
+                // `-` is 0x2d and `/` 0x2f: both 0x2f with bit 1 set
+                let (two, slash) = (_mm_set1_epi8(0x02), _mm_set1_epi8(b'/' as i8));
+                let [mut gap, mut brk, mut rough] = [[0u64; 4]; 3];
+                for q in 0..4 {
+                    let v = _mm_loadu_si128(c.as_ptr().add(q * 16).cast());
+                    let nl = _mm_cmpeq_epi8(v, lf);
+                    gap[q] = _mm_movemask_epi8(_mm_or_si128(_mm_cmpeq_epi8(v, sp), nl)) as u64;
+                    brk[q] = _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_or_si128(v, two), slash)) as u64;
+                    // a byte past ASCII has its top bit set already
+                    rough[q] = _mm_movemask_epi8(_mm_or_si128(v, nl)) as u64;
+                }
+                let join = |m: [u64; 4]| m[0] | m[1] << 16 | m[2] << 32 | m[3] << 48;
+                Classes {
+                    gap: join(gap),
+                    brk: join(brk),
+                    rough: join(rough),
+                }
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        Classes::bytes(c)
+    }
+
+    /// [`Classes::block`] a byte at a time, where x86-64's SSE2 isn't.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
+    fn bytes(c: &[u8; 64]) -> Classes {
+        let mask = |f: &dyn Fn(u8) -> bool| {
+            c.iter()
+                .enumerate()
+                .fold(0, |m, (i, &b)| m | u64::from(f(b)) << i)
+        };
+        Classes {
+            gap: mask(&|b| b == b' ' || b == b'\n'),
+            brk: mask(&|b| b == b'-' || b == b'/'),
+            rough: mask(&|b| b >= 0x80 || b == b'\n'),
+        }
+    }
+}
+
 /// The line [`pack`] fills. Its last seg is held here, not yet in `segs`, so the words that grow
 /// it are a few registers' work (LAY-006: they were a call and a `Vec`'s last element each).
 struct Packer<'w> {
@@ -904,20 +1114,64 @@ impl<'w> Packer<'w> {
     }
 }
 
-fn pack(w: &mut Wrapped, avail: u16) {
+/// Where [`pack`]'s fast path (LAY-007) finds its masks of the buffer.
+enum Masks<'a> {
+    /// Nowhere: a word at a time (text wrapped alone, an image's or a diagram's).
+    Off,
+    /// Built from the buffer when first wanted, into this scratch (a paragraph's).
+    Build(&'a mut Cuts),
+    /// A [`Flat`]'s, the buffer at this offset in them (a table cell's).
+    At(&'a Cuts, usize),
+}
+
+fn pack(w: &mut Wrapped, avail: u16, masks: Masks<'_>) {
+    pack_with::<true>(w, avail, masks);
+}
+
+/// [`pack`]; a word at a time unless `FAST` (tests check the two agree).
+fn pack_with<const FAST: bool>(w: &mut Wrapped, avail: u16, mut masks: Masks<'_>) {
     let mut p = Packer::new(w);
     // where the run of spaces before the next word starts, when it follows a word on the line
     let mut pending: Option<u32> = None;
-    for tok in Tokens::new(p.buf) {
+    // the last space's fast path went as far as the line has room for
+    let mut full = false;
+    let len = p.buf.len();
+    let gap_last = p.buf.ends_with([' ', '\n']);
+    let mut tokens = Tokens::new(p.buf);
+    while let Some(tok) = tokens.next() {
         match tok {
             Tok::Space { start } => {
-                if p.open {
-                    pending = Some(start);
+                if !p.open {
+                    continue;
+                }
+                pending = Some(start);
+                if !FAST || std::mem::take(&mut full) {
+                    continue;
+                }
+                // the words up to the furthest end the line has room for in one go (LAY-007): a
+                // smooth stretch is as wide as it is long, so this is the greedy fill
+                let (cuts, base) = match std::mem::replace(&mut masks, Masks::Off) {
+                    Masks::Off => continue,
+                    Masks::Build(cuts) => {
+                        cuts.build(p.buf.as_bytes());
+                        (&*cuts, 0)
+                    }
+                    Masks::At(cuts, base) => (cuts, base),
+                };
+                masks = Masks::At(cuts, base);
+                let room = usize::from(avail.saturating_sub(p.width));
+                let from = base + start as usize;
+                if let Some(e) = cuts.furthest(from, room, base + len, gap_last) {
+                    let e = e - base;
+                    let e32 = e as u32;
+                    p.add(start, e32, (e32 - start) as u16, true);
+                    (tokens.i, tokens.spaced, pending) = (e, false, None);
+                    full = true;
                 }
             }
             Tok::Newline => {
                 p.flush();
-                pending = None;
+                (pending, full) = (None, false);
             }
             Tok::Word {
                 start,
@@ -925,6 +1179,7 @@ fn pack(w: &mut Wrapped, avail: u16) {
                 width,
                 ascii,
             } => {
+                full = false;
                 let space = u16::from(pending.is_some());
                 if p.width.saturating_add(space).saturating_add(width) <= avail {
                     match pending {
@@ -1106,6 +1361,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
+            &mut Cuts::default(),
             doc.runs(inl),
             StyleKey::Text,
             avail,
@@ -1209,6 +1465,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
+            &mut Cuts::default(),
             doc.runs(inl),
             StyleKey::Text,
             80,
@@ -1404,6 +1661,7 @@ mod tests {
                     let into = Wrapped::new(None);
                     let w = wrap(
                         into,
+                        &mut Cuts::default(),
                         doc.runs(inl),
                         StyleKey::Text,
                         30,
@@ -1424,6 +1682,165 @@ mod tests {
         }
     }
 
+    /// [`Classes::block`]'s compares are [`Classes::bytes`]' a byte at a time, for every byte at
+    /// every lane.
+    #[test]
+    fn classes_agree_with_a_byte_at_a_time() {
+        for b in 0..=255u8 {
+            for at in 0..64 {
+                let mut c = [b'a'; 64];
+                c[at] = b;
+                assert_eq!(Classes::block(&c), Classes::bytes(&c), "{b:#x} at {at}");
+            }
+        }
+    }
+
+    /// [`Cuts::furthest`]: the last word end the room reaches, never past a rough byte.
+    #[test]
+    fn cuts_find_the_furthest_end() {
+        let at = |buf: &str, from, room| {
+            let mut cuts = Cuts::default();
+            cuts.build(buf.as_bytes());
+            cuts.furthest(from, room, buf.len(), buf.ends_with([' ', '\n']))
+        };
+        let s = "the quick brown fox";
+        assert_eq!(at(s, 3, 5), None);
+        assert_eq!(at(s, 3, 6), Some(9));
+        assert_eq!(at(s, 3, 15), Some(15));
+        assert_eq!(at(s, 3, 16), Some(19));
+        assert_eq!(at(s, 3, 99), Some(19));
+        // a break after `-`, a run of them rough, a wide word, a double space, a newline
+        assert_eq!(at("a re-enter", 1, 5), Some(5));
+        assert_eq!(at("a b--c d", 1, 9), Some(4));
+        assert_eq!(at("a b é d", 1, 9), Some(3));
+        assert_eq!(at("a b  c", 1, 9), Some(3));
+        assert_eq!(at("a b\nc", 1, 9), Some(3));
+        // past a 64-byte block
+        let long = format!("{}end", "ab ".repeat(30));
+        assert_eq!(at(&long, 2, 100), Some(long.len()));
+        assert_eq!(at(&long, 2, 64), Some(65));
+    }
+
+    /// [`pack`]'s fast path (LAY-007) lays out what a word at a time does: buffers of words,
+    /// spaces and runs of them, newlines, breaks and runs of them, wide characters and pads,
+    /// across 64-byte blocks, cut into pieces of several source lines, at every width up to past
+    /// their length.
+    #[test]
+    fn the_fast_path_packs_as_words_do() {
+        let parts = [
+            "a",
+            "bc",
+            "word",
+            "longerword",
+            " ",
+            " ",
+            " ",
+            "  ",
+            "-",
+            "/",
+            "--",
+            "x-y",
+            "a/b/",
+            "\n",
+            "é",
+            "日本",
+            "\u{1f}",
+            "\u{a0}",
+            "-\n",
+            " -",
+            "/ ",
+        ];
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let layout = |w: &Wrapped| {
+            let segs = |l: &Line| {
+                w.line_segs(l)
+                    .iter()
+                    .map(|s| (s.start, s.end, s.width, s.ascii, s.piece))
+                    .collect::<Vec<_>>()
+            };
+            (w.lines.iter())
+                .map(|l| (segs(l), l.width, l.src.start, l.src.end))
+                .collect::<Vec<_>>()
+        };
+        for case in 0..600 {
+            let mut buf = String::new();
+            while buf.len() < case % 300 {
+                // mostly prose: words and single spaces
+                let i = match next(4) {
+                    0 => next(parts.len()),
+                    _ => [0, 1, 2, 3, 4][next(5)],
+                };
+                buf.push_str(parts[i]);
+            }
+            let mut w = Wrapped::default();
+            w.buf.push_str(&buf);
+            let mut at = 0;
+            while at < buf.len() {
+                let mut end = (at + 1 + next(40)).min(buf.len());
+                while !buf.is_char_boundary(end) {
+                    end += 1;
+                }
+                let line = (at / 50) as u32 + 1;
+                push_test_piece(&mut w, at as u32, end as u32, line);
+                at = end;
+            }
+            // as a table's cell: its masks a part of those of the cells around it
+            let (mut left, mut right) = (String::new(), String::new());
+            for (side, n) in [(&mut left, next(30)), (&mut right, next(4))] {
+                for _ in 0..n {
+                    side.push_str(parts[next(parts.len())]);
+                }
+            }
+            let mut shared = Cuts::default();
+            shared.build(format!("{left}{buf}{right}").as_bytes());
+            for avail in (1..12).chain((12..buf.len() as u16 + 4).step_by(5)) {
+                let mut slow = w.clone_input();
+                pack_with::<false>(&mut slow, avail, Masks::Off);
+                let mut fast = w.clone_input();
+                pack_with::<true>(&mut fast, avail, Masks::Build(&mut Cuts::default()));
+                assert_eq!(layout(&fast), layout(&slow), "{buf:?} at {avail}");
+                let mut cell = w.clone_input();
+                pack_with::<true>(&mut cell, avail, Masks::At(&shared, left.len()));
+                assert_eq!(
+                    layout(&cell),
+                    layout(&slow),
+                    "{left:?} {buf:?} {right:?} at {avail}"
+                );
+            }
+        }
+    }
+
+    fn push_test_piece(w: &mut Wrapped, start: u32, end: u32, src_line: u32) {
+        w.pieces.push(Piece {
+            start,
+            end,
+            key: StyleKey::Text,
+            inline: InlineStyle::NONE,
+            link: None,
+            src_line,
+            body_start: start,
+            body_end: end,
+            unit_off: 0,
+            pads: false,
+        });
+    }
+
+    impl Wrapped {
+        /// Its buffer and pieces, not yet packed.
+        fn clone_input(&self) -> Wrapped {
+            let mut w = Wrapped::default();
+            w.buf.clone_from(&self.buf);
+            w.pieces.clone_from(&self.pieces);
+            w
+        }
+    }
+
     #[test]
     fn source_lines_per_row() {
         let doc = parse("alpha beta\ngamma delta\n");
@@ -1432,6 +1849,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
+            &mut Cuts::default(),
             doc.runs(inl),
             StyleKey::Text,
             12,
