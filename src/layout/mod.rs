@@ -325,6 +325,8 @@ pub struct Measure {
     images: Vec<Option<(u32, u32)>>,
     /// The order of sorted tables' rows, indexed by [`Table::id`]; `None` keeps the source order.
     sorts: Vec<Option<Sorted>>,
+    /// Where the inline text holds a byte to clean (LAY-006).
+    marks: wrap::Marks,
 }
 
 impl Measure {
@@ -334,6 +336,7 @@ impl Measure {
             tables: (0..doc.table_count).map(|_| OnceLock::new()).collect(),
             images: vec![None; doc.links.len()],
             sorts: vec![None; doc.table_count as usize],
+            marks: wrap::Marks::new(doc),
         }
     }
 
@@ -757,31 +760,22 @@ fn push_text(
 }
 
 /// Append the bytes `segs` of `w` cover, one run of them that follow each other in its buffer,
-/// with their [`PAD`]s as spaces: as many bytes, so their offsets hold. A pad is only ever in a
-/// piece's decoration, so only those are looked at (LAY-002: a search of the whole run was 3.6% of
-/// XL's layout).
+/// with their [`PAD`]s as spaces: as many bytes, so their offsets hold. Copied whole, then every
+/// pad in the copy turned into a space in place, a loop that vectorizes (LAY-006; the copy was
+/// split at each pad of the pieces' decorations before, and at each `memchr` hit before LAY-002).
+/// Only ada's decorations hold a pad: [`clean_char`](wrap::clean_char) makes the source's control
+/// characters spaces.
 fn push_padded(out: &mut String, w: &Wrapped, segs: &[Seg]) {
     let (Some(first), Some(last)) = (segs.first(), segs.last()) else {
         return;
     };
-    let buf = w.buf.as_bytes();
-    let mut from = first.start as usize;
-    for seg in segs {
-        let p = &w.pieces[seg.piece as usize];
-        if !p.pads {
-            continue;
-        }
-        for (a, b) in [(p.start, p.body_start), (p.body_end, p.end)] {
-            let a = a.max(seg.start) as usize;
-            let deco = buf.get(a..b.min(seg.end) as usize).unwrap_or_default();
-            for (k, _) in deco.iter().enumerate().filter(|&(_, &c)| c == PAD as u8) {
-                out.push_str(&w.buf[from..a + k]);
-                out.push(' ');
-                from = a + k + 1;
-            }
-        }
+    let at = out.len();
+    out.push_str(&w.buf[first.start as usize..last.end as usize]);
+    // SAFETY: a PAD and a space are each one byte of ASCII, so the text stays UTF-8
+    let copy = unsafe { &mut out.as_mut_vec()[at..] };
+    for b in copy {
+        *b = if *b == PAD as u8 { b' ' } else { *b };
     }
-    out.push_str(&w.buf[from..last.end as usize]);
 }
 
 /// A span over `start..end` of [`Layout::text`], already there, which starts where the last span
@@ -1029,11 +1023,16 @@ impl Builder<'_> {
             if let Some(unit) = w.unit.filter(|_| self.screen) {
                 let (a, b) = (seg.start.max(piece.body_start), seg.end.min(piece.body_end));
                 if a < b {
+                    // the body's columns: an ASCII seg's are its bytes' (LAY-006)
+                    let width = |x: u32, y: u32| match seg.ascii {
+                        true => (y - x) as u16,
+                        false => text_width(&w.buf[x as usize..y as usize]) as u16,
+                    };
                     let (col, end) = if (a, b) == (seg.start, seg.end) {
                         (from, from + seg.width)
                     } else {
-                        let col = from + text_width(&w.buf[seg.start as usize..a as usize]) as u16;
-                        (col, col + text_width(&w.buf[a as usize..b as usize]) as u16)
+                        let col = from + width(seg.start, a);
+                        (col, col + width(a, b))
                     };
                     let at = |x: u32| piece.unit_off + (x - piece.body_start);
                     self.search_seg(unit, at(a)..at(b), col..end);
@@ -1177,7 +1176,8 @@ impl Builder<'_> {
     fn paragraph(&mut self, runs: &[Run], unit: UnitId, key: StyleKey, suffix: Option<&str>) {
         let avail = self.avail();
         let into = std::mem::take(&mut self.scratch).recycle(Some(unit));
-        let w = wrap::wrap(into, runs, key, avail, self.doc, self.g, suffix);
+        let doc = (self.doc, Some(&self.measure.marks));
+        let w = wrap::wrap(into, runs, key, avail, doc, self.g, suffix);
         self.emit_lines(&w);
         self.scratch = w;
     }

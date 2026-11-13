@@ -70,7 +70,7 @@ pub struct ColMeasure {
 #[cfg(test)]
 pub fn measure(t: &Table, doc: &Doc, glyphs: &Glyphs) -> Vec<ColMeasure> {
     let mut cells = Cells::default();
-    cells.flatten(t, StyleKey::Text, doc, glyphs);
+    cells.flatten(t, StyleKey::Text, (doc, None), glyphs);
     cells.measure(t.column_count())
 }
 
@@ -84,8 +84,15 @@ pub(super) struct Cells {
 }
 
 impl Cells {
-    /// Flatten `t`'s cells, the header's in [`StyleKey::TableHeader`] and the body's in `key`.
-    fn flatten(&mut self, t: &Table, key: StyleKey, doc: &Doc, glyphs: &Glyphs) {
+    /// Flatten `t`'s cells, the header's in [`StyleKey::TableHeader`] and the body's in `key`;
+    /// `marks`, the document's, spare its runs a scan.
+    fn flatten(
+        &mut self,
+        t: &Table,
+        key: StyleKey,
+        (doc, marks): (&Doc, Option<&wrap::Marks>),
+        glyphs: &Glyphs,
+    ) {
         self.flat.clear();
         self.rows.clear();
         let n = t.column_count();
@@ -93,7 +100,7 @@ impl Cells {
             self.rows.push(self.flat.len() as u32);
             let key = if r == 0 { StyleKey::TableHeader } else { key };
             for cell in t.cells(row).iter().take(n) {
-                self.flat.push(doc.runs(cell), cell.unit, key, doc, glyphs);
+                (self.flat).push(doc.runs(cell), cell.unit, key, (doc, marks), glyphs);
             }
         }
         self.rows.push(self.flat.len() as u32);
@@ -944,7 +951,7 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
         return;
     }
     let mut flat = std::mem::take(&mut b.flat);
-    flat.flatten(t, b.text_key, b.doc, b.g);
+    flat.flatten(t, b.text_key, (b.doc, Some(&b.measure.marks)), b.g);
     let n = t.column_count();
     let measured = b.measure.tables.get(t.id as usize);
     let mut cols: Cow<'_, [ColMeasure]> =
@@ -1004,12 +1011,11 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
     };
     // `grid` wraps the header short of the mark in its padding
     let padded = header.mark.filter(|_| border.is_none());
-    let mut probe = Probe::new(&flat, &cols, b.cells.pop().unwrap_or_default(), padded);
+    let mut probe = Probe::new(&flat, &cols, padded);
     let widths = match mode {
         TableMode::Records => None,
         mode => distribute(&cols, avail, mode, &mut probe),
     };
-    b.cells.push(probe.buf);
     let start = b.out.row_count();
     match widths {
         Some(widths) => grid(b, &flat, t, &header, &rows, &widths, border),
@@ -1022,36 +1028,27 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
     b.flat = flat;
 }
 
-/// [`Lines`] from wrapping a table's cells.
+/// [`Lines`] from counting the lines a table's cells wrap to ([`wrap::Flat::lines`]).
 struct Probe<'a> {
     flat: &'a Cells,
     cols: &'a [ColMeasure],
-    buf: Wrapped,
     /// The sort mark the header wraps short of.
     mark: Option<Mark<'a>>,
 }
 
 impl<'a> Probe<'a> {
-    fn new(flat: &'a Cells, cols: &'a [ColMeasure], buf: Wrapped, mark: Option<Mark<'a>>) -> Self {
-        Probe {
-            flat,
-            cols,
-            buf,
-            mark,
-        }
+    fn new(flat: &'a Cells, cols: &'a [ColMeasure], mark: Option<Mark<'a>>) -> Self {
+        Probe { flat, cols, mark }
     }
 
-    /// Cell `col` of row `r` at `width`, or none when the row is short of it.
-    fn lines(&mut self, r: usize, col: usize, width: u16) -> usize {
-        let Some(i) = self.flat.row(r).nth(col) else {
-            return 0;
-        };
-        self.buf = (self.flat.flat).wrap(i, std::mem::take(&mut self.buf), width);
-        self.buf.lines.len()
+    /// Cell `col` of row `r` at `width`, or none when the row is short of it: counted, not
+    /// wrapped (LAY-005).
+    fn lines(&self, r: usize, col: usize, width: u16) -> usize {
+        (self.flat.row(r).nth(col)).map_or(0, |i| self.flat.flat.lines(i, width))
     }
 
     /// Column `col`'s header at `width`, short of the mark in its padding.
-    fn wrap_header(&mut self, col: usize, width: u16) -> usize {
+    fn header_at(&self, col: usize, width: u16) -> usize {
         let width = match self.mark {
             Some(m) if m.col == col => width.saturating_sub(m.extra).max(1),
             _ => width,
@@ -1065,7 +1062,7 @@ impl Lines for Probe<'_> {
         // most probes are at a width the header fits: its lines are measured
         match self.cols.get(col) {
             Some(c) if width >= c.header => usize::from(c.header_lines.max(1)),
-            _ => self.wrap_header(col, width),
+            _ => self.header_at(col, width),
         }
     }
 
@@ -1417,9 +1414,9 @@ mod tests {
         let doc = parse(md);
         let t = table(&doc);
         let mut flat = Cells::default();
-        flat.flatten(t, StyleKey::Text, &doc, &glyphs());
+        flat.flatten(t, StyleKey::Text, (&doc, None), &glyphs());
         let cols = flat.measure(t.column_count());
-        let mut probe = Probe::new(&flat, &cols, Wrapped::default(), None);
+        let mut probe = Probe::new(&flat, &cols, None);
         distribute(&cols, avail, TableMode::Auto, &mut probe)
     }
 
@@ -1461,12 +1458,56 @@ mod tests {
             let doc = parse(&md);
             let t = table(&doc);
             let mut flat = Cells::default();
-            flat.flatten(t, StyleKey::Text, &doc, &glyphs());
+            flat.flatten(t, StyleKey::Text, (&doc, None), &glyphs());
             let cols = flat.measure(t.column_count());
             let i = flat.row(0).start;
             let wrapped = flat.flat.wrap(i, Wrapped::default(), cols[0].header.max(1));
             assert_eq!(cols[0].header_lines, lines, "{header:?}");
             assert_eq!(wrapped.lines.len(), usize::from(lines), "{header:?}");
+        }
+    }
+
+    /// LAY-005: the probe counts a cell's lines in place, as many as its wrap lays out, at every
+    /// width: hard breaks, wide characters, words across style changes (a variation selector in
+    /// a style of its own among them), code padding, words longer than the line.
+    #[test]
+    fn counted_lines_are_the_wraps() {
+        let cells = [
+            "",
+            "a",
+            "a b",
+            "the quick brown fox jumps over the lazy dog",
+            "see ../30-resources/ratatui/README.md now",
+            "line<br>longer line<br>",
+            "<br>a<br><br>b",
+            "`x` and `longer code` here",
+            "**bold**tail and *em*phasis _x_",
+            "日本語 テキスト 한국어",
+            "\u{2764}**\u{fe0f}**x \u{2764}\u{fe0f}",
+            "e\u{301}**\u{301}**e",
+            "com.example.billing.InvoiceReconciliationService",
+            "AbstractSingletonProxyFactoryBean v2Beta MAX_POOL_SIZE",
+            "a\u{a0}b c [link](u) ![img](p) x",
+            "averyveryveryverylongwordwithoutanybreaks then short",
+            "  spaced   out  ",
+        ];
+        let row: String = cells.iter().map(|c| format!("| {c} ")).collect();
+        let md = format!("{row}|\n|{}\n{row}|\n", "---|".repeat(cells.len()));
+        let doc = parse(&md);
+        let t = table(&doc);
+        let mut flat = Cells::default();
+        flat.flatten(t, StyleKey::Text, (&doc, None), &glyphs());
+        for r in 0..2 {
+            for i in flat.row(r) {
+                for width in 1..60 {
+                    let wrapped = flat.flat.wrap(i, Wrapped::default(), width);
+                    assert_eq!(
+                        flat.flat.lines(i, width),
+                        wrapped.lines.len(),
+                        "cell {i} at {width}"
+                    );
+                }
+            }
         }
     }
 
