@@ -30,6 +30,23 @@ line can be lexed again from the state before it. For the languages whose
 `Lang::line_by_line()` is true, every line starts from `State::default()`, in any order, on any
 thread.
 
+## Examples
+
+Three small programs in
+[`ada-parse/examples`](https://github.com/junkdog/ada-md/tree/main/ada-parse/examples), std only:
+
+- **`spans`:** each line's spans, with their text and scopes.
+- **`highlight`:** a `cat` with colors, its language from the file's name or first line and
+  its colors from a theme of a dozen scope selectors, matched as TextMate themes match them.
+- **`incremental`:** highlighting again after an edit, as an editor would: a `State` kept per
+  line, and lexing that stops at the first line whose state didn't change.
+
+```zsh
+cargo run -p ada-parse --example spans -- json < package.json
+cargo run -p ada-parse --example highlight -- ada-parse/src/lib.rs
+cargo run -p ada-parse --example incremental
+```
+
 ## Languages
 
 - **Code:** bash, C, C++, C#, Clojure, CSS, SCSS, Elixir, Go, Groovy, Haskell (and literate),
