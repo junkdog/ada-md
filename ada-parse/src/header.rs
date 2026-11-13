@@ -3,7 +3,9 @@
 //! (its first [`HEAD`] bytes) is read past comments, strings, characters and directives' lines,
 //! and its words decide: Objective-C where an `@` keyword of Objective-C's, `#import` or a word of
 //! Foundation's stands; C++ where a word only C++ has, or `::`, stands outside an
-//! `#if … __cplusplus` block (a C header's C++ wrapper); Objective-C++ where both; else C.
+//! `#if … __cplusplus` block (a C header's C++ wrapper), `class` as a message aside (`[x class]`,
+//! `self.class`); Objective-C++ where both; else C. Stdin's sniffer reads C-family source with
+//! it too (FEAT-020).
 //!
 //! Against headers labeled by the sources beside them (vault `ada-parse.md`, X-134): C++'s 92%,
 //! C's 99.4%, Objective-C's 88.6% (+3% Objective-C++); the rest are, on inspection, headers of the
@@ -207,7 +209,14 @@ pub(crate) fn language(text: &[u8]) -> Lang {
                     e += 1;
                 }
                 let w = &b[i..e];
-                if !cpp && in_cpp == 0 && CPP_WORDS.contains(&w) {
+                // `[x class]` and `self.class` are Objective-C's messages, not C++'s keyword
+                let message = w == b"class"
+                    && (i > 0 && b[i - 1] == b'.'
+                        || b[e..]
+                            .iter()
+                            .find(|&&c| c != b' ')
+                            .is_some_and(|&c| c == b']'));
+                if !cpp && in_cpp == 0 && !message && CPP_WORDS.contains(&w) {
                     cpp = true;
                 } else if !objc && NS_WORDS.contains(&w) {
                     objc = true;
@@ -254,6 +263,11 @@ mod tests {
         assert_eq!(language(cpp), Lang::Cpp);
         let objcpp = b"#include <vector>\n@class Foo;\nstd::vector<int> v;\n";
         assert_eq!(language(objcpp), Lang::ObjCpp);
+        // a message named `class` is Objective-C's
+        let messages =
+            b"#import \"A.h\"\n@implementation A\n- (id)f { return [NSString class]; }\n\
+                         - (id)g { return self.class; }\n@end\n";
+        assert_eq!(language(messages), Lang::ObjC);
         // a C header's C++ wrapper, comments and strings don't make it C++
         let c = b"#ifndef A_H\n#define A_H\n#ifdef __cplusplus\nextern \"C\" {\ntemplate<class T> T f();\n#endif\n\
                   /* class Foo, namespace */\n// @interface\nconst char *s = \"std::x\";\nint f(int);\n\

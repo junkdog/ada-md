@@ -33,10 +33,11 @@ const MAX_STATEMENTS: usize = 2_000;
 /// A mermaid block's fence language, and the language a `.mmd` file or sniffed stdin is shown in.
 pub const LANG: &str = "mermaid";
 
-/// Whether `src` starts as a diagram of a kind ada draws: the kind's header (front matter and
-/// `%%` comments aside), then a statement. How stdin and files with no extension are told to be
-/// mermaid, so the header stands alone, and `graph` must name its direction: no line of prose
-/// reads as one.
+/// Whether `src` starts as a mermaid diagram: the kind's header (front matter and `%%` comments
+/// aside), then a statement. Any kind mermaid has counts, the ones ada only shows as code too
+/// (`erDiagram`, `pie`, `mindmap`, ...). How stdin and files with no extension are told to be
+/// mermaid, so the header stands alone (but `pie`'s title, and `gitGraph`'s direction), and
+/// `graph` must name its direction: no line of prose reads as one.
 pub fn is_diagram(src: &str) -> bool {
     let mut lines = statements(src);
     let Some((_, header)) = lines.next() else {
@@ -53,6 +54,19 @@ pub fn is_diagram(src: &str) -> bool {
         ) => dir.is_none(),
         Some("flowchart" | "flowchart-elk") => dir.is_none() || directed,
         Some("graph") => directed,
+        // the kinds ada shows as code, not drawn: a file of one is still mermaid (FEAT-020)
+        Some(
+            "erDiagram" | "journey" | "mindmap" | "timeline" | "quadrantChart"
+            | "requirementDiagram" | "C4Context" | "C4Container" | "C4Component" | "C4Dynamic"
+            | "C4Deployment" | "zenuml" | "kanban" | "sankey" | "sankey-beta" | "xychart-beta"
+            | "block" | "block-beta" | "packet" | "packet-beta" | "architecture-beta"
+            | "radar-beta" | "treemap-beta",
+        ) => dir.is_none(),
+        Some("gitGraph" | "gitGraph:") => dir.is_none_or(|d| d.trim_end_matches(':').len() == 2),
+        // `pie`, `pie showData`, `pie title Some words`: the title's words end the header
+        Some("pie") if dir.is_none_or(|d| d == "showData" || d == "title") => {
+            return lines.next().is_some();
+        }
         _ => false,
     };
     kind && words.next().is_none() && (!inline.trim().is_empty() || lines.next().is_some())
@@ -525,6 +539,11 @@ mod tests {
             "gantt\n  dateFormat YYYY-MM-DD\n",
             "classDiagram\n  A <|-- B\n",
             "classDiagram-v2\n  class A\n",
+            // kinds shown as code
+            "erDiagram\n  A ||--o{ B : has\n",
+            "pie title Pets adopted\n  \"Dogs\" : 386\n",
+            "gitGraph LR:\n  commit\n",
+            "mindmap\n  root((ada))\n",
         ] {
             assert!(is_diagram(src), "{src:?}");
         }
@@ -534,7 +553,6 @@ mod tests {
             "graph\nof the week\n",
             "graph theory is fun\nreally\n",
             "gantt charts, a primer\nchapter one\n",
-            "erDiagram\n  A ||--o{ B : has\n",
             "classDiagram LR\n  A <|-- B\n",
             "# flowchart LR\nA --> B\n",
         ] {

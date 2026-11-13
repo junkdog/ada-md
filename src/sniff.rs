@@ -1,10 +1,18 @@
 //! What a text holds when its name can't tell: piped stdin, or a file with no extension. Only
-//! the first few KB are looked at, in an order where a sure signal beats a guess (plan, "Stdin:
-//! detect what's piped in"): the first line as bat's syntax set reads it, then the shapes of data,
-//! a log, and markdown last. Text none of them claims is left to the caller.
+//! the first few KB are looked at (ADR-30, FEAT-020). Sure signals come first, in a fixed
+//! order: HTML's doctype, a git patch, a mermaid diagram, the first line as bat's syntax set
+//! reads it (a shebang, `<?php`, `<?xml`), JSON, front matter, the configuration formats whose
+//! every line has one shape ([`conf`]), YAML, `.env`, the key-value family and a log. Code and
+//! markdown are then told by the weight of their lines' signals ([`signals`]), the C family
+//! split as a `.h` is. Markdown's own signals and `.gitignore`'s globs are tried last. Text none
+//! of them claims is left to the caller.
+
+mod conf;
+mod signals;
 
 use std::sync::LazyLock;
 
+use ada_parse::Lang;
 use regex::Regex;
 
 use crate::filetype::FileType;
@@ -19,20 +27,29 @@ pub fn sniff(text: &str) -> Option<FileType> {
     let lines: Vec<&str> = sample.lines().collect();
     let first = lines.first().copied().unwrap_or_default();
     let code = |lang| Some(FileType::Text { lang: Some(lang) });
+    let lang = |lang: Lang| code(lang.label());
     // bat's first-line regexes take `<!doctype html>` for Svelte, a patch's `From <sha>` for a
     // Dockerfile's `FROM`, and `git show` for a Git Log, which leaves its diff plain
     if is_html(&lines) {
         return code("HTML");
     }
-    if is_git_patch(&lines) {
+    if is_git_patch(&lines) || is_unified_diff(&lines) {
         return code("Diff");
     }
     // before front matter: a diagram's `---` holds its config, not a note's
     if diagram::is_diagram(sample) {
         return code(diagram::LANG);
     }
-    if let Some(lang) = highlight::first_line_language(first) {
-        return code(lang);
+    // bat's Diff takes any first line that starts `--- `, Lua's and SQL's comments too
+    let first_lang = highlight::first_line_language(first);
+    if let Some(l) = first_lang.filter(|&l| l != "Diff" || has_hunk(&lines)) {
+        return code(l);
+    }
+    if let Some(l) = shebang(first) {
+        return lang(l);
+    }
+    if first_content(&lines).is_some_and(|l| l.starts_with("#lang ")) {
+        return lang(Lang::Racket);
     }
     if is_json(sample) {
         return code("JSON");
@@ -40,17 +57,123 @@ pub fn sniff(text: &str) -> Option<FileType> {
     if has_front_matter(&lines) {
         return Some(FileType::Markdown);
     }
+    if let Some(l) = conf::sure(&lines) {
+        return lang(l);
+    }
     if is_yaml(&lines) {
         return code("YAML");
     }
+    if conf::is_dotenv(&lines) {
+        return lang(Lang::DotEnv);
+    }
     if is_toml(&lines) {
-        return code("TOML");
+        return lang(conf::key_values(&lines));
     }
     // before markdown: a log line can hold a link, but no note has a timestamp on every line
     if is_log(&lines) {
-        return code(ada_parse::Lang::Log.name());
+        return lang(Lang::Log);
     }
-    is_markdown(&lines).then_some(FileType::Markdown)
+    if is_literate_haskell(&lines) {
+        return lang(Lang::LiterateHaskell);
+    }
+    match signals::best(&lines) {
+        Some(signals::MARKDOWN) => return Some(FileType::Markdown),
+        Some(signals::CFAM) => return lang(Lang::for_header(sample.as_bytes())),
+        Some(l) => return code(l),
+        None => {}
+    }
+    if conf::is_gitignore(&lines) {
+        return lang(Lang::GitIgnore);
+    }
+    if is_markdown(&lines) {
+        return Some(FileType::Markdown);
+    }
+    conf::is_properties(&lines)
+        .then(|| lang(Lang::Properties))
+        .flatten()
+}
+
+/// The language a shebang's interpreter names, for those bat's first lines don't know.
+fn shebang(first: &str) -> Option<Lang> {
+    let line = first.strip_prefix("#!")?;
+    let mut words = line.split_whitespace();
+    let mut prog = words.next()?.rsplit('/').next()?;
+    if prog == "env" {
+        prog = words.find(|w| !w.starts_with('-') && !w.contains('='))?;
+    }
+    let prog = prog.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    Some(match prog {
+        "groovy" => Lang::Groovy,
+        "kotlin" | "kotlinc" | "kscript" => Lang::Kotlin,
+        "scala" | "amm" | "scala-cli" => Lang::Scala,
+        "elixir" => Lang::Elixir,
+        "lua" | "luajit" => Lang::Lua,
+        "pwsh" | "powershell" => Lang::PowerShell,
+        "sbcl" | "clisp" | "ccl" | "ecl" => Lang::Lisp,
+        "guile" | "csi" | "chicken" | "chez" | "scheme" | "chibi-scheme" | "gsi" | "gosh" => {
+            Lang::Scheme
+        }
+        "racket" => Lang::Racket,
+        "bb" | "clojure" | "clj" | "joker" | "planck" | "nbb" => Lang::Clojure,
+        "emacs" => Lang::EmacsLisp,
+        "ts-node" | "deno" | "tsx" => Lang::TypeScript,
+        "runhaskell" | "runghc" | "stack" | "cabal" => Lang::Haskell,
+        "dotnet-script" => Lang::CSharp,
+        _ => return None,
+    })
+}
+
+/// Why [`sniff`] reads `text` as it does: what it gives, each candidate's score from the line
+/// signals, and the signals that matched with the first line each matched. For the census
+/// harness (`examples/sniff_census.rs --explain`).
+#[doc(hidden)]
+pub fn explain(text: &str) -> String {
+    use std::fmt::Write;
+    let lines: Vec<&str> = sample(text).lines().collect();
+    let mut hits: Vec<(&str, usize, String)> = Vec::new();
+    let scores = signals::scores(&lines, |re, line| {
+        match hits.iter_mut().find(|(r, _, _)| *r == re) {
+            Some(h) => h.1 += 1,
+            None => hits.push((re, 1, line.to_owned())),
+        }
+    });
+    let mut out = format!("sniffed: {:?}\n", sniff(text));
+    let mut scores: Vec<_> = scores.into_iter().filter(|(_, s)| *s > 0).collect();
+    scores.sort_by_key(|s| std::cmp::Reverse(s.1));
+    for (lang, score) in scores {
+        let _ = writeln!(out, "  {lang}: {score}");
+    }
+    for (re, n, line) in hits {
+        let _ = writeln!(out, "  {n:>3}x {re}\n        {line}");
+    }
+    out
+}
+
+/// A unified diff anywhere in the sample, after a patch's description too: a file header
+/// (`--- `, then `+++ `) and a hunk header after it.
+fn is_unified_diff(lines: &[&str]) -> bool {
+    static HUNK: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^@@ -\d+(,\d+)? \+\d+(,\d+)? @@").unwrap());
+    lines
+        .windows(3)
+        .any(|w| w[0].starts_with("--- ") && w[1].starts_with("+++ ") && HUNK.is_match(w[2]))
+}
+
+/// A diff's hunk or its file header's second line.
+fn has_hunk(lines: &[&str]) -> bool {
+    lines
+        .iter()
+        .any(|l| l.starts_with("@@ ") || l.starts_with("+++ ") || l.starts_with("diff "))
+}
+
+/// Literate Haskell: `\begin{code}`, or bird tracks (`> `) holding Haskell.
+fn is_literate_haskell(lines: &[&str]) -> bool {
+    static HASKELL: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^> ?(module [A-Z]|import [A-Z]|import qualified|data |newtype |instance |[a-z_][\w']*\s+::\s)").unwrap()
+    });
+    lines.iter().any(|l| l.starts_with(r"\begin{code}"))
+        || lines.iter().filter(|l| l.starts_with('>')).count() >= 2
+            && lines.iter().any(|l| HASKELL.is_match(l))
 }
 
 /// The text's first [`SAMPLE`] bytes, cut at the last whole line when there are more.
@@ -219,13 +342,13 @@ fn string_end(b: &[u8], start: usize) -> Str {
     Str::Cut
 }
 
-/// Lines with content that aren't comments and aren't indented, the ones that show a file's
-/// shape: what's indented belongs to the line above.
+/// Lines with content that aren't comments (`#`, INI's `;`) and aren't indented, the ones that
+/// show a file's shape: what's indented belongs to the line above.
 fn top_lines<'a>(lines: &'a [&'a str]) -> impl Iterator<Item = &'a str> {
     lines
         .iter()
         .copied()
-        .filter(|l| !l.trim().is_empty() && !l.starts_with([' ', '\t', '#']))
+        .filter(|l| !l.trim().is_empty() && !l.starts_with([' ', '\t', '#', ';']))
 }
 
 /// Whether the first top line has the shape and almost all of them do.
@@ -258,7 +381,13 @@ fn has_front_matter(lines: &[&str]) -> bool {
 
 fn is_yaml(lines: &[&str]) -> bool {
     let doc_start = |l: &str| l == "---" || l.starts_with("--- ");
-    if lines.first().is_some_and(|l| doc_start(l.trim_end())) {
+    // `--- ` then a tag, an anchor, a block scalar or a comment: Lua's `--- doc` comments aren't
+    let first_start = |l: &str| {
+        l == "---"
+            || l.strip_prefix("--- ")
+                .is_some_and(|r| r.starts_with(['!', '&', '|', '>', '#']))
+    };
+    if lines.first().is_some_and(|l| first_start(l.trim_end())) {
         return true;
     }
     // a mapping: a list alone is markdown's as much as YAML's
@@ -303,9 +432,11 @@ fn is_log(lines: &[&str]) -> bool {
     total > 0 && led * 2 >= total
 }
 
-/// Markdown's own syntax: one sure sign (a fence, a table, a link, a heading set apart, a setext
-/// underline), or a few lines of the weaker ones (list items, quotes, bold). Backticks alone
-/// aren't one: compilers quote code in them.
+/// Markdown's own syntax, when the line signals found too little: one sure sign (a fence, a
+/// table, a link, a heading with blank lines around it, not one of a block of `#` comments nor a
+/// sentence, a setext underline), or a few lines of the weaker ones (list items at the margin or nested,
+/// not a block comment's ` * `; quotes; bold). Backticks alone aren't one: compilers quote code
+/// in them.
 fn is_markdown(lines: &[&str]) -> bool {
     static FENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^ {0,3}(```|~~~)").unwrap());
     static TABLE: LazyLock<Regex> =
@@ -315,14 +446,17 @@ fn is_markdown(lines: &[&str]) -> bool {
     static HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^#{1,6}\s+\S").unwrap());
     static SETEXT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^={3,}\s*$").unwrap());
     static WEAK: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^(\s*([-*+]|\d{1,3}[.)])\s+\S| {0,3}>\s)|\*\*[^*]+\*\*").unwrap()
+        Regex::new(r"^(( {2,}|\t+)?([-*+]|\d{1,3}[.)])\s+\S| {0,3}>\s)|\*\*[^*]+\*\*").unwrap()
     });
     let blank = |i: usize| lines.get(i).is_none_or(|l| l.trim().is_empty());
     let sure = lines.iter().enumerate().any(|(i, l)| {
         FENCE.is_match(l)
             || TABLE.is_match(l)
             || LINK.is_match(l)
-            || HEADING.is_match(l) && blank(i + 1)
+            || HEADING.is_match(l)
+                && blank(i + 1)
+                && (i == 0 || blank(i - 1))
+                && !l.trim_end().ends_with(['.', ',', ';', ':'])
             || SETEXT.is_match(l) && i > 0 && !blank(i - 1)
     });
     let content = lines.iter().filter(|l| !l.trim().is_empty()).count();
@@ -437,7 +571,7 @@ mod tests {
                 "# the manifest\n[package]\nname = \"ada-md\"\nversion = \"0.1.0\"\n\n[dependencies]\nregex = \"1\"\nfeatures = [\n  \"std\",\n]\n",
                 lang("TOML"),
             ),
-            ("env", "HOME=/home/ada\nEDITOR=nvim\n", lang("TOML")),
+            ("env", "HOME=/home/ada\nEDITOR=nvim\n", lang("DotENV")),
             (
                 "journalctl",
                 "Oct 18 09:12:01 birb systemd[1]: Started ada.service.\nOct 18 09:12:02 birb ada[812]: listening\n",
@@ -493,7 +627,7 @@ mod tests {
             (
                 "crontab",
                 "# m h dom mon dow command\n0 5 * * 1 tar -zcf /var/backups/home.tgz /home/\n",
-                None,
+                lang("Crontab"),
             ),
             (
                 "ls -l",
@@ -501,9 +635,182 @@ mod tests {
                 None,
             ),
         ];
-        for (name, text, want) in cases {
-            assert_eq!(sniff(text), *want, "{name}");
-        }
+        let wrong: Vec<_> = cases
+            .iter()
+            .filter(|(_, text, want)| sniff(text) != *want)
+            .map(|(name, text, want)| format!("{name}: {:?}, not {want:?}", sniff(text)))
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// FEAT-020: a language of each family by its lines, and the misreadings the census showed
+    /// (`examples/sniff_census.rs` measures them on the corpora).
+    #[test]
+    fn languages_by_their_lines() {
+        let md = Some(FileType::Markdown);
+        let cases: &[(&str, &str, Option<FileType>)] = &[
+            (
+                "rust",
+                "use std::fs;\n\npub fn read(p: &str) -> Result<String, Error> {\n    let mut s = String::new();\n    Ok(s)\n}\n",
+                lang("Rust"),
+            ),
+            (
+                "go",
+                "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tx := 1\n\tfmt.Println(x)\n}\n",
+                lang("Go"),
+            ),
+            (
+                "python",
+                "import os\n\nclass A:\n    def f(self, x):\n        return None\n",
+                lang("Python"),
+            ),
+            (
+                "c",
+                "#include <stdio.h>\n\nint main(void) {\n    printf(\"hi\\n\");\n    return 0;\n}\n",
+                lang("C"),
+            ),
+            (
+                "c++",
+                "#include <vector>\n\nint main() {\n    std::vector<int> v;\n    return 0;\n}\n",
+                lang("C++"),
+            ),
+            (
+                "objective-c, a message named class",
+                "#import \"A.h\"\n\n@implementation A\n- (id)f { return [NSString class]; }\n@end\n",
+                lang("Objective-C"),
+            ),
+            (
+                "java",
+                "package a.b;\n\nimport java.util.List;\n\npublic class A {\n    @Override\n    public String toString() { return \"\"; }\n}\n",
+                lang("Java"),
+            ),
+            (
+                "kotlin",
+                "package a.b\n\nimport kotlin.math.max\n\nfun main() {\n    val x = listOf(1)\n}\n",
+                lang("Kotlin"),
+            ),
+            (
+                "gradle",
+                "plugins {\n    id 'java'\n}\n\ndependencies {\n    implementation 'a:b:1'\n}\n",
+                lang("Groovy"),
+            ),
+            (
+                "groovy shebang",
+                "#!/usr/bin/env groovy\nprintln 'hi'\n",
+                lang("Groovy"),
+            ),
+            (
+                "scala",
+                "package a.b\n\nimport scala.collection.mutable\n\nobject A {\n  def f(x: Int): Int = x + 1\n}\n",
+                lang("Scala"),
+            ),
+            (
+                "swift",
+                "import Foundation\n\nstruct A: Codable {\n    let name: String\n    func f() -> Int { 1 }\n}\n",
+                lang("Swift"),
+            ),
+            (
+                "javascript",
+                "const fs = require('fs');\n\nfunction read(p) {\n  return fs.readFileSync(p);\n}\nmodule.exports = { read };\n",
+                lang("JavaScript (Babel)"),
+            ),
+            (
+                "typescript",
+                "import { a } from './a';\n\nexport interface B {\n  name: string;\n}\nexport const c = (x: number): void => {};\n",
+                lang("TypeScript"),
+            ),
+            (
+                "css",
+                ".a {\n  color: red;\n  margin-top: 4px;\n}\n\nbody {\n  font-size: 12px;\n}\n",
+                lang("CSS"),
+            ),
+            (
+                "scss",
+                "$c: red;\n\n.a {\n  color: $c;\n  @include b;\n}\n",
+                lang("SCSS"),
+            ),
+            (
+                "sql",
+                "CREATE TABLE a (\n  id INTEGER PRIMARY KEY,\n  name VARCHAR(20) NOT NULL\n);\n",
+                lang("SQL"),
+            ),
+            (
+                "lua's --- comments aren't yaml nor a diff",
+                "--- the module\n-- @module a\nlocal M = {}\n\nlocal function f(x)\n  if x ~= nil then\n    return x\n  end\nend\n\nreturn M\n",
+                lang("Lua"),
+            ),
+            (
+                "terraform",
+                "resource \"aws_s3_bucket\" \"a\" {\n  bucket = \"b\"\n}\n",
+                lang("Terraform"),
+            ),
+            (
+                "racket",
+                "#lang racket/base\n(define (f x) x)\n",
+                lang("Racket"),
+            ),
+            (
+                "elixir",
+                "defmodule A do\n  def f(x), do: x\nend\n",
+                lang("Elixir"),
+            ),
+            (
+                "haskell",
+                "module Main where\n\nimport qualified Data.Map as M\n\nmain :: IO ()\nmain = pure ()\n",
+                lang("Haskell"),
+            ),
+            (
+                "known_hosts",
+                "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n",
+                lang("Known Hosts"),
+            ),
+            (
+                "pkg-config",
+                "prefix=/usr\nlibdir=${prefix}/lib\n\nName: a\nDescription: b\nVersion: 1.0\nLibs: -L${libdir} -la\n",
+                lang("pkg-config"),
+            ),
+            (
+                "ssh config",
+                "Host a\n    HostName a.example\n    User ada\n    IdentityFile ~/.ssh/id\n",
+                lang("SSH Config"),
+            ),
+            (
+                "ini",
+                "; settings\n[core]\nname = ada\npath = /usr/bin\n",
+                lang("INI"),
+            ),
+            (
+                "gitignore",
+                "# build output\ntarget/\n*.o\n/dist\n",
+                lang("Git Ignore"),
+            ),
+            (
+                "a crontab's commented header",
+                "# Edit this file to introduce tasks to be run by cron.\n# m h  dom mon dow   command\n",
+                lang("Crontab"),
+            ),
+            (
+                "readme with a code fence",
+                "Some notes.\n\n```python\nimport os\ndef f():\n    pass\n```\n",
+                md,
+            ),
+            (
+                "a man page's -f isn't powershell",
+                "grep [OPTION]... -f PATTERN_FILE [FILE]...\n    Select only those lines containing matches.\n",
+                None,
+            ),
+            (
+                "irc nicks aren't jsx",
+                "<Meuuh> intf: added --vout\n<Sam> ok\n<Meuuh> thanks\n",
+                None,
+            ),
+        ];
+        let wrong: Vec<_> = cases
+            .iter()
+            .filter(|(_, text, want)| sniff(text) != *want)
+            .map(|(name, text, want)| format!("{name}: {:?}, not {want:?}", sniff(text)))
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]
