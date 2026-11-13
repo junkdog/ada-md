@@ -3,8 +3,10 @@
 //! Runs are flattened into one buffer of styled pieces, split into words at whitespace and after
 //! `-` and `/`, and packed greedily. A word longer than the line is hard-broken. Style changes
 //! inside a word (`**foo**bar`) never create a break opportunity. Every line keeps the source
-//! lines of the pieces on it. Where the text is ASCII with single spaces, a line is filled to its
-//! last word in one step, from masks of the buffer's word ends ([`Cuts`]), not a word at a time.
+//! lines of the bytes on it, read from marks of where each source line starts in the buffer
+//! ([`SrcMark`]): a piece is a stretch of one look, across soft breaks. Where the text is ASCII
+//! with single spaces, a line is filled to its last word in one step, from masks of the buffer's
+//! word ends ([`Cuts`]), not a word at a time.
 //!
 //! A piece may have a searchable *body* between decorations (inline code padding, an image icon).
 //! The bodies of a [`Wrapped`], in order, are its search unit's text (ADR-12), so layout can map
@@ -34,7 +36,6 @@ pub struct Piece {
     pub key: StyleKey,
     pub inline: InlineStyle,
     pub link: Option<LinkId>,
-    pub src_line: u32,
     /// The searchable part of the piece, `body_start..body_end` in the buffer.
     pub body_start: u32,
     pub body_end: u32,
@@ -42,6 +43,18 @@ pub struct Piece {
     pub unit_off: u32,
     /// Whether its decoration holds a [`PAD`].
     pub pads: bool,
+}
+
+/// Where the buffer's bytes from `at` on, up to the next mark's, come from: source line `line`.
+/// A piece may hold several source lines (LAY-008: a soft break ended a piece, so a row of prose
+/// wrapped at another width than its source took two segs, two spans and a slow
+/// [`Packer::add_split`]); a line's are read from the marks of its bytes. Kept beside the
+/// [`Wrapped`], not in it: flattening writes them and [`pack`] reads them, and a table moves its
+/// cells' wraps, which 24 bytes more made a `memcpy` call each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SrcMark {
+    pub at: u32,
+    pub line: u32,
 }
 
 /// Part of a line: a slice of the buffer inside one piece.
@@ -86,6 +99,11 @@ pub struct Wrapped {
     sealed: u32,
 }
 
+// A table moves its cells' wraps by value: 24 bytes more made each move a `memcpy` call (LAY-007's
+// masks, LAY-008's source lines), so what's a wrap's scratch is kept beside it.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Wrapped>() == 120);
+
 impl Wrapped {
     /// Nothing yet, for search unit `unit`.
     pub fn new(unit: Option<UnitId>) -> Self {
@@ -97,6 +115,12 @@ impl Wrapped {
 
     /// Empty again, for search unit `unit`, keeping the buffers.
     pub fn recycle(mut self, unit: Option<UnitId>) -> Self {
+        self.reset(unit);
+        self
+    }
+
+    /// [`Wrapped::recycle`] in place.
+    pub fn reset(&mut self, unit: Option<UnitId>) {
         self.buf.clear();
         self.pieces.clear();
         self.segs.clear();
@@ -106,7 +130,6 @@ impl Wrapped {
         self.nbsp = false;
         self.unit_len = 0;
         self.sealed = 0;
-        self
     }
 
     pub fn line_segs(&self, line: &Line) -> &[Seg] {
@@ -164,14 +187,21 @@ fn any_suspect(bytes: &[u8]) -> bool {
     })
 }
 
+/// What [`wrap`] keeps between flattening and packing a paragraph, its buffers the next one's:
+/// the source lines of the buffer's bytes, and [`pack`]'s masks.
+#[derive(Debug, Default)]
+pub struct Scratch {
+    src: Vec<SrcMark>,
+    cuts: Cuts,
+}
+
 /// Wrap `runs` to `avail` columns, into `w` (empty, from [`Wrapped::new`] or
 /// [`Wrapped::recycle`]). `key` is the base style of the text; `suffix` is glued to the last
-/// word (a heading's trailing pad). `marks`, the document's, spare its runs a scan; `cuts` is
-/// a scratch for [`pack`]'s masks, kept for the next paragraph's.
+/// word (a heading's trailing pad). `marks`, the document's, spare its runs a scan.
 #[allow(clippy::too_many_arguments)]
 pub fn wrap(
     mut w: Wrapped,
-    cuts: &mut Cuts,
+    scratch: &mut Scratch,
     runs: &[Run],
     key: StyleKey,
     avail: u16,
@@ -179,16 +209,18 @@ pub fn wrap(
     glyphs: &Glyphs,
     suffix: Option<&str>,
 ) -> Wrapped {
-    flatten(runs, key, (doc, marks), glyphs, &mut w);
+    let Scratch { src, cuts } = scratch;
+    src.clear();
+    flatten(runs, key, (doc, marks), glyphs, (&mut w, src));
     if let Some(suffix) = suffix.filter(|s| !s.is_empty()) {
-        let line = w.pieces.last().map_or(0, |p| p.src_line);
+        let line = src.last().map_or(0, |m| m.line);
         let text: String = suffix
             .chars()
             .map(|c| if c == ' ' { NBSP } else { c })
             .collect();
-        push_piece(&mut w, &text, key, InlineStyle::NONE, None, line);
+        push_piece((&mut w, src), &text, key, InlineStyle::NONE, None, line);
     }
-    pack(&mut w, avail.max(1), Masks::Build(cuts));
+    pack(&mut w, avail.max(1), Masks::Build(cuts), (src, 0));
     w
 }
 
@@ -200,7 +232,13 @@ pub fn wrap(
 #[cfg(test)]
 pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16, u16) {
     let mut w = Wrapped::default();
-    flatten(runs, StyleKey::Text, (doc, None), glyphs, &mut w);
+    flatten(
+        runs,
+        StyleKey::Text,
+        (doc, None),
+        glyphs,
+        (&mut w, &mut Vec::new()),
+    );
     measure_buf(&w.buf)
 }
 
@@ -234,6 +272,8 @@ fn measure_buf(buf: &str) -> (u16, u16, u16) {
 pub(crate) struct Flat {
     all: Wrapped,
     cells: Vec<FlatCell>,
+    /// The source lines of `all`'s bytes.
+    src: Vec<SrcMark>,
     /// [`pack`]'s masks of `all`'s buffer, built once for every wrap of every cell
     /// ([`Flat::seal`]; LAY-007: a table wraps a cell at more than one width).
     cuts: Cuts,
@@ -246,6 +286,9 @@ struct FlatCell {
     end: u32,
     first: u32,
     last: u32,
+    /// Its [`SrcMark`]s in [`Flat`]'s: the first the one that holds its start, which may be
+    /// a cell's before (the cells of a table row share a source line, so most push none).
+    marks: (u32, u32),
     unit: UnitId,
     pads: bool,
     nbsp: bool,
@@ -256,6 +299,7 @@ impl Flat {
     pub fn clear(&mut self) {
         self.all.buf.clear();
         self.all.pieces.clear();
+        self.src.clear();
         self.cells.clear();
         self.cuts.bits.clear();
     }
@@ -281,13 +325,19 @@ impl Flat {
     ) {
         let w = &mut self.all;
         let (start, first) = (w.buf.len() as u32, w.pieces.len() as u32);
+        let before = self.src.len();
         (w.pads, w.nbsp, w.unit_len, w.sealed) = (false, false, 0, first);
-        flatten(runs, key, doc, glyphs, w);
+        flatten(runs, key, doc, glyphs, (w, &mut self.src));
+        let marks = match self.src.get(before) {
+            Some(m) if m.at == start => before,
+            _ => before.saturating_sub(1),
+        } as u32;
         self.cells.push(FlatCell {
             start,
             end: w.buf.len() as u32,
             first,
             last: w.pieces.len() as u32,
+            marks: (marks, self.src.len() as u32),
             unit,
             pads: w.pads,
             nbsp: w.nbsp,
@@ -334,10 +384,11 @@ impl Flat {
         count(buf, pieces, c.start, avail.max(1))
     }
 
-    /// [`wrap`] of cell `i` to `avail` columns, into `into`'s buffers.
-    pub fn wrap(&self, i: usize, into: Wrapped, avail: u16) -> Wrapped {
+    /// [`wrap`] of cell `i` to `avail` columns, into `w`, emptied first. In place: a wrap's
+    /// moves in and out were 7–9% of a table's layout (LAY-008).
+    pub fn wrap(&self, i: usize, w: &mut Wrapped, avail: u16) {
         let c = self.cells[i];
-        let mut w = into.recycle(Some(c.unit));
+        w.reset(Some(c.unit));
         w.buf
             .push_str(&self.all.buf[c.start as usize..c.end as usize]);
         let pieces = &self.all.pieces[c.first as usize..c.last as usize];
@@ -353,15 +404,22 @@ impl Flat {
             true => Masks::Off,
             false => Masks::At(&self.cuts, c.start as usize),
         };
-        pack(&mut w, avail.max(1), masks);
-        w
+        // the cell's marks read where they are, `c.start` on, not copied (LAY-008)
+        let src = &self.src[c.marks.0 as usize..c.marks.1 as usize];
+        pack(w, avail.max(1), masks, (src, c.start));
     }
 }
 
 /// The text of a search unit made of `runs`: the bodies [`wrap`] gives them, in order.
 pub fn unit_text(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> String {
     let mut w = Wrapped::default();
-    flatten(runs, StyleKey::Text, (doc, None), glyphs, &mut w);
+    flatten(
+        runs,
+        StyleKey::Text,
+        (doc, None),
+        glyphs,
+        (&mut w, &mut Vec::new()),
+    );
     w.pieces
         .iter()
         .map(|p| &w.buf[p.body_start as usize..p.body_end as usize])
@@ -370,9 +428,16 @@ pub fn unit_text(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> String {
 
 /// Wrap plain text that has a single style.
 pub fn wrap_plain(text: &str, key: StyleKey, src_line: u32, avail: u16) -> Wrapped {
-    let mut w = Wrapped::default();
-    push_piece(&mut w, text, key, InlineStyle::NONE, None, src_line);
-    pack(&mut w, avail.max(1), Masks::Off);
+    let (mut w, mut src) = (Wrapped::default(), Vec::new());
+    push_piece(
+        (&mut w, &mut src),
+        text,
+        key,
+        InlineStyle::NONE,
+        None,
+        src_line,
+    );
+    pack(&mut w, avail.max(1), Masks::Off, (&src, 0));
     w
 }
 
@@ -384,10 +449,10 @@ pub fn wrap_unit(
     src_line: u32,
     avail: u16,
 ) -> Wrapped {
-    let mut w = Wrapped::new(Some(unit));
+    let (mut w, mut src) = (Wrapped::new(Some(unit)), Vec::new());
     let look = (key, InlineStyle::NONE, None);
-    push_parts(&mut w, [pre, body, post], look, src_line, false);
-    pack(&mut w, avail.max(1), Masks::Off);
+    push_parts((&mut w, &mut src), [pre, body, post], look, src_line, false);
+    pack(&mut w, avail.max(1), Masks::Off, (&src, 0));
     w
 }
 
@@ -490,21 +555,21 @@ fn suspect(s: &str, fold: bool) -> bool {
 }
 
 fn push_piece(
-    w: &mut Wrapped,
+    into: Sink<'_>,
     text: &str,
     key: StyleKey,
     inline: InlineStyle,
     link: Option<LinkId>,
     src_line: u32,
 ) {
-    push_parts(w, [text, "", ""], (key, inline, link), src_line, false);
+    push_parts(into, [text, "", ""], (key, inline, link), src_line, false);
 }
 
 /// Push one piece: decoration, a searchable body, decoration. The decorations' [`NBSP`]s are
 /// ada's own and become [`PAD`]s; the body's are the source's and stay. `fold`: the body's
 /// newlines become spaces.
 fn push_parts(
-    w: &mut Wrapped,
+    (w, src): Sink<'_>,
     [pre, body, post]: [&str; 3],
     (key, inline, link): (StyleKey, InlineStyle, Option<LinkId>),
     src_line: u32,
@@ -521,13 +586,19 @@ fn push_parts(
     let body_end = w.buf.len() as u32;
     pads |= !post.is_empty() && push_deco(&mut w.buf, post);
     let look = (key, inline, link);
-    end_piece(w, [start, body_start, body_end], pads, look, src_line);
+    end_piece(
+        (w, src),
+        [start, body_start, body_end],
+        pads,
+        look,
+        src_line,
+    );
 }
 
 /// [`push_parts`] of inline code, its body folded between `pad`s already as the buffer holds
 /// them, [`PAD`]s (LAY-006: an NBSP pad took `push_deco`'s character loop twice a span).
 fn push_code(
-    w: &mut Wrapped,
+    (w, src): Sink<'_>,
     pad: &str,
     (doc, run, marks): (&Doc, &Run, Option<&Marks>),
     look: Look,
@@ -540,23 +611,30 @@ fn push_code(
     let body_end = w.buf.len() as u32;
     w.buf.push_str(pad);
     let pads = !pad.is_empty();
-    end_piece(w, [start, body_start, body_end], pads, look, run.src_line);
+    end_piece(
+        (w, src),
+        [start, body_start, body_end],
+        pads,
+        look,
+        run.src_line,
+    );
 }
 
 /// [`push_parts`] of a run of text, its body alone.
-fn push_text(w: &mut Wrapped, (doc, run, marks): (&Doc, &Run, Option<&Marks>), look: Look) {
+fn push_text((w, src): Sink<'_>, (doc, run, marks): (&Doc, &Run, Option<&Marks>), look: Look) {
     let start = w.buf.len() as u32;
     w.nbsp |= push_run(&mut w.buf, doc, run, marks);
     let end = w.buf.len() as u32;
-    end_piece(w, [start, start, end], false, look, run.src_line);
+    end_piece((w, src), [start, start, end], false, look, run.src_line);
 }
 
-/// The piece from `start` to the buffer's end, its body `body_start..body_end`. A body alone that
-/// follows a piece of the same look and source line ending in its body grows that piece instead
-/// (LAY-006: a soft break was a piece of its own, a seg and a slow `Packer::add` on every row).
+/// The piece from `start` to the buffer's end, its body `body_start..body_end`, from source line
+/// `src_line`. A body alone that follows a piece of the same look ending in its body grows that
+/// piece instead (LAY-006: a soft break was a piece of its own, a seg and a slow `Packer::add` on
+/// every row), whatever its source line (LAY-008): a [`SrcMark`] where the line changes.
 #[inline(always)]
 fn end_piece(
-    w: &mut Wrapped,
+    (w, src): Sink<'_>,
     [start, body_start, body_end]: [u32; 3],
     pads: bool,
     (key, inline, link): Look,
@@ -566,12 +644,18 @@ fn end_piece(
     if start == end {
         return;
     }
+    if src.last().is_none_or(|m| m.line != src_line) {
+        src.push(SrcMark {
+            at: start,
+            line: src_line,
+        });
+    }
     if body_start == start
         && body_end == end
         && w.pieces.len() as u32 > w.sealed
         && let Some(last) = w.pieces.last_mut()
         && (last.end, last.body_end) == (start, start)
-        && (last.key, last.inline, last.link, last.src_line) == (key, inline, link, src_line)
+        && (last.key, last.inline, last.link) == (key, inline, link)
     {
         debug_assert_eq!(
             last.unit_off + (last.body_end - last.body_start),
@@ -588,7 +672,6 @@ fn end_piece(
         key,
         inline,
         link,
-        src_line,
         body_start,
         body_end,
         unit_off: w.unit_len,
@@ -600,12 +683,15 @@ fn end_piece(
 /// A piece's style: key, inline markup, link.
 type Look = (StyleKey, InlineStyle, Option<LinkId>);
 
+/// What flattening writes: a wrap's buffer and pieces, and the source lines of its bytes.
+type Sink<'a> = (&'a mut Wrapped, &'a mut Vec<SrcMark>);
+
 fn flatten(
     runs: &[Run],
     key: StyleKey,
     (doc, marks): (&Doc, Option<&Marks>),
     glyphs: &Glyphs,
-    w: &mut Wrapped,
+    (w, src): Sink<'_>,
 ) {
     // the pad as the buffer holds it: `push_deco` would make each NBSP a PAD
     let mut code_pad: Option<String> = None;
@@ -618,11 +704,11 @@ fn flatten(
                 let pad = code_pad.get_or_insert_with(|| {
                     std::iter::repeat_n(PAD, glyphs.code_pad as usize).collect()
                 });
-                push_code(w, pad, (doc, run, marks), look);
+                push_code((w, src), pad, (doc, run, marks), look);
             }
-            RunKind::Text => push_text(w, (doc, run, marks), look),
-            RunKind::SoftBreak => push_parts(w, ["", " ", ""], look, line, false),
-            RunKind::HardBreak => push_parts(w, ["", "\n", ""], look, line, false),
+            RunKind::Text => push_text((w, src), (doc, run, marks), look),
+            RunKind::SoftBreak => push_parts((w, src), ["", " ", ""], look, line, false),
+            RunKind::HardBreak => push_parts((w, src), ["", "\n", ""], look, line, false),
             RunKind::InlineImage(link) => {
                 let icon: String = glyphs
                     .image
@@ -635,12 +721,12 @@ fn flatten(
                     &icon
                 };
                 let look = (StyleKey::Image, run.style, Some(link));
-                push_parts(w, [icon, text, ""], look, line, true);
+                push_parts((w, src), [icon, text, ""], look, line, true);
             }
             RunKind::FootnoteRef(id) => {
                 let n = doc.footnotes.get(id as usize).map_or(0, |f| f.number);
                 let look = (StyleKey::FootnoteRef, InlineStyle::NONE, run.link);
-                push_parts(w, [&format!("[{n}]"), "", ""], look, line, false);
+                push_parts((w, src), [&format!("[{n}]"), "", ""], look, line, false);
             }
         }
     }
@@ -1008,16 +1094,22 @@ struct Packer<'w> {
     seg: Seg,
     /// Whether the line holds anything: `seg` with it.
     open: bool,
-    /// The line's width and source lines so far, and where its segs start in `segs`.
+    /// The line's width so far, where its first seg starts in the buffer, and where its segs
+    /// start in `segs`.
     width: u16,
-    src: LineRange,
+    line_start: u32,
     first: u32,
+    /// The buffer's source lines, where the buffer starts in them, and the one that holds the
+    /// last line's start.
+    marks: &'w [SrcMark],
+    base: u32,
+    mark: usize,
     segs: &'w mut Vec<Seg>,
     lines: &'w mut Vec<Line>,
 }
 
 impl<'w> Packer<'w> {
-    fn new(w: &'w mut Wrapped) -> Self {
+    fn new(w: &'w mut Wrapped, (marks, base): (&'w [SrcMark], u32)) -> Self {
         Packer {
             piece_end: w.pieces.first().map_or(0, |p| p.end),
             pieces: &w.pieces,
@@ -1032,8 +1124,11 @@ impl<'w> Packer<'w> {
             },
             open: false,
             width: 0,
-            src: LineRange::NONE,
+            line_start: 0,
             first: w.segs.len() as u32,
+            marks,
+            base,
+            mark: 0,
             segs: &mut w.segs,
             lines: &mut w.lines,
         }
@@ -1043,8 +1138,7 @@ impl<'w> Packer<'w> {
     /// at piece boundaries.
     #[inline(always)]
     fn add(&mut self, start: u32, end: u32, width: u16, ascii: bool) {
-        // right after the line's last seg and inside its piece: that seg grows, and the line's
-        // source lines already hold the piece's (LAY-002)
+        // right after the line's last seg and inside its piece: that seg grows (LAY-002)
         if self.open && self.seg.end == start && end <= self.piece_end {
             debug_assert_eq!(self.seg.piece as usize, self.cursor);
             self.seg.end = end;
@@ -1083,6 +1177,8 @@ impl<'w> Packer<'w> {
             } else {
                 if self.open {
                     self.segs.push(self.seg);
+                } else {
+                    self.line_start = start;
                 }
                 self.seg = Seg {
                     start,
@@ -1094,23 +1190,46 @@ impl<'w> Packer<'w> {
                 self.open = true;
             }
             self.width = self.width.saturating_add(width);
-            self.src = self.src.union(LineRange::line(piece.src_line));
             start = stop;
         }
     }
 
     /// End the line, empty or not.
+    #[inline(always)]
     fn flush(&mut self) {
+        let mut src = LineRange::NONE;
         if self.open {
             self.segs.push(self.seg);
+            src = self.src(self.base + self.line_start, self.base + self.seg.end);
         }
         let end = self.segs.len() as u32;
         self.lines.push(Line {
             segs: self.first..end,
             width: self.width,
-            src: self.src,
+            src,
         });
-        (self.open, self.width, self.src, self.first) = (false, 0, LineRange::NONE, end);
+        (self.open, self.width, self.first) = (false, 0, end);
+    }
+
+    /// The source lines of bytes `start..end` of the marks', from them: lines come in order, so
+    /// the one holding `start` is found from the last line's.
+    #[inline(always)]
+    fn src(&mut self, start: u32, end: u32) -> LineRange {
+        let marks = self.marks;
+        while self.mark + 1 < marks.len() && marks[self.mark + 1].at <= start {
+            self.mark += 1;
+        }
+        let Some(m) = marks.get(self.mark) else {
+            return LineRange::NONE;
+        };
+        let mut src = LineRange::line(m.line);
+        for m in &marks[self.mark + 1..] {
+            if m.at >= end {
+                break;
+            }
+            src = src.union(LineRange::line(m.line));
+        }
+        src
     }
 }
 
@@ -1124,13 +1243,20 @@ enum Masks<'a> {
     At(&'a Cuts, usize),
 }
 
-fn pack(w: &mut Wrapped, avail: u16, masks: Masks<'_>) {
-    pack_with::<true>(w, avail, masks);
+/// Pack `w`'s pieces into lines of `avail` columns. `src`: the source lines of its bytes, and
+/// where its buffer starts in them (a [`Flat`]'s cell's, read where they are).
+fn pack(w: &mut Wrapped, avail: u16, masks: Masks<'_>, src: (&[SrcMark], u32)) {
+    pack_with::<true>(w, avail, masks, src);
 }
 
 /// [`pack`]; a word at a time unless `FAST` (tests check the two agree).
-fn pack_with<const FAST: bool>(w: &mut Wrapped, avail: u16, mut masks: Masks<'_>) {
-    let mut p = Packer::new(w);
+fn pack_with<const FAST: bool>(
+    w: &mut Wrapped,
+    avail: u16,
+    mut masks: Masks<'_>,
+    marks: (&[SrcMark], u32),
+) {
+    let mut p = Packer::new(w, marks);
     // where the run of spaces before the next word starts, when it follows a word on the line
     let mut pending: Option<u32> = None;
     // the last space's fast path went as far as the line has room for
@@ -1361,7 +1487,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
-            &mut Cuts::default(),
+            &mut Scratch::default(),
             doc.runs(inl),
             StyleKey::Text,
             avail,
@@ -1465,7 +1591,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
-            &mut Cuts::default(),
+            &mut Scratch::default(),
             doc.runs(inl),
             StyleKey::Text,
             80,
@@ -1661,7 +1787,7 @@ mod tests {
                     let into = Wrapped::new(None);
                     let w = wrap(
                         into,
-                        &mut Cuts::default(),
+                        &mut Scratch::default(),
                         doc.runs(inl),
                         StyleKey::Text,
                         30,
@@ -1778,7 +1904,7 @@ mod tests {
                 };
                 buf.push_str(parts[i]);
             }
-            let mut w = Wrapped::default();
+            let (mut w, mut src) = (Wrapped::default(), Vec::new());
             w.buf.push_str(&buf);
             let mut at = 0;
             while at < buf.len() {
@@ -1787,7 +1913,7 @@ mod tests {
                     end += 1;
                 }
                 let line = (at / 50) as u32 + 1;
-                push_test_piece(&mut w, at as u32, end as u32, line);
+                push_test_piece((&mut w, &mut src), at as u32, end as u32, line);
                 at = end;
             }
             // as a table's cell: its masks a part of those of the cells around it
@@ -1799,14 +1925,36 @@ mod tests {
             }
             let mut shared = Cuts::default();
             shared.build(format!("{left}{buf}{right}").as_bytes());
+            // and its source lines read from the cells' marks, past the cell before's; every other
+            // case, its first one the cell before's, of the same line
+            let base = left.len() as u32;
+            let mut marks: Vec<SrcMark> = (src.iter())
+                .map(|m| SrcMark {
+                    at: m.at + base,
+                    line: m.line,
+                })
+                .collect();
+            if let Some(first) = marks.first_mut().filter(|_| case % 2 == 1) {
+                first.at = 0;
+            }
             for avail in (1..12).chain((12..buf.len() as u16 + 4).step_by(5)) {
                 let mut slow = w.clone_input();
-                pack_with::<false>(&mut slow, avail, Masks::Off);
+                pack_with::<false>(&mut slow, avail, Masks::Off, (&src, 0));
+                // each line's source lines are those of its segs' bytes, looked up one by one
+                for l in &slow.lines {
+                    let want = (slow.line_segs(l).iter())
+                        .flat_map(|s| s.start..s.end)
+                        .map(|b| src.iter().rfind(|m| m.at <= b).map_or(0, |m| m.line))
+                        .fold(LineRange::NONE, |r, n| r.union(LineRange::line(n)));
+                    assert_eq!(l.src, want, "{buf:?} at {avail}");
+                }
                 let mut fast = w.clone_input();
-                pack_with::<true>(&mut fast, avail, Masks::Build(&mut Cuts::default()));
+                let masks = Masks::Build(&mut Cuts::default());
+                pack_with::<true>(&mut fast, avail, masks, (&src, 0));
                 assert_eq!(layout(&fast), layout(&slow), "{buf:?} at {avail}");
                 let mut cell = w.clone_input();
-                pack_with::<true>(&mut cell, avail, Masks::At(&shared, left.len()));
+                let masks = Masks::At(&shared, left.len());
+                pack_with::<true>(&mut cell, avail, masks, (&marks, base));
                 assert_eq!(
                     layout(&cell),
                     layout(&slow),
@@ -1816,14 +1964,19 @@ mod tests {
         }
     }
 
-    fn push_test_piece(w: &mut Wrapped, start: u32, end: u32, src_line: u32) {
+    fn push_test_piece((w, src): Sink<'_>, start: u32, end: u32, src_line: u32) {
+        if src.last().is_none_or(|m| m.line != src_line) {
+            src.push(SrcMark {
+                at: start,
+                line: src_line,
+            });
+        }
         w.pieces.push(Piece {
             start,
             end,
             key: StyleKey::Text,
             inline: InlineStyle::NONE,
             link: None,
-            src_line,
             body_start: start,
             body_end: end,
             unit_off: 0,
@@ -1849,7 +2002,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
-            &mut Cuts::default(),
+            &mut Scratch::default(),
             doc.runs(inl),
             StyleKey::Text,
             12,

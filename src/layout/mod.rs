@@ -633,7 +633,7 @@ fn relayout_lines(
         stripe: None,
         striped: false,
         scratch: Wrapped::default(),
-        cuts: wrap::Cuts::default(),
+        wraps: wrap::Scratch::default(),
         cells: Vec::new(),
         flat: table::Cells::default(),
     };
@@ -709,9 +709,9 @@ struct Builder<'a> {
     striped: bool,
     /// The last paragraph's wrap, whose buffers the next one reuses.
     scratch: Wrapped,
-    /// The last paragraph's masks for [`wrap::wrap`]'s fast path (LAY-007), their buffer the
-    /// next one's.
-    cuts: wrap::Cuts,
+    /// What the last paragraph's [`wrap::wrap`] kept between flattening and packing (its source
+    /// lines, and the masks of its fast path, LAY-007), their buffers the next one's.
+    wraps: wrap::Scratch,
     /// Table cells' wraps done with, whose buffers the next row's reuse.
     cells: Vec<Wrapped>,
     /// The table being laid out's cells, flattened (LAY-003); its buffers are the next table's.
@@ -1181,7 +1181,7 @@ impl Builder<'_> {
         let avail = self.avail();
         let into = std::mem::take(&mut self.scratch).recycle(Some(unit));
         let doc = (self.doc, Some(&self.measure.marks));
-        let w = wrap::wrap(into, &mut self.cuts, runs, key, avail, doc, self.g, suffix);
+        let w = wrap::wrap(into, &mut self.wraps, runs, key, avail, doc, self.g, suffix);
         self.emit_lines(&w);
         self.scratch = w;
     }

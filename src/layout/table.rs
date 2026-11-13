@@ -1130,11 +1130,12 @@ fn cells(b: &mut Builder<'_>, flat: &Cells, r: usize, widths: &[u16]) -> Vec<Wra
     let mut out = Vec::with_capacity(widths.len());
     let mut row = flat.row(r);
     for &w in widths {
-        let into = b.cells.pop().unwrap_or_default();
-        out.push(match row.next() {
-            Some(i) => flat.flat.wrap(i, into, w),
-            None => into.recycle(None),
-        });
+        let mut into = b.cells.pop().unwrap_or_default();
+        match row.next() {
+            Some(i) => flat.flat.wrap(i, &mut into, w),
+            None => into.reset(None),
+        }
+        out.push(into);
     }
     out
 }
@@ -1462,7 +1463,8 @@ mod tests {
             flat.flatten(t, StyleKey::Text, (&doc, None), &glyphs());
             let cols = flat.measure(t.column_count());
             let i = flat.row(0).start;
-            let wrapped = flat.flat.wrap(i, Wrapped::default(), cols[0].header.max(1));
+            let mut wrapped = Wrapped::default();
+            flat.flat.wrap(i, &mut wrapped, cols[0].header.max(1));
             assert_eq!(cols[0].header_lines, lines, "{header:?}");
             assert_eq!(wrapped.lines.len(), usize::from(lines), "{header:?}");
         }
@@ -1501,7 +1503,8 @@ mod tests {
         for r in 0..2 {
             for i in flat.row(r) {
                 for width in 1..60 {
-                    let wrapped = flat.flat.wrap(i, Wrapped::default(), width);
+                    let mut wrapped = Wrapped::default();
+                    flat.flat.wrap(i, &mut wrapped, width);
                     assert_eq!(
                         flat.flat.lines(i, width),
                         wrapped.lines.len(),
