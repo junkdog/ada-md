@@ -561,29 +561,34 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
     /// of sixteen or more ([`stop_mask`]): a step's end is a bit's place, not a branch a byte,
     /// whose exit was the largest site of Clojure's branch misses (X-039: misses −18%, cycles
     /// −6.6%).
-    fn run_end(&self, mut p: usize) -> usize {
-        let (b, n) = (self.b, self.b.len());
+    fn run_end(&self, p: usize) -> usize {
+        // the sixteen-byte steps are x86_64's alone: elsewhere `run_end_bytes` is the scan, and
+        // the bindings live in the cfg'd block so no target sees them unused
         #[cfg(target_arch = "x86_64")]
-        if n >= 16 {
-            while p < n {
-                // the sixteen bytes from `p`, the line's last sixteen where fewer are left; a
-                // stop bit past them where none stops
-                let c = p.min(n - 16);
-                let s = p - c;
-                let stops = (stop_mask(b, c) >> s) | (1 << (16 - s));
-                let len = stops.trailing_zeros();
-                p += len as usize;
-                if len == (16 - s) as u32 {
-                    continue;
+        {
+            let (b, n) = (self.b, self.b.len());
+            if n >= 16 {
+                let mut p = p;
+                while p < n {
+                    // the sixteen bytes from `p`, the line's last sixteen where fewer are left; a
+                    // stop bit past them where none stops
+                    let c = p.min(n - 16);
+                    let s = p - c;
+                    let stops = (stop_mask(b, c) >> s) | (1 << (16 - s));
+                    let len = stops.trailing_zeros();
+                    p += len as usize;
+                    if len == (16 - s) as u32 {
+                        continue;
+                    }
+                    // a step stops at the bytes below `!` and past ASCII too: a control byte,
+                    // or a byte past ASCII but Unicode's space, is the run's
+                    if DELIM[usize::from(b[p])] || (b[p] >= 0x80 && self.wide_space(p) > 0) {
+                        return p;
+                    }
+                    p += 1;
                 }
-                // a step stops at the bytes below `!` and past ASCII too: a control byte, or
-                // a byte past ASCII but Unicode's space, is the run's
-                if DELIM[usize::from(b[p])] || (b[p] >= 0x80 && self.wide_space(p) > 0) {
-                    return p;
-                }
-                p += 1;
+                return p;
             }
-            return p;
         }
         self.run_end_bytes(p)
     }

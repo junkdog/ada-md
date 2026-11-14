@@ -2801,8 +2801,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn keep_deep_bash(&mut self, st: &State) {
         let held = st.held();
         let from = held.saturating_sub(SH_HELD);
-        for i in 0..SH_HELD {
-            self.ext.bash[i] = if from + i < held {
+        for (i, level) in self.ext.bash.iter_mut().enumerate() {
+            *level = if from + i < held {
                 st.level(from + i)
             } else {
                 0
