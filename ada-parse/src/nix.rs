@@ -373,11 +373,12 @@ fn fold(slot: u8, kind: u16) -> Option<u16> {
     let i = usize::from(slot - 1);
     let f = &FILES[i];
     let k = match f.lang {
-        Lang::Bash => return (kind < 2 * crate::bash::TWIN).then_some(SH_BASE + kind),
+        // `then`, not `then_some`: the sum is taken only in the window, where it fits a u16
+        Lang::Bash => return (kind < 2 * crate::bash::TWIN).then(|| SH_BASE + kind),
         Lang::Php => crate::php::fold(kind)?,
         _ => kind,
     };
-    (k < f.size).then_some(FILE_BASES[i] + k)
+    (k < f.size).then(|| FILE_BASES[i] + k)
 }
 
 /// The language and its own kind a file's kind `kind` (at least [`FILE_BASE`]) is, [`fold`]'s
