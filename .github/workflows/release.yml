@@ -5,7 +5,8 @@ name: 📦 Release
 # with `dry_run` to keep the archives as workflow artifacts and leave the releases alone. A dry run
 # also builds any branch or commit, whatever its version (`gh workflow run release.yml -f tag=main
 # -f dry_run=true`), to try the jobs before a tag. A tag with a pre-release part (`v1.0.0-rc.1`)
-# drafts a pre-release. Publishing the draft, and `cargo publish`, stay manual.
+# drafts a pre-release. The draft's text is CHANGELOG.md's section for the version, a pre-release's from its
+# release's. Publishing the draft, and `cargo publish`, stay manual.
 on:
   push:
     tags: [ 'v[0-9]+.[0-9]+.[0-9]+*' ]
@@ -59,14 +60,14 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           case "$version" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
-      # the release commit runs `./changelog.zsh vX.Y.Z -o CHANGELOG.md` (REL-03, REL-23); a pre-release has its
-      # own entry until its release folds it in, so every version needs one
+      # CHANGELOG.md is written by hand (REL-024): the release commit holds the version's section, and a
+      # pre-release takes its release's (1.1.0-rc.1 reads 1.1.0's), so an rc's section is written once
       - name: 📜 CHANGELOG.md has the release
         run: |
           version=${{ steps.v.outputs.version }}
-          if ! grep -qF "## [$version](" CHANGELOG.md; then
+          if ! grep -qF "## [${version%%-*}](" CHANGELOG.md; then
             level=error; [ "$DRY_RUN" = true ] && level=warning
-            echo "::$level::CHANGELOG.md has no entry for $version: run ./changelog.zsh v$version -o CHANGELOG.md in the release commit"
+            echo "::$level::CHANGELOG.md has no section for ${version%%-*}: write its ## [${version%%-*}](…) by hand"
             [ "$DRY_RUN" = true ]
           fi
 
@@ -193,22 +194,23 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      # the history and tags, for git-cliff
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
-          fetch-depth: 0
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: git-cliff
-      # the tag's commits, by changelog.zsh (REL-23): a release's include its pre-releases', a pre-release's are its
-      # own. The version heading goes: the title has it
+      # CHANGELOG.md's section for the version (REL-024), a pre-release's from its release's: the lines after its
+      # heading up to the next `## `, without the blank lines around them. The heading goes: the title has it
       - name: 📝 Release notes
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zsh
-          ./changelog.zsh --current --strip all | sed '1,/^## /d' > notes.md
-          grep -q '^- ' notes.md || echo "No user-facing changes since the last release." > notes.md
+          awk -v h="## [${VERSION%%-*}](" '
+            index($0, h) == 1 { f = 1; next }
+            f && /^## / { exit }
+            f && (n || NF) { buf[++n] = $0 }
+            END { while (n && buf[n] == "") n--; for (i = 1; i <= n; i++) print buf[i] }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md's section for ${VERSION%%-*} is empty"
+            exit 1
+          fi
           cat notes.md
       - uses: actions/download-artifact@v8
         with:

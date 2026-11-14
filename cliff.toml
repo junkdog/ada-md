@@ -1,17 +1,13 @@
-# git-cliff: CHANGELOG.md and the release notes, from the commit subjects (REL-23). Nothing before v1.0.0-rc.1:
-# its notes, the feature summary, are the first release's. A commit's type and scope decide whether it shows:
-# feat, fix and perf do, docs unscoped or as docs(readme); the bench, site and fuzz scopes, ci, chore, test,
-# refactor, style and build don't. So a subject that shows is written for users.
-# changelog.zsh runs it: a pre-release has its own section until its release is tagged, then folds into it, and
-# which tags fold depends on the tags there are, so it's worked out there (--ignore-tags) rather than here.
-#   ./changelog.zsh v1.0.0 -o CHANGELOG.md   # the release commit: the changelog with the new version
-#   ./changelog.zsh --current --strip all    # a tag's notes (the release workflow)
+# git-cliff: the raw list of user-facing commits that CHANGELOG.md's next section is written from by hand
+# (REL-024; from 1.1 on, CHANGELOG.md and the release notes aren't generated). Nothing before v1.0.0-rc.1.
+# A commit's type and scope decide whether it shows: feat, fix and perf do, docs unscoped or as docs(readme);
+# the bench, site and fuzz scopes, ci, chore, test, refactor, style and build don't. So a subject that shows
+# reads as what a user notices.
+# changelog.zsh runs it: a pre-release folds into its release, and which tags fold depends on the tags there
+# are, so it's worked out there (--ignore-tags) rather than here.
+#   ./changelog.zsh v1.1.0 --unreleased --strip all   # everything since 1.0.0, the 1.1.0 rcs included
 
 [changelog]
-header = """
-# Changelog
-
-What changed in each release of ada, newest first. A release includes the changes of the pre-releases before it."""
 body = """
 {%- macro entry(commit) -%}
 - {% if commit.scope %}*({{ commit.scope }})* {% endif %}{{ commit.message | upper_first }}
@@ -35,19 +31,7 @@ body = """
 {%- endif %}{% endfor %}
 {% endfor -%}
 """
-# rc.1, the first release, where it falls (the oldest, last): its notes summarize the features
-footer = """
-
-## 1.0.0-rc.1 (2026-10-23)
-
-The first release: its [release notes](https://github.com/junkdog/ada-md/releases/tag/v1.0.0-rc.1) list the features
-it shipped with.
-
----
-
-*Generated from the commit messages by [git-cliff](https://git-cliff.org) ❤️*"""
-# untrimmed: the templates place every newline. Each release starts with the blank line before it, so the file
-# ends with one newline
+# untrimmed: the template places every newline
 trim = false
 
 [git]
