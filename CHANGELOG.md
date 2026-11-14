@@ -41,7 +41,7 @@ crates.io as a library, in step with ada's version.
 - Markdown parses, lays out and prints faster: markup and line starts found by SIMD scans, words read eight bytes at
   a time, lines filled from SSE2 masks, styles written in fewer stores.
 - Less memory for a document: its heap −4 to −67%, a table-heavy print's peak 94 → 65 MiB.
-- The TUI sends kitty images through shared memory.
+- On Linux, the TUI sends kitty images through shared memory when the terminal supports it.
 
 ### Changes
 
