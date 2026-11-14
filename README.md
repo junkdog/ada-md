@@ -65,10 +65,11 @@ The charts are on [the site](https://junkdog.github.io/ada-md/#performance), the
 
 ## Install
 
-Binaries for Linux (x86_64 and aarch64) and macOS (Apple silicon and Intel) are on the
-[releases page](https://github.com/junkdog/ada-md/releases). The Linux `gnu` binaries need glibc
-2.34 or newer; the `musl` ones are static and run on any Linux, Alpine included, but print large
-files in up to 1.4× the time. To build it from [crates.io](https://crates.io/crates/ada-md):
+Binaries for Linux (x86_64 and aarch64), macOS (Apple silicon and Intel) and Windows (x86_64, a
+`.zip`) are on the [releases page](https://github.com/junkdog/ada-md/releases). The Linux `gnu`
+binaries need glibc 2.34 or newer; the `musl` ones are static and run on any Linux, Alpine
+included, but print large files in up to 1.4× the time. To build it from
+[crates.io](https://crates.io/crates/ada-md):
 
 ```zsh
 cargo install --locked ada-md
@@ -88,14 +89,11 @@ cargo ordered --locked   # target/release/ada, as released
 Rust 1.95 or newer. ada is pure Rust, but for jemalloc in a static musl build, which needs a C
 compiler and `make`. Git integration runs the `git` command.
 
-**Windows** is mostly untested. ada builds there, and the pager has run on Windows 10. The config
-and themes are in `%APPDATA%\ada` (or `$XDG_CONFIG_HOME\ada`), `~` in `[links] roots` is
-`%USERPROFILE%`, links and images open in their default apps, and the editor falls back to
-`notepad`. ada asks the terminal what images it draws, as elsewhere: Windows Terminal 1.22 and
-later answers sixel. Live reload is told when the file changes, as on Linux; on a network drive
-it checks once a second.
-
-There are no Windows binaries; build it with `cargo install`. Windows support is planned for 1.1.
+**Windows** is new in 1.1, and has seen less use than Linux and macOS. The config and themes are
+in `%APPDATA%\ada` (or `$XDG_CONFIG_HOME\ada`), `~` in `[links] roots` is `%USERPROFILE%`, links
+and images open in their default apps, and the editor falls back to `notepad`. ada asks the
+terminal what images it draws, as elsewhere: Windows Terminal 1.22 and later answers sixel. Live
+reload is told when the file changes, as on Linux; on a network drive it checks once a second.
 
 ## Usage
 
@@ -327,13 +325,15 @@ are reported with the file, line and column.
 Markdown is rendered, a png, jpeg or gif is shown full screen, and code and config files (`main.rs`,
 `Cargo.lock`, `Makefile`, `.zshrc`, or a `#!` first line) are shown whole and highlighted, with
 the git gutter, search, `e` and `--line` working on their lines. ada highlights 61 languages with
-lexers of its own, the common ones and the config formats; the other languages bat knows open
-the same way, plain, as does other text. Binary files aren't shown.
+lexers of its own, the common ones and the config formats, and SQL and regexes inside other
+languages' strings in their own colors; the other languages bat knows open the same way, plain, as
+does other text. Binary files aren't shown. The lexers are a library of their own on crates.io,
+[ada-parse](https://crates.io/crates/ada-parse), versioned with ada.
 
-Stdin and files with no extension go by their first 8 KB: a diff, a mermaid diagram, JSON, 
-YAML, TOML, HTML, a log, or markdown. Piped text that's none of these is shown line for line, never
-reflowed; a file with no extension falls back to markdown, as a `README` should. A png, jpeg or gif
-piped in (`curl -s …/cat.png | ada`) is told by its first bytes and shown as an image file is.
+Stdin and files with no extension go by their first 8 KB: a diff, a mermaid diagram, JSON, YAML,
+TOML, HTML, a log, a config file, code in any language ada highlights, or markdown. Piped text
+that's none of these is shown line for line, never reflowed; a file with no extension falls back
+to markdown, as a `README` should. A png, jpeg or gif piped in (`curl -s …/cat.png | ada`) is told by its first bytes and shown as an image file is.
 Logs and JSON are highlighted by ada's own scanners, lines of any length included; a theme styles
 log levels with `markup.error`, `markup.warning`, `markup.info` and `markup.debug`. `-l NAME`
 overrides the guess, and completes to every language ada knows.

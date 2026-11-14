@@ -11,7 +11,7 @@ old paths in the vault notes still resolve, and so do the installed viewers that
 (rich's uv venv).
 
 ```zsh
-cargo ordered   # ada as released, its hot code first; a plain `cargo build` isn't ordered (MEM-08)
+cargo ordered   # ada as released, its hot code first; a plain `cargo build` isn't ordered (MEM-008)
 export B2_ROOT=$PWD/bench/b2/root ADA=$PWD/target/release/ada
 mkdir -p $B2_ROOT/{corpus,tools,b2}
 # viewers, into a prefix of their own
@@ -33,13 +33,14 @@ the bench cores held ready (below). The steps one by one:
 
 ```zsh
 B2=bench/b2/target/release/b2
-python3 -I bench/b2/lanes.py   # writes lane0..3.json
-L=(0,2,4,6 8,10,12,14 16,18,20,22 24,26,28,30)   # one thread per physical core, a CCD per pair
+python3 -I bench/b2/lanes.py   # writes lane0.json, lane1.json and lane-xl.json
+L=(0,2,4,6 8,10,12,14)   # CCD0's two lanes, one thread per physical core
 sudo -n /usr/local/sbin/b2-bench-profile on ${(j:,:)L} $$   # hold the cores ready, as full.zsh does (below)
-for i in 0 1 2 3; do
-  taskset -c ${L[$((i+1))]} $B2 run bench/b2/lane$i.json $B2_ROOT/b2/lane$i.jsonl &
+for i in 0 1; do
+  taskset -c $L[i+1] $B2 run bench/b2/lane$i.json $B2_ROOT/b2/lane$i.jsonl &
 done; wait
-cat $B2_ROOT/b2/lane*.jsonl > $B2_ROOT/b2/all.jsonl
+taskset -c $L[1] $B2 run bench/b2/lane-xl.json $B2_ROOT/b2/lane-xl.jsonl   # the XL jobs after, on the first alone
+cat $B2_ROOT/b2/{lane0,lane1,lane-xl}.jsonl > $B2_ROOT/b2/all.jsonl
 python3 -I bench/b2/report.py $B2_ROOT/b2/all.jsonl; python3 -I bench/b2/rank.py
 zsh bench/b2/b2a.zsh && python3 -I bench/b2/b2a_report.py
 zsh bench/b2/b2p.zsh   # the previewer files: code, a log, huge files; whole and under a preview's budget
@@ -48,8 +49,8 @@ zsh bench/b2/b2i.zsh   # image previews: kitty graphics, half-blocks and symbols
 cargo build --release --manifest-path bench/diagrams/compare/Cargo.toml
 taskset -c 2 bench/diagrams/compare/target/release/compare --dat $B2_ROOT/mermaid.dat > $B2_ROOT/diagrams.md
 python3 -I bench/b2/doctables.py > tables.md   # the vault notes' tables, × columns and ranks included
-python3 -I bench/b2/plot.py $(git rev-parse --short HEAD) && gnuplot bench/b2/plots/b2.gnuplot   # the README's charts
-python3 -I site/perf.py   # the site's perf section, from the same .dat files
+python3 -I bench/b2/plot.py $(git rev-parse --short HEAD)   # the charts' data, plots/*.dat
+python3 -I site/perf.py   # the site's perf section, from those .dat files
 ```
 
 The lanes are CCD0's two (since 2026-11-03, BEN-002: a job's CCD moved its per-key cells up to 1.4×, and two XL
@@ -150,11 +151,11 @@ into deep idle (C3 exits in 350 µs, against a key's 0.1–0.4 ms): without help
 of the machine is (two busy lanes read 1.24× four) and with the CCD's ramp. `b2-bench-profile on CPUS PID` holds
 the listed cores at EPP `performance` with no idle state deeper than C1, and restores them when PID exits; with
 it, two busy lanes read as four (median 1.001) and CCD1 as CCD0, at 27–28 °C (ada-optimization, experiment 28).
-Since BEN-04 it also raises the cores' `scaling_min_freq` to `scaling_max_freq`: EPP alone left them falling to
+Since BEN-004 it also raises the cores' `scaling_min_freq` to `scaling_max_freq`: EPP alone left them falling to
 the 2.0 GHz floor between keys, and a key ended before the clock had ramped (1.8–2.1 GHz while taking one key at a
 time, against 5.19). It runs as root through a password-free sudoers rule (its header has the install lines).
 `full.zsh`, `rerun.zsh` and `stress.zsh` hold it for their cores unless `B2_PROFILE=off`, and write the profile's
-id to `profile.txt` (`on` before BEN-04, `on+clock` since, or `off`): records made under different profiles don't
+id to `profile.txt` (`on` before BEN-004, `on+clock` since, or `off`): records made under different profiles don't
 mix, and `rerun.zsh` refuses a REF made another way (no `profile.txt`: off). An installed helper older than this
 directory's writes no id, and the scripts stop: reinstall it.
 
@@ -186,7 +187,7 @@ profile; old/REF then compares across the two and isn't drift.
 ### Flood: scrolling at full speed
 
 `b2 flood` sends scroll keys one per write at a fixed rate, or as fast as the pty takes them (`RATE` 0, which
-viewers on crossterm's default event source stall on; ada's fix is in the vault note `ada-optimization`, O-21). It prints one JSON line: frames a
+viewers on crossterm's default event source stall on; ada's fix is in the vault note `ada-optimization`, O-021). It prints one JSON line: frames a
 second, keys per frame, bytes and `write` calls per frame, CPU per frame and per thread, and key-to-frame latency.
 Frames are counted by ratatui's per-draw cursor hide, so those columns mean something only for ratatui viewers.
 
@@ -210,10 +211,10 @@ done
 | `src/` (`b2`) | pty driver: a reader thread timestamps output and answers terminal queries in order; afterwards, vt100 replays each run to find when the screen showed what |
 | `src/flood.rs` | `b2 flood`: keys at a fixed rate, frames, CPU per thread and latency per key |
 | `mkspec.py` | jobs: viewers, their keys, documents and sentinels |
-| `lanes.py` | splits the jobs into four CPU lanes |
+| `lanes.py` | splits the jobs over CCD0's two lanes, the XL jobs into a third spec run after them |
 | `report.py`, `rank.py` | tables, and where ada isn't first |
 | `doctables.py` | the vault notes' B2 tables in their layout: × columns, the best value per column bold, ranks, the cold resize |
-| `plot.py`, `plots/b2.gnuplot` | the charts' data: `plots/interactive.dat` and `print.dat` (the README's `interactive.png` and `print.png`, and the site), `previewer.dat`, `images.dat` and `mermaid.dat` (the site only; `mermaid.dat` is `compare`'s, from the record set, stamped; `B2P_DIRS` and `B2I_DIRS` merge reruns as for `doctables.py`, and a second argument stamps `previewer.dat` when some files were rerun at another commit: `plot.py 137570c "137570c, logs e9ec3b7"`) |
+| `plot.py`, `plots/b2.gnuplot` | the charts' data, which the site draws (`site/perf.py`): `plots/interactive.dat`, `print.dat` (also gnuplot's `interactive.png` and `print.png`, which the README no longer shows and nothing redraws), `previewer.dat`, `images.dat` and `mermaid.dat` (the site only; `mermaid.dat` is `compare`'s, from the record set, stamped; `B2P_DIRS` and `B2I_DIRS` merge reruns as for `doctables.py`, and a second argument stamps `previewer.dat` when some files were rerun at another commit: `plot.py 137570c "137570c, logs e9ec3b7"`) |
 | `b2a.zsh`, `b2a_report.py` | print mode with hyperfine 2 (wall, CPU, peak RSS, instructions) |
 | `b2p.zsh` | the previewer files (code, logs, huge files) printed whole and under a preview's budget |
 | `b2i.zsh` | image previews against kitten icat, chafa, viu and mcat |

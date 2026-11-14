@@ -60,6 +60,11 @@ cargo run -p ada-parse --example incremental
 
 `Lang::ALL` lists them. Languages arrive in most releases.
 
+Code inside code is lexed in its own language, its scopes inside the host's: SQL and regexes in
+other languages' strings (each regex in its engine's dialect, `keyword.other.DML.sql` inside a
+Python string's scopes), HTML's styles and scripts, PHP's HTML, a Dockerfile's `RUN` and Nix's
+build phases as shell, nginx's Lua blocks.
+
 ## Performance
 
 Each lexer is a hand-written scanner that makes one forward pass over a line's bytes: no regex
@@ -80,8 +85,8 @@ Single-threaded, on an AMD Ryzen AI MAX+ PRO 395 (November 2026):
   token-only [logos](https://crates.io/crates/logos) lexer on JSON and Rust, which gives
   tokens where ada-parse gives scopes.
 
-Code size is the trade: every language is compiled in, about 3.5 MB of a release binary for
-all of them.
+Code size is the trade: every language is compiled in, about 7 MB of a release binary for all
+of them (x86_64, fat LTO, stripped).
 
 ## Stability
 
