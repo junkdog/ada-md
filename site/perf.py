@@ -26,7 +26,7 @@ UNITS = {"peak RSS": "MiB", "print to a pipe, peak RSS": "MiB", "previewer, a pr
          "image, text, peak RSS": "MiB", "mermaid, sequence diagrams": "µs", "mermaid, flowcharts": "µs",
          "mermaid, state diagrams": "µs", "mermaid, gantt charts": "µs", "mermaid, class diagrams": "µs"}
 # previewer.dat's and images.dat's rows: (tab label, description)
-FILES = {"code-s.rs": ("6 KB", "Rust"), "code-m.rs": ("47 KB", "Rust"), "code-l.rs": ("305 KB", "Rust"),
+FILES = {"code-s.py": ("7 KB", "Python"), "code-m.clj": ("40 KB", "Clojure"), "code-l.rs": ("305 KB", "Rust"),
          "log.log": ("1 MB", "journal log"), "huge.json": ("3.75 MB", "JSON, one line"),
          "huge.log": ("80 MB", "journal log")}
 FILE_TAB = "huge.log"
@@ -230,7 +230,9 @@ def stamps():
         if os.path.exists(path := f"{PLOTS}/{name}.dat"):
             commit = parse(path)[1]
             if commit != parse(f"{PLOTS}/interactive.dat")[1]:
-                extra.append(f"{label} at ada <code>{escape(commit)}</code>")
+                # "137570c, logs e9ec3b7": the commit in code, the rest as text
+                sha, _, rest = commit.partition(", ")
+                extra.append(f"{label} at ada <code>{escape(sha)}</code>" + (f", {escape(rest)}" if rest else ""))
     return "".join(f"; {e}" for e in extra)
 
 

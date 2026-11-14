@@ -101,8 +101,9 @@ experiment 28).
 
 - `b2a.zsh`: the four notes. bat highlights the source and lowdown doesn't highlight, so neither is ranked.
   `COLUMNS=100` is exported because rich lays out at `-w` but crops each line at its console's width (80 to a pipe).
-- `b2p.zsh`: inputs in `corpus/` beside the notes: `code-s.rs`, `code-m.rs` (ada's `src/layout/code.rs` and
-  `src/highlight.rs`), `code-l.rs` (zerocopy 0.8.61's `src/lib.rs`), `log.log` (1 MB of `journalctl -o short-iso`),
+- `b2p.zsh`: inputs in `corpus/` beside the notes: `code-s.py` (Python 3.14's `fnmatch.py`), `code-m.clj`
+  (Clojure 1.12.1's `clojure/core_deftype.clj`, from its jar; before 2026-11-14 these two were ada's own Rust,
+  `code-s.rs` and `code-m.rs`), `code-l.rs` (zerocopy 0.8.61's `src/lib.rs`), `log.log` (1 MB of `journalctl -o short-iso`),
   `huge.log` (80 MB of the same) and `huge.json` (3.75 MB on one line: `cargo metadata` of eight projects as a JSON
   array). `whole` prints the file; `preview` gives ada `--height 50` (its fzf budget, 2,000 rows), bat
   `--line-range=:2000` and rich `--head 2000`. Every command is probed under the 2-minute cap first, and the huge files' timed runs run

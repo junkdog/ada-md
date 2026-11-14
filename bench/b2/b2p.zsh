@@ -37,7 +37,7 @@ WHOLE=("ada:$ADA -p -w 100" "bat:$BAT" "rich:$B/rich --syntax -w 100 --force-ter
        "mcat:$B/mcat -c -P --silent --sc 100xauto")
 PREVIEW=("ada:$ADA -p -w 100 --height 50" "bat:$BAT --line-range=:2000"
          "rich:$B/rich --syntax -w 100 --force-terminal --head 2000")
-for f in ${=B2P_FILES:-code-s.rs code-m.rs code-l.rs log.log huge.json huge.log}; do
+for f in ${=B2P_FILES:-code-s.py code-m.clj code-l.rs log.log huge.json huge.log}; do
   for mode in whole preview; do
     if [[ $mode == whole ]]; then P=($WHOLE); else P=($PREVIEW); fi
     [[ -n $B2P_ONLY ]] && P=(${(M)P:#(${(~j:|:)${=B2P_ONLY}}):*})

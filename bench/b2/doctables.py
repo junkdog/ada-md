@@ -383,7 +383,7 @@ def grid(title, inputs, modes, names, load, floors=(), cap=None, flags=None):
         print("\nruns:", {f: {n: r["n"] for n, r in res[f].items()} for f in inputs})
 
 
-PREV_FILES = ["code-s.rs", "code-m.rs", "code-l.rs", "log.log", "huge.json", "huge.log"]
+PREV_FILES = ["code-s.py", "code-m.clj", "code-l.rs", "log.log", "huge.json", "huge.log"]
 IMAGES = ["fit.png", "diagram.png", "photo-12mp.png", "photo.jpg", "photo-12mp.jpg", "photo-24mp.jpg",
           "demo.gif", "photo.gif", "photo-12mp.gif", "photo-12mp-i.gif"]
 # chafa 1.18.3 on a 12 MP GIF: a blank 10×20 px image, or 42 bytes of symbols; not ranked

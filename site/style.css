@@ -196,7 +196,7 @@ figcaption { margin-top: .5rem; font-size: .88rem; color: var(--muted); }
 /* robustness */
 .robust { padding-block: 3rem; }
 .robust > p { color: var(--muted); max-width: 46rem; }
-.robust .tile b { color: var(--accent); }
+.robust > .lede { margin-bottom: 2rem; }
 .fuzz { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1rem; }
 .fuzz li { border-left: 3px solid var(--accent); padding: .25rem 0 .25rem 1rem; }
 .fuzz h3 { font-size: 1rem; margin: 0 0 .35rem; }
