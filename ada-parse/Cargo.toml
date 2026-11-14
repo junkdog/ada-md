@@ -1,11 +1,11 @@
 [package]
 name = "ada-parse"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.95"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Syntax highlighting lexers for about 60 languages, with bat's scopes: ada-md's highlighter"
-license = "MIT"
-repository = "https://github.com/junkdog/ada-md"
+license.workspace = true
+repository.workspace = true
 readme = "README.md"
 keywords = ["syntax-highlighting", "lexer", "highlighting", "tokenizer"]
 categories = ["parser-implementations", "text-processing"]
