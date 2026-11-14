@@ -171,6 +171,8 @@ changed = { fg = "gold", bold = true }          # the mark on a value the config
 "meta.depth-6 punctuation" = { fg = "love" }
 "constant.language" = { fg = "rose" }        # true, false, null
 "string" = { fg = "gold" }
+"meta.mapping.key.json string" = { fg = "foam" }  # json keys, as toml and yaml keys
+"meta.mapping.key.json punctuation.definition.string" = { fg = "foam" }
 "constant.character.escape" = { fg = "pine" }
 "constant.other.placeholder" = { fg = "iris" }
 "markup.deleted" = { fg = "love" }

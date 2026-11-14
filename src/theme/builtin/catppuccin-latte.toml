@@ -167,6 +167,8 @@ changed = { fg = "maroon", bold = true }         # the mark on a value the confi
 "meta.depth-5 punctuation" = { fg = "yellow" }
 "meta.depth-6 punctuation" = { fg = "peach" }
 "string" = { fg = "green" }
+"meta.mapping.key.json string" = { fg = "blue" }  # json keys, as toml and yaml keys
+"meta.mapping.key.json punctuation.definition.string" = { fg = "blue" }
 "constant.character.escape" = { fg = "pink" }
 "markup.deleted" = { fg = "red" }
 "markup.inserted" = { fg = "green" }
