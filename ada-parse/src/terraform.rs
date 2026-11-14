@@ -566,6 +566,9 @@ struct Scan<'b, 'c, K: Sink> {
     /// At a statement's or an item's start: a line's start, a `{`, a `[`, an item's `,`. Not
     /// kept between lines.
     start: bool,
+    /// Where the line's last strip marker with the blank after it (`~ `, [`TRIM_LEFT`]) ended: a
+    /// `~` there has no blank of its own before it. Not kept between lines.
+    trimmed: usize,
     k: K,
     out: &'b mut Out<'c>,
 }
@@ -579,6 +582,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             depth: 0,
             label: 0,
             start: true,
+            trimmed: 0,
             k,
             out,
         }
@@ -665,6 +669,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn lex_line<const SHARED: bool>(&mut self) {
         self.start = true;
+        self.trimmed = 0;
         let p = match self.top() {
             F_HEREDOC => self.heredoc_line(),
             F_COMMENT => self.comment_rest(0),
@@ -1125,18 +1130,20 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         e
     }
 
-    /// A `~` at `p`: in an interpolation, a strip marker with the blank before or after it.
+    /// A `~` at `p`: in an interpolation, a strip marker with the blank before or after it. A
+    /// blank the marker before took (`~ ~`) isn't this one's.
     #[inline(never)]
     fn trim(&mut self, p: usize) -> usize {
         let b = self.b;
         if self.top() != F_INTERP {
             return p + 1;
         }
-        if p > 0 && is_blank(b[p - 1]) {
+        if p > 0 && is_blank(b[p - 1]) && self.trimmed != p {
             self.put(p - 1, p + 1, TRIM_RIGHT);
             p + 1
         } else if b.get(p + 1).is_some_and(|&c| is_blank(c)) {
             self.put(p, p + 2, TRIM_LEFT);
+            self.trimmed = p + 2;
             p + 2
         } else {
             p + 1
@@ -1615,6 +1622,23 @@ mod tests {
         });
         assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
         assert_eq!(state, one.last().unwrap().1);
+    }
+
+    #[test]
+    fn strip_markers_side_by_side_take_a_blank_each() {
+        // fuzz round 14: in `~ ~` the second marker took the blank the first had, a span behind
+        // the one before it
+        for text in ["\"${~ ~", "x = \"${~ ~ ~ y ~ ~}\"", "x = \"${ ~~ ~ y}\""] {
+            for (spans, _) in lines(text) {
+                for w in spans.windows(2) {
+                    assert!(w[0].end <= w[1].start, "{text:?}: {spans:?}");
+                }
+            }
+        }
+        // two left markers, each with the blank after it (merged as one run of a kind)
+        let l = ["x = \"${~ ~ y}\""];
+        has(&l, "~ ~ ", "keyword.operator.template.left.trim.terraform");
+        lacks(&l, " ~");
     }
 
     #[test]
