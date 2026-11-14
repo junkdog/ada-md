@@ -34,26 +34,27 @@ summary() { print -r -- "$*" >> ${GITHUB_STEP_SUMMARY:-/dev/null} }
 
 # `tokens`' languages (F-017): the edges a language's corpus reaches, its weight (its share of a
 # worker's time, so a lexer of more code is fuzzed longer), and the seconds of one core its
-# corpus's seed pass takes, both from its set-cover cmin on the desk machine (F-017's
-# experiment 83, 2026-11-07). A new language goes here first: the build checks the list
-# against the binary's (`langs`).
+# corpus's seed pass takes, both from its set-cover cmin on the desk machine: the edges are
+# the cmin's "new coverage edges", the seconds its replay's inputs over exec/s
+# (`lang.zsh cmin tokens all`, out/lang/cmin-tokens-LANG.log; last 2026-11-14, before round
+# 14). A new language goes here first: the build checks the list against the binary's (`langs`).
 LANGS=(
-  typescriptreact 17631 149  typescript 17082 143  csharp 13680 125     java 9442 43
-  scss 8800 80               rust 7600 27          html 7371 6          python 7217 59
-  cpp 5807 26                makefile 5501 28      javascript 5106 26   kotlin 4704 29
-  bash 4671 29               go 4666 28            scheme 3996 10       racket 3987 10
-  emacslisp 3352 8           lisp 3211 7           css 3058 8           c 2870 15
-  powershell 2668 10         lua 2646 24           clojure 2102 5       xml 1813 9
-  gitattributes 1661 3       toml 1536 1           sql 1280 2           log 1127 3
-  yaml 1118 2                dotenv 1000 1         gitignore 822 1      dockerfile 724 1
-  ini 689 1                  knownhosts 677 1      json 673 1           fstab 592 1
-  gitlink 589 1              gitmailmap 490 1      properties 429 1     diff 281 1
-  sshconfig 677 1            sshdconfig 677 1     crontab 677 1        nginx 677 1
-  php 677 1                  swift 2646 24        cmake 2646 24        ruby 2646 24
-  cmakecache 592 1           terraform 2646 24    objc 2870 15         objcpp 2870 15
-  scala 2646 24              haskell 2646 24      literatehaskell 677 1
-  cmakecheader 677 1         cmakecppheader 677 1 groovy 2646 24       elixir 2646 24
-  nix 2646 24                pkgconfig 592 1
+  nix 16545 204              php 13767 228              elixir 12137 202           ruby 11224 231
+  objcpp 10805 38            scala 10142 57             objc 9482 23               java 9431 76
+  bash 7518 108              typescriptreact 6897 97    cpp 6804 89                cmakecppheader 6671 31
+  typescript 6229 120        haskell 6121 33            rust 6022 119              scss 5920 83
+  csharp 5127 122            cmake 5086 13              c 5079 40                  dockerfile 4828 27
+  kotlin 4690 52             groovy 4489 64             cmakecheader 4453 16       css 4162 39
+  python 3838 119            literatehaskell 3782 1     html 3740 121              crontab 3516 36
+  sshdconfig 3426 31         sshconfig 3341 34          makefile 3257 112          go 2867 112
+  lua 2557 12                racket 2556 46             scheme 2492 47             javascript 2384 54
+  emacslisp 2310 31          lisp 2272 36               powershell 2256 24         nginx 1940 18
+  swift 1783 24              sql 1448 12                terraform 1409 13          gitattributes 1329 7
+  xml 1319 28                clojure 1246 25            yaml 1067 3                toml 913 9
+  log 877 7                  pkgconfig 824 1            json 726 1                 knownhosts 688 4
+  gitignore 683 1            fstab 639 1                dotenv 612 7               gitlink 607 1
+  cmakecache 568 1           gitmailmap 447 1           ini 435 1                  properties 342 1
+  diff 339 1
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done
