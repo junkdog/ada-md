@@ -48,8 +48,8 @@ pub struct Piece {
 /// Where the buffer's bytes from `at` on, up to the next mark's, come from: source line `line`.
 /// A piece may hold several source lines (LAY-008: a soft break ended a piece, so a row of prose
 /// wrapped at another width than its source took two segs, two spans and a slow
-/// [`Packer::add_split`]); a line's are read from the marks of its bytes. Kept beside the
-/// [`Wrapped`], not in it: flattening writes them and [`pack`] reads them, and a table moves its
+/// `Packer::add_split`); a line's are read from the marks of its bytes. Kept beside the
+/// [`Wrapped`], not in it: flattening writes them and `pack` reads them, and a table moves its
 /// cells' wraps, which 24 bytes more made a `memcpy` call each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SrcMark {
@@ -145,7 +145,7 @@ impl Wrapped {
     }
 }
 
-/// The 64-byte blocks of a document's [`Doc::text`] that hold a byte [`push_clean`] looks at when
+/// The 64-byte blocks of a document's [`Doc::text`] that hold a byte `push_clean` looks at when
 /// it folds, a bit a block: a run in none is copied unscanned (LAY-006: `push_clean`, the scan of
 /// every run and its copy, was 9–17% of layout). Width-independent, so a
 /// [`Measure`](super::Measure) holds it.
@@ -188,7 +188,7 @@ fn any_suspect(bytes: &[u8]) -> bool {
 }
 
 /// What [`wrap`] keeps between flattening and packing a paragraph, its buffers the next one's:
-/// the source lines of the buffer's bytes, and [`pack`]'s masks.
+/// the source lines of the buffer's bytes, and `pack`'s masks.
 #[derive(Debug, Default)]
 pub struct Scratch {
     src: Vec<SrcMark>,
@@ -890,19 +890,19 @@ fn word(bytes: &[u8], start: usize) -> (usize, usize, bool) {
 }
 
 /// Where a word of a buffer ends, and where the buffer turns rough, a bit a byte (LAY-007), for
-/// [`pack`]'s fast path: from a byte up to the next rough one, the buffer is ASCII with single
+/// `pack`'s fast path: from a byte up to the next rough one, the buffer is ASCII with single
 /// spaces, so a line's width is its length and the greedy fill is the furthest word end the line
 /// has room for, found without reading the words between.
 ///
 /// - `ends`, bit `e`: a word ends right before byte `e`, a byte after the word's last: a space
 ///   that starts a run, a newline, a word's first byte after a `-` or `/` it may break after
-///   ([`word`]), or the buffer's end.
+///   (`word`), or the buffer's end.
 /// - `rough`, bit `k`: byte `k` is past ASCII (a word's width isn't its length), a newline, a
 ///   space or newline after one (a run of spaces is one), the end of the buffer, or a `-` or `/`
-///   after one (where a word may break after a break depends on the one before: [`word`] reads
+///   after one (where a word may break after a break depends on the one before: `word` reads
 ///   those).
 ///
-/// `ends` is only read up to the first rough byte, where it agrees with [`Tokens`]: a `-` or `/`
+/// `ends` is only read up to the first rough byte, where it agrees with `Tokens`: a `-` or `/`
 /// is taken to start its word only after a space, a newline or the start, which is right unless
 /// the byte before is another break, rough. Past it, spaces and newlines are told apart no
 /// further than `ends` and `rough` need up to it: three masks of a block, not four.

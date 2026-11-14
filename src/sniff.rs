@@ -2,8 +2,8 @@
 //! the first few KB are looked at (ADR-30, FEAT-020). Sure signals come first, in a fixed
 //! order: HTML's doctype, a git patch, a mermaid diagram, the first line as bat's syntax set
 //! reads it (a shebang, `<?php`, `<?xml`), JSON, front matter, the configuration formats whose
-//! every line has one shape ([`conf`]), YAML, `.env`, the key-value family and a log. Code and
-//! markdown are then told by the weight of their lines' signals ([`signals`]), the C family
+//! every line has one shape (`conf`), YAML, `.env`, the key-value family and a log. Code and
+//! markdown are then told by the weight of their lines' signals (`signals`), the C family
 //! split as a `.h` is. Markdown's own signals and `.gitignore`'s globs are tried last. Text none
 //! of them claims is left to the caller.
 
