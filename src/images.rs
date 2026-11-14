@@ -1014,6 +1014,8 @@ pub(crate) mod tests {
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
+    // only `kitty_images_in_shared_memory`'s (Linux alone): elsewhere it's dead code, an error under `-D warnings`
+    #[cfg(target_os = "linux")]
     fn base64_decode(s: &str) -> Vec<u8> {
         const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let bits: Vec<u32> = s
