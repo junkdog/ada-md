@@ -8,7 +8,9 @@
 //!   - for an 8-bit source, every output pixel is the rounded mean of its box over a whole decode
 //!     by `image` (16-bit samples differ: `image` scales them, png's `normalize_to_color8` strips
 //!     them), shrunk as stored and then turned, as ada does
-//!   - a GIF is its first frame on its logical screen, transparent around it, as `image` composes it
+//!   - a GIF is its first frame on its logical screen, transparent around it, as `image` composes it;
+//!     where gif decodes the frame one way read whole and another a row at a time (a malformed LZW
+//!     tail, IMG-008), the reference is the frame as ada reads it, composed the same way
 //!   - kitty's payload, base64 and PNG decoded back, is the pixels
 //!
 //! The first three bytes pick the size: a box the image is fitted into (as print and the TUI ask),
@@ -85,6 +87,55 @@ fn naive(src: (u32, u32), dst: (u32, u32), channels: usize, px: &[u8]) -> Vec<u8
         }
     }
     out
+}
+
+/// A GIF's first frame read a row at a time (`fill_buffer`, as ada reads it, so a frame is never
+/// held whole) and composed on its logical screen as `image` composes it (transparent around
+/// it, cut at the screen's edges); `None` where that read gives what the whole read
+/// (`read_into_buffer`, `image`'s) gives, or fails. The two differ where the frame's LZW stream
+/// runs on past its last pixel without an end code, in the frame's last rows (IMG-008, fuzz
+/// round 14): gif's own quirk, the whole read the right one. An interlaced frame ada reads whole.
+fn gif_rows_on_screen(file: &[u8]) -> Option<DynamicImage> {
+    let decoder = || {
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::RGBA);
+        options.read_info(Cursor::new(file)).ok()
+    };
+    let mut rows = decoder()?;
+    let (sw, sh) = (u32::from(rows.width()), u32::from(rows.height()));
+    let frame = rows.next_frame_info().ok()??;
+    let (left, top) = (u32::from(frame.left), u32::from(frame.top));
+    let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+    // `image`'s whole decode, which this only runs after, bounds the frame (4 MP)
+    if frame.interlaced || fw == 0 || fw * fh > 4 << 20 {
+        return None;
+    }
+    let mut by_rows = vec![0; fw * fh * 4];
+    for row in by_rows.chunks_mut(fw * 4) {
+        if !rows.fill_buffer(row).ok()? {
+            return None;
+        }
+    }
+    let mut whole = decoder()?;
+    whole.next_frame_info().ok()??;
+    let mut at_once = vec![0; fw * fh * 4];
+    whole.read_into_buffer(&mut at_once).ok()?;
+    if by_rows == at_once {
+        return None;
+    }
+    let frame = image::RgbaImage::from_raw(fw as u32, fh as u32, by_rows)?;
+    Some(DynamicImage::ImageRgba8(image::RgbaImage::from_fn(
+        sw,
+        sh,
+        |x, y| {
+            let (fx, fy) = (x.wrapping_sub(left), y.wrapping_sub(top));
+            if (fx as usize) < fw && (fy as usize) < fh {
+                *frame.get_pixel(fx, fy)
+            } else {
+                image::Rgba([0; 4])
+            }
+        },
+    )))
 }
 
 /// What kitty would decode from a transmission: the base64 of every chunk, joined, as a PNG.
@@ -195,6 +246,14 @@ fuzz_target!(|data: &[u8]| {
                 })
             }
             _ => None,
+        };
+        // a GIF frame gif decodes one way read whole (`image`) and another a row at a time (ada):
+        // the frame as ada reads it, composed as `image` composes it, is the reference
+        let img = match img {
+            Some(_) if image::guess_format(file).ok() == Some(ImageFormat::Gif) => {
+                gif_rows_on_screen(file).or(img)
+            }
+            img => img,
         };
         if let Some(img) = img {
             let stored = (img.width(), img.height());
