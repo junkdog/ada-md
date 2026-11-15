@@ -29,7 +29,7 @@ jemalloc = ["dep:tikv-jemallocator"]
 anpa = "0.13"
 # ada's own lexers and the language table that names their languages (ADR-40, ADR-43). Released in
 # lockstep (REL-025): the pin is `[workspace.package]`'s version, both set in the release commit.
-ada-parse = { version = "=1.0.0", path = "ada-parse" }
+ada-parse = { version = "=1.1.0-rc.1", path = "ada-parse" }
 # `events` for keys and resizes (ratatui turned it on until CS-4); `windows` is the default's, only for
 # Windows targets. `use-dev-tty`: its event source waits with level-triggered poll(2). The default mio one is
 # edge-triggered and returns before draining the tty, so input over 1 KB in one burst stalls until the next
@@ -98,7 +98,7 @@ exclude = ["bench", "fuzz"]
 # ada-md and ada-parse share these, the version in lockstep (REL-025); ada-md pins ada-parse to it, above.
 # CI reads `version` (release.yml, the tag check) and `rust-version` (ci.yml, the MSRV job) from here.
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0-rc.1"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
