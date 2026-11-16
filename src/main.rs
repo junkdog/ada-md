@@ -17,9 +17,10 @@ use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
 use ada::{completions, config, print, search, theme};
 
-// libc named before std's libm, so a libm call (`ldexp`, syntect's one until 1.1) binds to libc's
-// copy and `--as-needed` drops libm: ld.so no longer maps it and runs its IFUNC resolvers
-// (~0.3–0.5 MiB of every peak, MEM-04)
+// libc named before std's libm, so a libm call binds to libc's copy and `--as-needed` drops libm:
+// ld.so no longer maps it and runs its IFUNC resolvers (~0.3–0.5 MiB of every peak, MEM-04). The one
+// call is `ldexp`, which LLVM makes of `f64::exp2` in the theme selector's scoring
+// (`highlight::selector`, ADR-43); until 1.1 syntect's.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[link(name = "c")]
 unsafe extern "C" {}

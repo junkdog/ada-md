@@ -337,12 +337,30 @@ def bytes_of(path):
     return out
 
 
-def grid(title, inputs, modes, names, load, floors=(), cap=None, flags=None):
+def grid(title, inputs, modes, names, load, floors=(), cap=None, flags=None, mode_flags=None, borrow=None,
+         absent=None):
     """One time table (wall, CPU and × per input) and one resource table (RSS, output) per mode. load(input, mode)
-    gives {name: medians}; bytes come from load.bytes. The best value of a column is bold, floors excepted."""
+    gives {name: medians}; bytes come from load.bytes. The best value of a column is bold, floors excepted.
+    flags {(input, name): why} mark cells that aren't ranked (†), in every mode; mode_flags {mode: {(input, name):
+    why}} in that mode only. borrow {mode: (other mode, names, why)} shows those tools' cells from the other mode,
+    flagged with why (leaf has no preview budget: its preview is its whole print). absent {name: why} adds a row of
+    – for a tool that can't do the job at all, with why as its footnote."""
+    base = dict(flags or {})
     for mode, label in modes:
         res = {f: load(f, mode) for f in inputs}
+        flags_m = base | (mode_flags or {}).get(mode, {})
+        if borrow and mode in borrow:
+            other, lent, why = borrow[mode]
+            for f in inputs:
+                got = load(f, other)
+                for n in lent:
+                    if n in got:
+                        res[f][n] = got[n]
+                        flags_m[(f, n)] = flags_m.get((f, n), why)
+                        if (f, other, n) in load.bytes:
+                            load.bytes[(f, mode, n)] = load.bytes[(f, other, n)]
         ns = [n for n in names if any(n in res[f] for f in inputs)]
+        flags = flags_m
         cell = lambda f, n, k: None if n not in res[f] or res[f][n]["killed"] else res[f][n][k]
         rows = []
         for n in ns:
@@ -362,6 +380,7 @@ def grid(title, inputs, modes, names, load, floors=(), cap=None, flags=None):
                     row += [f"**{s}**" if n not in floors and x is not None and x == best else s,
                             "" if n == "ada" or x is None or not a else fmt(x / a)]
             rows.append(row)
+        rows += [[n + " †"] + ["–"] * (4 * len(inputs)) for n in (absent or {})]
         print(f"\n#### {title}, {label} (ms)\n")
         print(table(["Tool"] + [h for f in inputs for k in ("Wall", "CPU") for h in (f"{k} {f}", f"{k} {f} ×")], rows))
         rows = []
@@ -376,10 +395,13 @@ def grid(title, inputs, modes, names, load, floors=(), cap=None, flags=None):
                     ranked = n not in floors and (f, n) not in (flags or {})
                     row.append("" if x is None else f"**{fmt(x)}**" if ranked and x == best else fmt(x))
             rows.append(row)
+        rows += [[n + " †"] + ["–"] * (2 * len(inputs)) for n in (absent or {})]
         print(f"\n{title}, {label}: peak RSS (MiB) and output (KB):\n")
         print(table(["Tool"] + [f"{h} {f}" for h in ("RSS", "Output") for f in inputs], rows))
         for (f, n), why in ((k, v) for k, v in (flags or {}).items() if k[1] in ns):
             print(f"\n† {n} on {f}: {why}")
+        for n, why in (absent or {}).items():
+            print(f"\n† {n}: {why}")
         print("\nruns:", {f: {n: r["n"] for n, r in res[f].items()} for f in inputs})
 
 
@@ -425,19 +447,26 @@ def loader(d):
 
 
 def previewer():
-    """b2p.zsh: code, a log and huge files, whole and under a preview's budget; mcat has no budget."""
+    """b2p.zsh: code, a log and huge files, whole and under a preview's budget. mcat has no budget, and leaf has
+    none either: its preview row is its whole print, as its documented fzf preview runs it (not ranked)."""
     fence = "it wraps the file in a markdown code fence, which a fence inside the file closes; the rest shows as markdown"
     plain = "Pygments has no lexer for .log, so rich prints it without color"
+    leaf_md = "syntect's bundled set has no syntax for .log, so leaf renders the log as markdown"
+    no_budget = "leaf has no budget: its fzf preview prints the whole file (the whole-file cells)"
     grid("Previewer files", PREV_FILES, [("whole", "whole file"), ("preview", "preview budget")],
-         ["ada", "bat", "rich", "mcat"], (load := loader("b2p")), cap=load.cap or int(os.environ.get("B2P_CAP", 60)),
-         flags={("code-l.rs", "mcat"): fence, ("log.log", "rich"): plain, ("huge.log", "rich"): plain})
+         ["ada", "bat", "rich", "mcat", "leaf"], (load := loader("b2p")),
+         cap=load.cap or int(os.environ.get("B2P_CAP", 60)),
+         flags={("code-l.rs", "mcat"): fence, ("log.log", "rich"): plain, ("huge.log", "rich"): plain,
+                ("log.log", "leaf"): leaf_md, ("huge.log", "leaf"): leaf_md},
+         borrow={"preview": ("whole", ["leaf"], no_budget)})
 
 
 def images():
     """b2i.zsh: 100×50-cell previews of each image, kitty graphics and text; a GIF's first frame."""
     grid("Images", IMAGES, [("kitty", "kitty graphics"), ("text", "half-blocks and symbols")],
          ["ada", "icat", "icat-shm", "chafa", "mcat", "viu", "chafa-vhalf"], (load := loader("b2i")), cap=load.cap,
-         flags=IMAGE_FLAGS)
+         flags=IMAGE_FLAGS, absent={"leaf": "no images: given one, `leaf --inline` stops with \"stream did not "
+                                            "contain valid UTF-8\", and a note's images show as their alt text"})
     print("\nGIFs: the first frame, the others told to stop there (icat --loop 0, chafa --animate off, viu -s); "
           "mcat plays a GIF as a video with no way to stop at a frame, so it has no GIF cells.")
 

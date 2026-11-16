@@ -4,7 +4,9 @@
 #   whole:   every tool prints the whole file
 #   preview: ada with --height 50 (its fzf budget: 2,000 rows, PREVIEW_ROWS), bat with --line-range=:2000 and
 #            rich with --head 2000 (both count source lines, so a wrapped line costs them more rows); mcat has no
-#            budget and isn't run
+#            budget and isn't run; leaf has none either and isn't run, but doctables.py shows its whole print
+#            under the preview too, since that is what its documented fzf preview
+#            (`leaf --inline ansi:$FZF_PREVIEW_COLUMNS {}`) costs (not ranked)
 # Every command is probed once under the 2-minute cap first (capped.zsh, B2_CAP): one that doesn't finish is left
 # out and noted in killed.txt. The huge files' timed runs also run under `timeout` (B2P_CAP seconds, the same cap
 # by default), fewer times: bat takes minutes to print 80 MB. A killed run exits non-zero, which hyperfine records
@@ -34,7 +36,7 @@ if [[ $DROP != off ]] && (( free_kib < ${B2_DROP_BELOW_GB:-8} * 1024 * 1024 )); 
 fi
 BAT="/usr/bin/bat --color=always --paging=never --style=numbers --terminal-width=100"
 WHOLE=("ada:$ADA -p -w 100" "bat:$BAT" "rich:$B/rich --syntax -w 100 --force-terminal"
-       "mcat:$B/mcat -c -P --silent --sc 100xauto")
+       "mcat:$B/mcat -c -P --silent --sc 100xauto" "leaf:$B/leaf --inline ansi:100")
 PREVIEW=("ada:$ADA -p -w 100 --height 50" "bat:$BAT --line-range=:2000"
          "rich:$B/rich --syntax -w 100 --force-terminal --head 2000")
 for f in ${=B2P_FILES:-code-s.py code-m.clj code-l.rs log.log huge.json huge.log}; do

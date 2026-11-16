@@ -107,7 +107,9 @@ experiment 28).
   `code-s.rs` and `code-m.rs`), `code-l.rs` (zerocopy 0.8.61's `src/lib.rs`), `log.log` (1 MB of `journalctl -o short-iso`),
   `huge.log` (80 MB of the same) and `huge.json` (3.75 MB on one line: `cargo metadata` of eight projects as a JSON
   array). `whole` prints the file; `preview` gives ada `--height 50` (its fzf budget, 2,000 rows), bat
-  `--line-range=:2000` and rich `--head 2000`. Every command is probed under the 2-minute cap first, and the huge files' timed runs run
+  `--line-range=:2000` and rich `--head 2000`; mcat (`-c`) and leaf (`--inline ansi:100`, since 2026-11-15) run
+  `whole` only, having no budget, and `doctables.py` shows leaf's whole print under the preview too, flagged, as
+  what its documented fzf preview costs. Every command is probed under the 2-minute cap first, and the huge files' timed runs run
   under `timeout -s KILL $B2P_CAP` (the same cap); a killed command shows as `> 120 s` (`> 60 s` before
   2026-11-02), and its CPU and RSS are lost (timeout signals its own process group, so it never reaps the
   child).
@@ -120,7 +122,8 @@ experiment 28).
   `-interlace GIF`, the frame ada holds whole). Each is its first frame: icat runs with `--loop 0`, chafa with
   `--animate off` and viu with `-s`, without which chafa and viu play it to the pipe for good. mcat plays a GIF as a
   video with no way to stop, so it has no GIF cells; chafa 1.18.3 draws nothing for the 12 MP GIFs (a blank
-  10×20 px image, 42 bytes of symbols), flagged and not ranked.
+  10×20 px image, 42 bytes of symbols), flagged and not ranked. leaf shows no images and isn't run;
+  `doctables.py` gives it a row of `–` with the reason.
 - `B2P_ONLY="ada rich"` with `B2P_OUT=<dir>` reruns some tools into another directory, and
   `B2P_DIRS="b2p <dir>"` merges it over the full run in `doctables.py`; `B2I_ONLY`, `B2I_OUT` and `B2I_DIRS` the
   same for images, `B2A_ONLY` and `B2A_OUT` for print. `merge.py OUT IN...` merges such directories into one, a
