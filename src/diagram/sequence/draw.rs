@@ -762,6 +762,13 @@ mod tests {
     }
 
     #[test]
+    fn backslash_n_breaks_messages_and_notes() {
+        let src = "sequenceDiagram\nA->>B: first\\nsecond\nNote over A,B: a\\nnote";
+        let (rows, _) = drawn(src, 80);
+        insta::assert_snapshot!(rows.join("\n"));
+    }
+
+    #[test]
     fn active_lifelines_are_heavy() {
         let src = "sequenceDiagram\nA->>+B: call\nB->>+B: recurse\nB-->>-B: done\nB-->>-A: reply\nactivate A\nA->>B: open";
         let (rows, _) = drawn(src, 80);

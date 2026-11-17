@@ -204,14 +204,9 @@ impl Parser {
         let (id, text) = rest.trim().split_once(char::is_whitespace)?;
         let text = text.trim().strip_prefix('"')?.strip_suffix('"')?;
         let n = self.class(id)?;
-        // Mermaid breaks a note at `\n` too
-        let lines = text
-            .split("\\n")
-            .flat_map(|l| self.b.src.label(l))
-            .collect();
         self.b.nodes[n as usize].note = Some(Note {
             after: true,
-            text: lines,
+            text: self.b.src.label(text),
         });
         Some(())
     }
@@ -399,7 +394,7 @@ fn member(line: &str, src: Source) -> (Member, bool) {
     };
     let text = match shown {
         Some(s) => Text { s, origin: None },
-        None => src.one_line(body),
+        None => src.code_line(body),
     };
     (Member::new(text, classifier), method)
 }
@@ -626,6 +621,11 @@ mod tests {
             ("+String path".into(), Classifier::None, false)
         );
         assert_eq!(m("+reload()"), ("+reload()".into(), Classifier::None, true));
+        // `\n` in a member is code, a string's escape: kept as written
+        assert_eq!(
+            m("+String sep = \"\\n\""),
+            ("+String sep = \"\\n\"".into(), Classifier::None, false)
+        );
         assert_eq!(
             m("+resolve(key, bits) Option~Slot~"),
             (

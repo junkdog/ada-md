@@ -358,6 +358,12 @@ mod tests {
     }
 
     #[test]
+    fn backslash_n_in_a_name_is_a_space() {
+        let src = "gantt\ndateFormat YYYY-MM-DD\nsection Build\\nphase\nParse\\nthe file : 2024-01-01, 2d";
+        insta::assert_snapshot!(rows_at(src, 60, false).join("\n"));
+    }
+
+    #[test]
     fn narrow_charts_cut_names_and_list_them() {
         insta::assert_snapshot!(rows_at(PLAN, 40, false).join("\n"));
     }

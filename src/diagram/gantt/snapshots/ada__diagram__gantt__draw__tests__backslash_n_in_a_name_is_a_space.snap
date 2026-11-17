@@ -1,0 +1,8 @@
+---
+source: src/diagram/gantt/draw.rs
+expression: "rows_at(src, 60, false).join(\"\\n\")"
+---
+               00:00     12:00      00:00      12:00
+                 ┌─────────┬──────────┬──────────┬──────────
+Build phase      ┆         ┆          ┆          ┆
+  Parse the file ███████████████████████████████████████████

@@ -38,6 +38,12 @@ fn branches_with_labels() {
 }
 
 #[test]
+fn backslash_n_breaks_node_and_edge_labels() {
+    let src = "flowchart TD\nA[\"first\\nline\"] -->|edge\\nlabel| B(two\\nrows)";
+    insta::assert_snapshot!(drawn(src));
+}
+
+#[test]
 fn left_to_right() {
     let src = "flowchart LR\nPR[Pull request] --> Lint{clippy ok?}\nLint -->|no| Fail[Report]\n\
                Lint -->|yes| Test[cargo test]\nTest --> Fuzz[fuzz smoke]\nTest --> Bench[B2 bench]\n\

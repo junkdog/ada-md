@@ -285,6 +285,13 @@ mod tests {
     }
 
     #[test]
+    fn backslash_n_breaks_descriptions_and_transitions() {
+        let b = parsed("stateDiagram-v2\nIdle --> Busy : start\\nwork\nIdle : waiting\\nfor work");
+        assert_eq!(b.nodes[0].label, ["waiting", "for work"]);
+        assert_eq!(b.edges[0].label, ["start", "work"]);
+    }
+
+    #[test]
     fn composites_have_their_own_dots() {
         let b = parsed("stateDiagram\n[*] --> A\nstate A {\n[*] --> a1\na1 --> [*]\n}\nA --> [*]");
         let starts = b.nodes.iter().filter(|n| n.shape == Shape::Start).count();

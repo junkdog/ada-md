@@ -276,10 +276,16 @@ impl Source {
         (at + s.len() <= self.len).then(|| u32::try_from(at).ok())?
     }
 
-    /// A label's lines: split at `<br>`, `<br/>` and `<br />`, any case, with `#59;`-style
-    /// entities decoded and control characters as spaces. A line left as it was in `text`
-    /// keeps its origin.
+    /// A label's lines: split at `<br>`, `<br/>` and `<br />`, any case, and at `\n` (a
+    /// backslash and an `n`, as Mermaid breaks a plain label), with `#59;`-style entities
+    /// decoded and control characters as spaces. A line left as it was in `text` keeps its
+    /// origin.
     pub fn label(self, text: &str) -> Vec<Text> {
+        self.lines(text, true)
+    }
+
+    /// [`Source::label`]'s lines, `\n` a break only when `escapes` is set.
+    fn lines(self, text: &str, escapes: bool) -> Vec<Text> {
         if plain(text) {
             // no break, entity or control character: one line, as written
             return vec![self.one_line(text)];
@@ -291,7 +297,7 @@ impl Source {
         let mut rest = text;
         loop {
             let at = text.len() - rest.len();
-            let after = br(rest);
+            let after = br(rest).or_else(|| rest.strip_prefix("\\n").filter(|_| escapes));
             if after.is_some() || rest.is_empty() {
                 out.push(self.line(&line, &text[from..at], verbatim));
                 let Some(after) = after else {
@@ -336,8 +342,18 @@ impl Source {
         }
     }
 
-    /// A label on one line, its breaks as spaces.
+    /// A label on one line, its breaks (`<br>` and `\n`) as spaces.
     pub fn one_line(self, text: &str) -> Text {
+        self.joined(text, true)
+    }
+
+    /// A line of code, as a class member: `<br>` as a space, but `\n` kept as written, as a
+    /// string literal's escape (Mermaid reads a member as markdown, which keeps it too).
+    pub fn code_line(self, text: &str) -> Text {
+        self.joined(text, false)
+    }
+
+    fn joined(self, text: &str, escapes: bool) -> Text {
         let s = text.trim();
         if plain(s) {
             // no break or entity: as written (a gantt chart has a name per task)
@@ -349,20 +365,20 @@ impl Source {
                 }),
             };
         }
-        Text::join(&self.label(s))
+        Text::join(&self.lines(s, escapes))
     }
 }
 
-/// Whether label text reads as written: no break or entity (`<`, `#`) and no control character.
-/// One pass over the bytes for printable ASCII, as nearly every label is.
+/// Whether label text reads as written: no break or entity (`<`, `\`, `#`) and no control
+/// character. One pass over the bytes for printable ASCII, as nearly every label is.
 fn plain(text: &str) -> bool {
     if text
         .bytes()
-        .all(|b| (b' '..=b'~').contains(&b) && b != b'<' && b != b'#')
+        .all(|b| (b' '..=b'~').contains(&b) && !matches!(b, b'<' | b'\\' | b'#'))
     {
         return true;
     }
-    !text.contains(['<', '#']) && !text.contains(char::is_control)
+    !text.contains(['<', '\\', '#']) && !text.contains(char::is_control)
 }
 
 /// A label's lines, as [`Source::label`] reads them, with no origin.
@@ -525,6 +541,21 @@ mod tests {
         assert_eq!(label_lines("List<WrappingKey>"), ["List<WrappingKey>"]);
         assert_eq!(label_lines("#notanentity;"), ["#notanentity;"]);
         assert_eq!(label_lines(""), [""]);
+    }
+
+    #[test]
+    fn labels_break_at_backslash_n() {
+        assert_eq!(label_lines("a\\nb\\n c"), ["a", "b", "c"]);
+        assert_eq!(label_lines("a\\nb<br>c"), ["a", "b", "c"]);
+        assert_eq!(label_lines("C:\\path"), ["C:\\path"]);
+        assert_eq!(label_lines("ends\\"), ["ends\\"]);
+        let src = "x\\ny";
+        let s = Source::of(src);
+        assert_eq!(s.one_line(src).s, "x y");
+        assert_eq!(s.code_line("f(sep = \"\\n\")").s, "f(sep = \"\\n\")");
+        // a line as written keeps its origin across the break
+        let lines = s.label(src);
+        assert_eq!(lines[1].origin.map(|o| (o.at, o.len)), Some((3, 1)));
     }
 
     #[test]

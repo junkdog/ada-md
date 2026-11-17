@@ -1,0 +1,18 @@
+---
+source: src/diagram/graph/tests.rs
+expression: drawn(src)
+---
+┌───────┐
+│ first │
+│ line  │
+└───┬───┘
+    │
+    │
+  edge
+  label
+    │
+    ▼
+╭──────╮
+│ two  │
+│ rows │
+╰──────╯
