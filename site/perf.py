@@ -3,7 +3,8 @@ the previewer files and image previews: bench/b2/plots/{previewer,images}.dat (p
 mermaid diagrams: bench/b2/plots/mermaid.dat (bench/diagrams/compare, stamped by plot.py).
 
     python3 -I site/perf.py          # rewrites site/index.html between <!-- perf:begin --> and <!-- perf:end -->,
-                                     # and the hero's line between <!-- proof:begin --> and <!-- proof:end -->
+                                     # the hero's line between <!-- proof:begin --> and <!-- proof:end -->, and
+                                     # the feature cards' figures between <!-- NAME:begin --> and <!-- NAME:end -->
     python3 -I site/perf.py --check  # exits 1 if index.html is out of date
 
 Writes headline tiles for one document, then CSS-only tabs (radio inputs, no script) with a small bar chart per
@@ -285,11 +286,34 @@ def proof():
             f'{words.get(others, others)} other terminal viewers, on time, CPU and memory.</p>')
 
 
+def spoken(ms):
+    """A time as the cards say it: milliseconds under a second, else whole seconds ("a second", "17 s")."""
+    if ms < 1000:
+        return f"{num(ms)} ms"
+    s = round(ms / 1000)
+    return "a second" if s == 1 else f"{s:,} s"
+
+
+def figures():
+    """The feature cards' figures, {marker name: link}: the same cells the charts draw, so a card can't quote an
+    older run than the section it links to."""
+    prev = parse(f"{PLOTS}/previewer.dat")[0]["previewer, a preview, wall"]["huge.log"]  # the card's 80 MB log
+    flow = parse(f"{PLOTS}/mermaid.dat")[0]["mermaid, a 120-node flowchart"]["all"]  # ms, as its chart
+    return {"preview": f'<a href="#previewer-perf">{spoken(prev["ada"])}, where bat takes {spoken(prev["bat"])}</a>',
+            "flowchart": f'<a href="#mermaid-perf">A 120-node flowchart draws in {spoken(flow["ada"])}, '
+                         f"where md-tui's renderer takes {spoken(flow['mermaid-text'])}.</a>"}
+
+
 page = open(PAGE).read()
 new = re.sub(r"(<!-- perf:begin -->\n).*?(<!-- perf:end -->)", lambda m: m[1] + section() + "\n" + m[2], page,
              flags=re.S)
 new = re.sub(r"(<!-- proof:begin -->\n).*?(<!-- proof:end -->)", lambda m: m[1] + proof() + "\n" + m[2], new,
              flags=re.S)
+for name, link in figures().items():
+    new, n = re.subn(rf"(<!-- {name}:begin -->).*?(<!-- {name}:end -->)", lambda m: m[1] + link + m[2], new,
+                     flags=re.S)
+    if n != 1:
+        sys.exit(f"perf.py: {n} <!-- {name}:begin --> markers in index.html, not 1")
 if "--check" in sys.argv:
     sys.exit(0 if new == page else 1)
 open(PAGE, "w").write(new)

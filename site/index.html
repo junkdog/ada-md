@@ -165,8 +165,8 @@
         <h2>Mermaid, drawn as text <a class="anchor" href="#diagrams" aria-label="link to this section">#</a></h2>
         <p>Sequence diagrams, flowcharts, state and class diagrams in a <code>```mermaid</code> block are <strong>drawn in
           the note</strong>, in your theme's colors, in any terminal and in <code>--print</code>. A sequence
-          diagram's cast stays on top as you scroll. <a href="#mermaid-perf">A 120-node flowchart draws in 5.7 ms,
-          where md-tui's renderer takes 17 s.</a></p>
+          diagram's cast stays on top as you scroll.
+          <!-- flowchart:begin --><a href="#mermaid-perf">A 120-node flowchart draws in 5.7 ms, where md-tui's renderer takes 17 s.</a><!-- flowchart:end --></p>
         <p class="keys"><kbd>←</kbd> <kbd>→</kbd> scroll a wide diagram</p>
       </div>
       <figure>
@@ -217,7 +217,7 @@
         <code>ada --print</code> fills the pane at its size: notes rendered, tables and all, code, logs and JSON
         highlighted, and images, in kitty's graphics protocol in kitty and Ghostty and in half-blocks elsewhere.</p>
       <p>A preview stops 2,000 rows in, so an 80 MB log previews as fast as a small file:
-        <a href="#previewer-perf">3.2 ms, where bat takes a second</a>.</p>
+        <!-- preview:begin --><a href="#previewer-perf">2.0 ms, where bat takes a second</a><!-- preview:end -->.</p>
       <pre><code>fzf --preview 'ada --print {}'
 <span class="c"># from rg matches: the matched line lands mid-pane</span>
 rg -n . | fzf -d : --preview-window '+{2}-/2' \
