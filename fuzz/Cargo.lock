@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ada-md"
-version = "1.1.0-rc.1"
+version = "1.1.0"
 dependencies = [
  "ada-parse",
  "anpa",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "ada-parse"
-version = "1.1.0-rc.1"
+version = "1.1.0"
 
 [[package]]
 name = "adler2"

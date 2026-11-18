@@ -3,7 +3,7 @@
 The important changes in each release of ada, newest first. A release includes the changes of the pre-releases
 before it.
 
-## [1.1.0](https://github.com/junkdog/ada-md/compare/v1.0.0..v1.1.0) (unreleased)
+## [1.1.0](https://github.com/junkdog/ada-md/compare/v1.0.0..v1.1.0) (2026-11-18)
 
 ada 1.1 runs on Windows, and highlights code with lexers of its own: 61 languages on ada-parse's scanners, for most
 of them 100–400× faster than syntect on bat's grammars, which is out of the build. ada-parse is published on
