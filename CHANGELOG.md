@@ -58,6 +58,8 @@ crates.io as a library, in step with ada's version.
 - A JPEG too short for the size its header claims is refused.
 - A file git ignores shows no git gutter.
 - `\n` in a mermaid label breaks the line, as `<br>` does, instead of showing as written; a space in a gantt name.
+- A wrapped mermaid label carries at least three characters of a word onto the next line, so `getFoo()` no longer
+  leaves its `)` alone on a row.
 - The prompt's cursor is a block over its character, not a bar that read as a space.
 
 ## [1.0.0](https://github.com/junkdog/ada-md/compare/v1.0.0-rc.1..v1.0.0) (2026-10-27)

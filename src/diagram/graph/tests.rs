@@ -687,6 +687,9 @@ fn longest_piece_matches_the_pieces() {
         "日本語のラベル that is long",
         "a((b",
         "--x--",
+        "+getFoo() : int",
+        "-x",
+        "a/b/cd x-y-zzz",
     ] {
         assert_eq!(longest_piece(text), reference(text), "{text:?}");
     }

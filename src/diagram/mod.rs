@@ -483,37 +483,53 @@ fn wrap_each<'a>(text: &'a str, max: usize, emit: &mut impl FnMut(usize, &'a str
     }
 }
 
+/// The fewest characters of a word that go to the next line when it breaks after a bracket or
+/// separator: `getFoo()` stays whole rather than leaving its `)` alone on a line.
+const MIN_TAIL: usize = 3;
+
 /// The unbreakable pieces of `text`, with their byte offsets: runs between spaces, split
-/// again after the characters a line may break after.
+/// again after the characters a line may break after, where [`MIN_TAIL`] characters or more of
+/// the run follow.
 fn pieces(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let mut pos = 0;
     std::iter::from_fn(move || {
         let rest = &text[pos..];
         let start = pos + (rest.len() - rest.trim_start_matches(' ').len());
         let body = text.get(start..).filter(|b| !b.is_empty())?;
-        let len = body
+        let run = body.find(' ').unwrap_or(body.len());
+        let long_tail = |at: usize| body[at..run].chars().nth(MIN_TAIL - 1).is_some();
+        let len = body[..run]
             .char_indices()
             .find_map(|(i, c)| match c {
-                ' ' => Some(i),
                 // an opening bracket after a space stays with what it opens
                 '(' | '{' | '[' if i == 0 => None,
-                '(' | '{' | '[' | '/' | '-' | ',' => Some(i + c.len_utf8()),
+                '(' | '{' | '[' | '/' | '-' | ',' => {
+                    Some(i + c.len_utf8()).filter(|&at| long_tail(at))
+                }
                 _ => None,
             })
-            .unwrap_or(body.len());
+            .unwrap_or(run);
         pos = start + len;
         Some((start, &body[..len]))
     })
 }
 
-/// The first line's worth of a piece too long for a line: at least one character.
+/// The first line's worth of a piece too long for a line: at least one character, and short
+/// enough that [`MIN_TAIL`] characters go to the next line, where the line keeps one.
 fn break_word(word: &str, max: usize) -> &str {
     let head = cut(word, max);
     if head.is_empty() {
-        word.chars().next().map_or(word, |c| &word[..c.len_utf8()])
-    } else {
-        head
+        return word.chars().next().map_or(word, |c| &word[..c.len_utf8()]);
     }
+    let short = MIN_TAIL - word[head.len()..].chars().take(MIN_TAIL).count();
+    if short == 0 {
+        return head;
+    }
+    // the head gives up the characters the tail lacks, keeping its first
+    let keep = head.chars().count().saturating_sub(short).max(1);
+    head.char_indices()
+        .nth(keep)
+        .map_or(head, |(i, _)| &head[..i])
 }
 
 /// A cut label's marker: `…` and [`note_mark`].
@@ -601,7 +617,8 @@ mod tests {
     #[test]
     fn wrapping_at_spaces_then_inside_words() {
         assert_eq!(wrap(&"one two three".into(), 7), ["one two", "three"]);
-        assert_eq!(wrap(&"abcdefghij".into(), 4), ["abcd", "efgh", "ij"]);
+        assert_eq!(wrap(&"abcdefghij".into(), 4), ["abcd", "efg", "hij"]);
+        assert_eq!(wrap(&"ab".into(), 1), ["a", "b"]);
         assert_eq!(wrap(&"".into(), 4), [""]);
         assert_eq!(wrap(&"日本語".into(), 1), ["日", "本", "語"]);
     }
@@ -616,6 +633,21 @@ mod tests {
         assert_eq!(wrap(&"x,  y".into(), 3), ["x,", "y"]);
         assert_eq!(wrap(&"payload (mTLS)".into(), 10), ["payload", "(mTLS)"]);
         assert_eq!(wrap_size("PayloadRequest(public key)", 16), (2, 15));
+    }
+
+    #[test]
+    fn wrapping_leaves_no_short_tail_behind_a_bracket() {
+        // breaking after `(` would leave `)` alone on the next line
+        assert_eq!(
+            wrap(&"call getFoo() now".into(), 12),
+            ["call", "getFoo() now"]
+        );
+        // a word wider than the line cuts where three characters go on
+        assert_eq!(wrap(&"getFoo()".into(), 7), ["getFo", "o()"]);
+        assert_eq!(wrap(&"a/b/cd".into(), 4), ["a/", "b/cd"]);
+        assert_eq!(wrap(&"x-y-zzz".into(), 5), ["x-y-", "zzz"]);
+        assert_eq!(wrap(&"put(日本)".into(), 6), ["put(", "日本)"]);
+        assert_eq!(wrap(&"put(日)".into(), 6), ["put", "(日)"]);
     }
 
     #[test]

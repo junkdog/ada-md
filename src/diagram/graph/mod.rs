@@ -136,44 +136,47 @@ impl Class {
 }
 
 /// The widest piece (as [`pieces`](super::pieces) splits text) a member can't break in, its
-/// visibility joined to the word after it. One pass over the characters.
+/// visibility joined to the word after it. Two passes over each run between spaces: one counts
+/// its characters, for the tail a break must leave, the other measures its pieces.
 fn longest_piece(text: &str) -> usize {
     use unicode_width::UnicodeWidthChar;
     let visibility = text.starts_with(['+', '-', '#', '~']);
-    // the widest so far, the piece being read (its width and characters), how many ended,
-    // and a lone visibility's width, carried onto the next piece
-    let (mut best, mut width, mut chars, mut ended, mut carry) = (0, 0, 0, 0, 0);
-    let mut end = |width: &mut usize, chars: &mut usize| {
-        if *chars == 0 {
-            return;
-        }
-        if ended == 0 && visibility && *width == 1 {
+    // the widest so far, how many pieces ended, and a lone visibility's width, carried onto the
+    // next piece
+    let (mut best, mut ended, mut carry) = (0, 0, 0);
+    let mut end = |width: usize| {
+        if ended == 0 && visibility && width == 1 {
             carry = 1;
         } else {
-            best = best.max(*width + carry);
+            best = best.max(width + carry);
             carry = 0;
         }
         ended += 1;
-        (*width, *chars) = (0, 0);
     };
-    for c in text.chars() {
-        if c == ' ' {
-            end(&mut width, &mut chars);
-            continue;
+    for run in text.split(' ').filter(|r| !r.is_empty()) {
+        // the run's characters still to come, and the piece being read (its width and characters)
+        let mut left = run.chars().count();
+        let (mut width, mut chars) = (0, 0);
+        for c in run.chars() {
+            left -= 1;
+            width += c.width().unwrap_or(0);
+            chars += 1;
+            let breaks = left >= super::MIN_TAIL
+                && match c {
+                    // an opening bracket first in a piece stays with what it opens
+                    '(' | '{' | '[' => chars > 1,
+                    '/' | '-' | ',' => true,
+                    _ => false,
+                };
+            if breaks {
+                end(width);
+                (width, chars) = (0, 0);
+            }
         }
-        width += c.width().unwrap_or(0);
-        chars += 1;
-        let breaks = match c {
-            // an opening bracket first in a piece stays with what it opens
-            '(' | '{' | '[' => chars > 1,
-            '/' | '-' | ',' => true,
-            _ => false,
-        };
-        if breaks {
-            end(&mut width, &mut chars);
+        if chars > 0 {
+            end(width);
         }
     }
-    end(&mut width, &mut chars);
     best.max(carry)
 }
 
