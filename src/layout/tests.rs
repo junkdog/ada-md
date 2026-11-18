@@ -182,6 +182,36 @@ fn code_rows_know_their_byte_offsets() {
     assert_eq!(joined, "let x = \"abcdefghijklmnopqrstuvwxyz\";");
 }
 
+/// A file of code is its lines alone, viewed or printed; a fenced block in a note keeps its
+/// label and bottom rows.
+#[test]
+fn a_whole_file_has_no_frame() {
+    let theme = Theme::builtin();
+    let text = "fn main() {\n    run();\n}\n";
+    let file = crate::doc::file::code(text, Some("Rust"));
+    let kinds = |doc: &crate::doc::Doc, labels| {
+        let params = LayoutParams {
+            code_labels: labels,
+            ..params(40)
+        };
+        let l = layout(doc, &theme.glyphs, params);
+        let kinds: Vec<_> = l
+            .rows
+            .iter()
+            .map(|r| matches!(r.kind, RowKind::Code { .. }))
+            .collect();
+        (kinds, l.row_text(0).trim().to_owned())
+    };
+    let (rows, first) = kinds(&file, true);
+    assert_eq!(rows, [true; 3]);
+    assert_eq!(first, "fn main() {");
+    assert_eq!(kinds(&file, false).0, [true; 3]);
+    let note = parse(&format!("```rust\n{text}```\n"));
+    let (rows, label) = kinds(&note, true);
+    assert_eq!(rows, [false, true, true, true, false]);
+    assert_eq!(label, "rust");
+}
+
 #[test]
 fn fixture_snapshots() {
     let theme = Theme::builtin();

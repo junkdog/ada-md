@@ -118,7 +118,8 @@ pub struct LayoutParams {
     pub max_width: Option<u16>,
     pub table_mode: TableMode,
     pub code_wrap: bool,
-    /// Code blocks name their language on their top row: the TUI's do, a print's don't.
+    /// Code blocks name their language on their top row: the TUI's do, a print's don't. A
+    /// [whole file](crate::doc::CodeBlock::whole_file) has no such row in either.
     pub code_labels: bool,
     /// A file of code printed on the terminal's background, which is its page: no margin, and
     /// its block takes no columns of its own but a wrapped line's mark.

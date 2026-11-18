@@ -3,8 +3,7 @@
 //! MiB for an 80 MB log). Here a reader cuts the input into pieces of whole lines, workers
 //! highlight, lay out and paint each piece as a document of its own, and the caller's thread writes them in order. The
 //! output is the whole print's, byte for byte: a piece's rows are the rows its lines get in the
-//! whole layout, numbered for the whole file, with the code block's top row only in the first
-//! piece and its bottom row only in the last.
+//! whole layout, numbered for the whole file; a file of code has no rows besides its lines'.
 //!
 //! Only ada's own lexers stream ([`Lexer`]). Where lines don't depend on each other, each piece
 //! is highlighted on the thread that paints it; JSON's one state, a `/* */` comment left open,
@@ -255,9 +254,6 @@ struct Piece {
     text: Arc<str>,
     /// The file's line number of its first line.
     first_line: u32,
-    /// Whether it starts or ends the file, and so draws the top or bottom row of the block.
-    first: bool,
-    last: bool,
     /// The lexer's state at its start: JSON's `/* */` left open, else the default.
     state: ada_parse::State,
     /// Its highlighting, done by the reader for a [`Lexer::Carry`] language.
@@ -299,13 +295,9 @@ impl Paint<'_> {
             code_x: 0,
             links: &[],
         };
-        // the block's top and bottom rows, where the piece doesn't start or end the file
-        let rows = layout.rows.len();
-        let from = usize::from(!piece.first);
-        let to = rows - usize::from(!piece.last);
         let mut out = Vec::with_capacity(piece.text.len() * 2);
         let mut sgr = Sgr::new();
-        for (r, row) in layout.rows.iter().enumerate().take(to).skip(from) {
+        for (r, row) in layout.rows.iter().enumerate() {
             let line = start_line(&painter, &Overlay::default(), r, row, &mut out, &mut sgr);
             end_line(&line, &mut out);
         }
@@ -461,7 +453,7 @@ fn read_pieces(
     let (mut index, mut line, mut state) = (0, 1, ada_parse::State::default());
     // a piece is a document of its own, its offsets `u32`s (PAR-001); under the cap, the last
     // empty line can still join it
-    let mut piece = |text: &[u8], last: bool| {
+    let mut piece = |text: &[u8]| {
         if text.len() as u64 >= app::MAX_DOC_BYTES {
             return Err(line_too_long());
         }
@@ -472,8 +464,6 @@ fn read_pieces(
         let p = Piece {
             index,
             first_line: line,
-            first: index == 0,
-            last,
             state,
             spans: None,
             text,
@@ -511,7 +501,7 @@ fn read_pieces(
         let Some(cut) = cut else {
             break;
         };
-        let p = piece(&buf[..=cut], false)?;
+        let p = piece(&buf[..=cut])?;
         buf.drain(..=cut);
         scanned = 0;
         if let Some(p) = pending.replace(p)
@@ -526,16 +516,15 @@ fn read_pieces(
             if !buf.is_empty() {
                 p.text = format!("{}\n", p.text).into();
             }
-            p.last = true;
             p
         }
         Some(p) => {
             if !send(p) {
                 return Ok(());
             }
-            piece(&buf, true)?
+            piece(&buf)?
         }
-        None => piece(&buf, true)?,
+        None => piece(&buf)?,
     };
     send(last);
     Ok(())

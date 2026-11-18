@@ -190,6 +190,10 @@ pub struct CodeBlock {
     /// The source line of the first line of code.
     pub first_line: u32,
     pub fenced: bool,
+    /// The whole of a file of code or text, or a piece of one, not a block in a note: it is
+    /// drawn and printed as its lines alone, without the top row naming its language or the
+    /// row closing it.
+    pub whole_file: bool,
     /// The search unit of the first line; line `n` is unit `first_unit + n`.
     pub first_unit: UnitId,
     /// A ```` ```mermaid ```` block ada draws (ADR-35); `None` shows the source.

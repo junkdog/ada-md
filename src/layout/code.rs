@@ -1,6 +1,8 @@
 //! Code blocks (ADR-20): a background-filled block with the language on its top row, but in a
-//! print ([`LayoutParams::code_labels`](super::LayoutParams::code_labels)). With `code_wrap` on,
-//! long lines wrap with the theme's `↪`. With it off, each source line is one row whose code span
+//! print ([`LayoutParams::code_labels`](super::LayoutParams::code_labels)), and a row closing
+//! it. Those rows frame a fenced block in a note: a [whole file](crate::doc::CodeBlock::whole_file)
+//! is its lines alone, viewed or printed. With `code_wrap` on, long lines wrap with the theme's
+//! `↪`. With it off, each source line is one row whose code span
 //! is a fixed-width window, sliced at paint time by the shared horizontal offset, so scrolling
 //! sideways never relayouts. Highlighting is overlaid at paint, too. A printed file of code
 //! ([`LayoutParams::bare`](super::LayoutParams::bare)) has no columns of the block's own left of
@@ -54,20 +56,24 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
         inner
     };
 
-    b.begin_row();
-    if lead > 0 {
-        b.spaces(lead, StyleKey::CodeBlock);
+    // a file of code is its lines alone: nothing around it to set it apart from
+    let framed = !code.whole_file;
+    if framed {
+        b.begin_row();
+        if lead > 0 {
+            b.spaces(lead, StyleKey::CodeBlock);
+        }
+        if let Some(lang) = code.lang.as_ref().filter(|_| b.params.code_labels) {
+            b.text(cut(lang, usize::from(inner)), StyleKey::CodeLabel);
+        }
+        b.fill(avail, StyleKey::CodeBlock);
+        let fence = if code.fenced {
+            LineRange::line(src.start)
+        } else {
+            LineRange::NONE
+        };
+        b.end_row(fence, RowKind::Decor);
     }
-    if let Some(lang) = code.lang.as_ref().filter(|_| b.params.code_labels) {
-        b.text(cut(lang, usize::from(inner)), StyleKey::CodeLabel);
-    }
-    b.fill(avail, StyleKey::CodeBlock);
-    let fence = if code.fenced {
-        LineRange::line(src.start)
-    } else {
-        LineRange::NONE
-    };
-    b.end_row(fence, RowKind::Decor);
 
     let mut count = 0;
     let mut widest = 0;
@@ -133,6 +139,9 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
         };
     }
 
+    if !framed {
+        return;
+    }
     b.begin_row();
     b.fill(avail, StyleKey::CodeBlock);
     let last_code = code.first_line + count;

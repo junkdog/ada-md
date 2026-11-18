@@ -2,7 +2,6 @@
 source: src/record.rs
 expression: frames.last().unwrap()
 ---
-   log
    Oct 18 07:00:02 feeder ada-feeder[412]: meal 1: 40 g d
   ↪ispensed
    Oct 18 07:31:40 feeder ada-feeder[412]: bowl: 6 g left
@@ -11,4 +10,5 @@ expression: frames.last().unwrap()
    Oct 18 12:00:09 feeder ada-feeder[412]: WARN motor sta
   ↪lled, retrying
    Oct 18 12:00:11 feeder ada-feeder[412]: meal 2: 40 g d
- stdin                                                  Top
+  ↪ispensed
+ stdin                                                  All

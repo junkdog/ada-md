@@ -19,6 +19,7 @@ pub fn code(text: &str, lang: Option<&str>) -> Doc {
                 hash: content_hash(text),
                 first_line: 1,
                 fenced: false,
+                whole_file: true,
                 first_unit: 0,
                 diagram: super::diagram(lang, text),
             }),
@@ -33,7 +34,8 @@ pub fn code(text: &str, lang: Option<&str>) -> Doc {
 
 /// A piece of a longer file of code or text, printed a piece at a time (O-52): its lines, the
 /// first of them line `first_line` of the file. `hash` stands in for a hash of the text, which
-/// only has to tell the pieces apart.
+/// only has to tell the pieces apart. As the [whole file](CodeBlock::whole_file) it comes from,
+/// it is its lines alone, so the pieces' rows add up to the file's.
 pub fn code_piece(text: Arc<str>, lang: Option<&str>, first_line: u32, hash: u64) -> Doc {
     let lines = code_line_count(&text) as UnitId;
     Doc {
@@ -45,6 +47,7 @@ pub fn code_piece(text: Arc<str>, lang: Option<&str>, first_line: u32, hash: u64
                 hash,
                 first_line,
                 fenced: false,
+                whole_file: true,
                 first_unit: 0,
                 diagram: None,
             }),
@@ -108,7 +111,10 @@ mod tests {
         let BlockKind::Code(code) = &block.kind else {
             panic!("{block:?}");
         };
-        assert_eq!((code.first_line, code.fenced), (1, false));
+        assert_eq!(
+            (code.first_line, code.fenced, code.whole_file),
+            (1, false, true)
+        );
         assert_eq!(code.lang.as_deref(), Some("Rust"));
         assert_eq!(block.src, LineRange::new(1, 3));
         assert_eq!(

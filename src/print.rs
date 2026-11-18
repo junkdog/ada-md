@@ -1250,18 +1250,19 @@ mod tests {
         };
         let mark = &theme.glyphs.wrap_mark;
         let numbered = lines(params);
-        assert_eq!(numbered[1], "1 fn main() {}");
-        assert_eq!(numbered[2], format!("2 {}", "x".repeat(28)));
-        assert_eq!(numbered[3], format!("  {mark}{}", "x".repeat(27)));
-        assert_eq!(numbered[4], format!("  {mark}xxxxx"));
+        assert_eq!(numbered[0], "1 fn main() {}");
+        assert_eq!(numbered[1], format!("2 {}", "x".repeat(28)));
+        assert_eq!(numbered[2], format!("  {mark}{}", "x".repeat(27)));
+        assert_eq!(numbered[3], format!("  {mark}xxxxx"));
+        assert_eq!(numbered.len(), 4);
         let off = LayoutParams {
             line_numbers: crate::layout::LineNumbers::Off,
             ..params
         };
-        assert_eq!(lines(off)[1], "fn main() {}");
-        assert_eq!(lines(off)[2], "x".repeat(30));
-        assert_eq!(lines(off)[3], format!("{mark}{}", "x".repeat(29)));
-        assert_eq!(lines(off)[4], format!("{mark}x"));
+        assert_eq!(lines(off)[0], "fn main() {}");
+        assert_eq!(lines(off)[1], "x".repeat(30));
+        assert_eq!(lines(off)[2], format!("{mark}{}", "x".repeat(29)));
+        assert_eq!(lines(off)[3], format!("{mark}x"));
     }
 
     /// `md` printed 40 columns wide with `opts`, a line each.

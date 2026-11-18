@@ -812,6 +812,7 @@ impl Builder {
                         text: text.into(),
                         first_line: src.start + u32::from(fenced),
                         fenced,
+                        whole_file: false,
                         first_unit,
                         diagram,
                     }),

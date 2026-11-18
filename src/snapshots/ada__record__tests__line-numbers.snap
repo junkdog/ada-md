@@ -2,7 +2,6 @@
 source: src/record.rs
 expression: frames.last().unwrap()
 ---
-      Rust
  1    //! Feeder firmware: the schedule.
  2
  3 ▎  const MEALS: [u8; 3] = [7, 12, 19];
@@ -17,4 +16,5 @@ expression: frames.last().unwrap()
 10    }
 11
 12 ▎  fn log(hour: u8) {
+13 ▎      println!("meal at {hour}:00");
  main.rs  line numbers: code files            Top
