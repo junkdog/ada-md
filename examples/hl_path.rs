@@ -136,6 +136,10 @@ fn main() {
                     for run in spans.line(n) {
                         (run.end, run.rule.0).hash(&mut h);
                     }
+                    // a diff's changed line's tint (X-174); no other line's digest changes
+                    if let Some(tint) = spans.tint(n) {
+                        tint.hash(&mut h);
+                    }
                     u32::MAX.hash(&mut h);
                 }
             }

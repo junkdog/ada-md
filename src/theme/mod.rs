@@ -8,6 +8,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use crate::style::{Color, Kind, Modifier, Style};
 
 use crate::doc::{Callout, InlineStyle};
+use crate::highlight::{SyntaxTheme, Tint, rule_style};
 
 pub use load::{BUILTIN, load, load_str, load_user};
 
@@ -57,6 +58,10 @@ style_keys! {
     CodeText => "block.code_text",
     CodeLabel => "block.code_label",
     CodeWrapMark => "block.code_wrap_mark",
+    CodeInserted => "block.code_inserted",
+    CodeDeleted => "block.code_deleted",
+    CodeInsertedEmph => "block.code_inserted_emph",
+    CodeDeletedEmph => "block.code_deleted_emph",
     ListBullet => "block.list_bullet",
     ListNumber => "block.list_number",
     TaskDone => "block.task_done",
@@ -256,6 +261,21 @@ impl Glyphs {
     }
 }
 
+/// How far a diff tint goes from the code's background to its diff color (X-174).
+const TINT: f32 = 0.15;
+
+/// How far a diff's changed words' tint goes (FEAT-023).
+const EMPH: f32 = 0.25;
+
+/// `a` a fraction `t` of the way over `b`, when both are RGB.
+fn mix(a: Color, b: Color, t: f32) -> Option<Color> {
+    let (Kind::Rgb(ar, ag, ab), Kind::Rgb(br, bg, bb)) = (a.kind(), b.kind()) else {
+        return None;
+    };
+    let m = |a: u8, b: u8| (f32::from(b) + (f32::from(a) - f32::from(b)) * t).round() as u8;
+    Some(Color::rgb(m(ar, br), m(ag, bg), m(ab, bb)))
+}
+
 #[derive(Clone, Debug)]
 pub struct Theme {
     pub name: String,
@@ -385,6 +405,68 @@ impl Theme {
             }
         }
         theme
+    }
+
+    /// The background a diff's changed line is drawn on, under its language's colors (X-174):
+    /// `block.code_inserted`'s or `block.code_deleted`'s, only their background.
+    pub fn tint(&self, tint: Tint) -> Style {
+        let key = match tint {
+            Tint::Inserted => StyleKey::CodeInserted,
+            Tint::Deleted => StyleKey::CodeDeleted,
+        };
+        self.background(key)
+    }
+
+    /// The background of the words a diff's changed line changed (FEAT-023):
+    /// `block.code_inserted_emph`'s or `block.code_deleted_emph`'s, only their background.
+    pub fn emph(&self, tint: Tint) -> Style {
+        let key = match tint {
+            Tint::Inserted => StyleKey::CodeInsertedEmph,
+            Tint::Deleted => StyleKey::CodeDeletedEmph,
+        };
+        self.background(key)
+    }
+
+    fn background(&self, key: StyleKey) -> Style {
+        Style {
+            bg: self.styles[key as usize].bg,
+            ..Style::new()
+        }
+    }
+
+    /// The diff tints a theme leaves unset (X-174, FEAT-023): its `markup.inserted`'s and
+    /// `markup.deleted`'s color [`TINT`] of the way over the code's background, so a changed line
+    /// reads as changed and the language's colors stay legible on it, and [`EMPH`] of the way
+    /// for the words it changed. None where either color isn't RGB, for a terminal's palette
+    /// can't be mixed.
+    pub(crate) fn derive_tints(&mut self) {
+        let syntax = SyntaxTheme::new(&self.syntax);
+        let bg = self.style(StyleKey::CodeBlock).bg;
+        for (keys, scope) in [
+            (
+                [
+                    (StyleKey::CodeInserted, TINT),
+                    (StyleKey::CodeInsertedEmph, EMPH),
+                ],
+                "markup.inserted.diff",
+            ),
+            (
+                [
+                    (StyleKey::CodeDeleted, TINT),
+                    (StyleKey::CodeDeletedEmph, EMPH),
+                ],
+                "markup.deleted.diff",
+            ),
+        ] {
+            let rule = syntax.rule(&["source.diff", scope]);
+            let fg = rule_style(rule, &self.syntax).and_then(|s| s.fg);
+            for (key, t) in keys {
+                let style = &mut self.styles[key as usize];
+                if style.bg.is_none() {
+                    style.bg = fg.zip(bg).and_then(|(fg, bg)| mix(fg, bg, t));
+                }
+            }
+        }
     }
 
     /// A key's style on top of the document style, and of its parent's.
@@ -564,6 +646,68 @@ mod tests {
         };
         let (a, b) = (luminance(a), luminance(b));
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// A diff's changed lines (X-174): every built-in tints both sides apart from each other
+    /// and from the code's background, and every syntax color keeps at least two thirds of its
+    /// contrast on them (0.68 the least at `TINT` 0.15: tokyonight-moon's comments). Their
+    /// changed words (FEAT-023) on a stronger tint, which keeps half.
+    #[test]
+    fn diff_tints_keep_code_legible() {
+        for theme in Theme::builtins() {
+            let name = &theme.name;
+            let code = theme.style(StyleKey::CodeBlock).bg.unwrap();
+            let tints = [Tint::Inserted, Tint::Deleted].map(|t| theme.tint(t).bg.unwrap());
+            assert_ne!(tints[0], tints[1], "{name}");
+            let text = theme.style(StyleKey::CodeText).fg.unwrap();
+            let fgs = theme
+                .syntax
+                .iter()
+                .filter_map(|(sel, s)| Some((sel.as_str(), s.fg?)));
+            let fgs: Vec<_> = fgs.chain([("block.code_text", text)]).collect();
+            for tint in tints {
+                assert!(contrast(tint, code) > 1.1, "{name}: {tint:?} on {code:?}");
+                for &(sel, fg) in &fgs {
+                    let kept = contrast(fg, tint) / contrast(fg, code);
+                    assert!(
+                        kept > 2.0 / 3.0,
+                        "{name}: {sel} keeps {kept:.2} on {tint:?}"
+                    );
+                }
+            }
+            // a changed line's changed words (FEAT-023): apart from its tint, and every syntax color
+            // keeps half its contrast on them (0.51 the least at `EMPH` 0.25: tokyonight-moon's
+            // annotations), their separation from the tint 1.10 the least (the light themes)
+            for t in [Tint::Inserted, Tint::Deleted] {
+                let (tint, emph) = (theme.tint(t).bg.unwrap(), theme.emph(t).bg.unwrap());
+                assert!(contrast(emph, tint) > 1.08, "{name}: {emph:?} on {tint:?}");
+                for &(sel, fg) in &fgs {
+                    let kept = contrast(fg, emph) / contrast(fg, code);
+                    assert!(kept > 0.5, "{name}: {sel} keeps {kept:.2} on {emph:?}");
+                }
+            }
+        }
+    }
+
+    /// A theme's own diff tints stand, and one that extends another derives its tints from its
+    /// own diff colors (X-174).
+    #[test]
+    fn diff_tints_a_theme_sets_or_extends() {
+        let set = "[block]\ncode = { bg = \"#000000\" }\ncode_inserted = { bg = \"#010203\" }\n\
+                   [syntax]\n\"markup.inserted\" = { fg = \"#00ff00\" }\n\"markup.deleted\" = { fg = \"#ff0000\" }\n";
+        let theme = load_str("set", set, &mut Vec::new(), 0).unwrap();
+        assert_eq!(theme.tint(Tint::Inserted).bg, Some(Color::rgb(1, 2, 3)));
+        assert_eq!(theme.tint(Tint::Deleted).bg, Some(Color::rgb(38, 0, 0)));
+        let extends =
+            "extends = \"gruvbox-dark\"\n[syntax]\n\"markup.inserted\" = { fg = \"#ffffff\" }\n";
+        let theme = load_str("extends", extends, &mut Vec::new(), 0).unwrap();
+        let code = theme.style(StyleKey::CodeBlock).bg.unwrap();
+        let white = mix(Color::rgb(255, 255, 255), code, TINT);
+        assert_eq!(theme.tint(Tint::Inserted).bg, white);
+        // a palette's colors can't be mixed: no tint
+        let ansi = "[block]\ncode = { bg = \"black\" }\n[syntax]\n\"markup.inserted\" = { fg = \"green\" }\n";
+        let theme = load_str("ansi", ansi, &mut Vec::new(), 0).unwrap();
+        assert_eq!(theme.tint(Tint::Inserted), Style::new());
     }
 
     /// The settings popup's slots, in every built-in with and without its background: values

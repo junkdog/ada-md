@@ -25,6 +25,7 @@ use crate::doc::{self, BlockKind};
 use crate::filetype::{self, FileType};
 use crate::highlight::{self, Carrier, CodeSpans, Highlights, Lexer, SyntaxTheme};
 use crate::layout::{self, Layout, LayoutParams, LineNumbers};
+use crate::stdin::{Strip, Stripped};
 use crate::theme::Theme;
 use crate::ui::Painter;
 
@@ -98,7 +99,8 @@ pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
     // a file's size tells whether it streams, and only its start is read to tell what it is;
     // stdin is read as far as that size
     let (mut rest, want): (Box<dyn Read + Send>, usize) = if stdin {
-        (Box::new(io::stdin()), FIRST)
+        // as it comes: its type says whether its escapes are dropped (FEAT-022)
+        (crate::stdin::input(), FIRST)
     } else {
         let big = fs::metadata(path).is_ok_and(|m| m.len() >= FIRST as u64);
         match File::open(path) {
@@ -118,9 +120,20 @@ pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
     }
     // the whole print's type: sniffing looks only at the first few KB and the first line
     let filetype = forced.unwrap_or_else(|| FileType::of(path, &String::from_utf8_lossy(&first)));
+    // text in its own colors prints whole, its pen carried from line to line (FEAT-022)
     let FileType::Text { lang } = filetype else {
         return whole(first);
     };
+    if filetype == FileType::ANSI {
+        return whole(first);
+    }
+    // any other piped text without its escapes, wherever the reads cut them
+    if stdin {
+        let mut strip = Strip::default();
+        let kept = strip.bytes(&mut first);
+        first.truncate(kept);
+        rest = Box::new(Stripped::new(rest, strip));
+    }
     let lines = if numbered {
         match File::open(path).and_then(count_lines) {
             Ok(lines) => lines,
@@ -433,7 +446,8 @@ fn write_in_order(
 /// empty line joins the piece before it for the same reason. With `carry`, a [`Lexer::Carry`]
 /// language's carrier and the file's language, each piece is highlighted as it is sent, after
 /// any such join, and before waiting for its token, so that lexing goes on while the workers
-/// paint.
+/// paint. A carrier that reads past its piece (a diff's, FEAT-023) is handed the next piece and
+/// the whole lines read after it, read on until they're [`Carrier::enough_ahead`].
 fn read_pieces(
     mut input: impl Read,
     mut buf: Vec<u8>,
@@ -443,10 +457,11 @@ fn read_pieces(
     tokens: &Receiver<()>,
     jobs: &SyncSender<Piece>,
 ) -> io::Result<()> {
-    let mut send = |mut piece: Piece| {
+    let reads_ahead = carry.as_ref().is_some_and(|(c, _)| c.reads_ahead());
+    let mut send = |mut piece: Piece, ahead: &[&str]| {
         if let Some((carrier, lang)) = &mut carry {
             let key = highlight::key_of(*lang, piece.index as u64);
-            piece.spans = key.map(|key| carrier.highlight(key, &piece.text));
+            piece.spans = key.map(|key| carrier.highlight(key, &piece.text, ahead));
         }
         tokens.recv().is_ok() && jobs.send(piece).is_ok()
     };
@@ -504,9 +519,43 @@ fn read_pieces(
         let p = piece(&buf[..=cut])?;
         buf.drain(..=cut);
         scanned = 0;
-        if let Some(p) = pending.replace(p)
-            && !send(p)
-        {
+        let Some(sent) = pending.replace(p) else {
+            continue;
+        };
+        let next = pending.as_ref().map_or("", |p| &p.text);
+        if !reads_ahead {
+            if !send(sent, &[]) {
+                return Ok(());
+            }
+            continue;
+        }
+        // `buf`'s whole lines, but at the end
+        let whole = |buf: &[u8], eof: bool| match memchr::memrchr(b'\n', buf) {
+            _ if eof => buf.len(),
+            Some(i) => i + 1,
+            None => 0,
+        };
+        let newlines = memchr::memchr_iter(b'\n', next.as_bytes()).count();
+        // a line past what's held, read until it's longer than any a carrier reads ahead
+        // through (PGR-008): its start stands for it, as much as a carrier tells of it
+        let mut long = false;
+        while !eof {
+            let lines = newlines + memchr::memchr_iter(b'\n', &buf).count();
+            if Carrier::enough_ahead(lines, next.len() + whole(&buf, eof)) {
+                break;
+            }
+            let tail = buf.len() - whole(&buf, eof);
+            if Carrier::enough_ahead(0, tail) {
+                long = true;
+                break;
+            }
+            eof = read_more(&mut input, &mut buf)? == 0;
+        }
+        let held = match long {
+            true => String::from_utf8_lossy(&buf),
+            false => String::from_utf8_lossy(&buf[..whole(&buf, eof)]),
+        };
+        if !send(sent, &[next, &held]) {
             return Ok(());
         }
     }
@@ -519,14 +568,14 @@ fn read_pieces(
             p
         }
         Some(p) => {
-            if !send(p) {
+            if !send(p, &[&String::from_utf8_lossy(&buf)]) {
                 return Ok(());
             }
             piece(&buf)?
         }
         None => piece(&buf)?,
     };
-    send(last);
+    send(last, &[]);
     Ok(())
 }
 
@@ -739,6 +788,77 @@ mod tests {
         piece: 700,
         lines: 9,
     };
+
+    /// FEAT-023: a diff's change blocks read ahead past a cut, as the whole print reads them: blocks
+    /// of many sizes, some past the lines or bytes a block's words are compared in, pieces of a
+    /// few lines, of one, and of a long line.
+    #[test]
+    fn a_diffs_change_blocks_read_across_pieces() {
+        let mut text = String::from("diff --git a/m.rs b/m.rs\n--- a/m.rs\n+++ b/m.rs\n");
+        for h in 0..30 {
+            let (old, new) = match h % 10 {
+                0 => (70, 2),
+                1 => (3, 0),
+                _ => (h % 4 + 1, h % 3 + 1),
+            };
+            let _ = writeln!(text, "@@ -1,{} +1,{} @@ fn f{h}()", old + 2, new + 2);
+            let _ = writeln!(text, " fn context_{h}() {{}}");
+            for i in 0..old {
+                let long = if h % 7 == 3 {
+                    "x".repeat(9000)
+                } else {
+                    String::new()
+                };
+                let _ = writeln!(text, "-\tlet x{i} = foo(a, {h}); // {long}");
+            }
+            for i in 0..new {
+                let _ = writeln!(text, "+\tlet y{i} = foo(a, {h} + 1);");
+            }
+            let _ = writeln!(text, " }}");
+        }
+        let lang = Some("Diff");
+        same(text.as_bytes(), lang, 100, LineNumbers::Code);
+        for limits in [
+            SMALL,
+            Limits {
+                piece: 64,
+                lines: 1,
+            },
+            Limits {
+                piece: 4000,
+                lines: 2,
+            },
+        ] {
+            same_at(text.as_bytes(), lang, 80, LineNumbers::Off, limits);
+        }
+        // PGR-005: a diff without `@@`, its lines' `\r`s, tabs and blanks told apart, its
+        // files' headers ending its blocks
+        let mut text = String::new();
+        for h in 0..30 {
+            if h % 6 == 0 {
+                let _ = writeln!(text, "--- a/m{h}.rs\n+++ b/m{h}.rs");
+            }
+            let _ = writeln!(text, " fn context_{h}() {{");
+            for i in 0..h % 5 + 1 {
+                let cr = if (h + i) % 3 == 0 { "\r" } else { "" };
+                let _ = writeln!(text, "-\tlet x{i} = foo(a, {h});{cr}");
+            }
+            for i in 0..h % 4 + 1 {
+                let blank = if i % 2 == 0 { "  " } else { "" };
+                let _ = writeln!(text, "+    let x{i} = foo(a, {h} + 1);{blank}");
+            }
+        }
+        same(text.as_bytes(), lang, 100, LineNumbers::Code);
+        for limits in [
+            SMALL,
+            Limits {
+                piece: 64,
+                lines: 1,
+            },
+        ] {
+            same_at(text.as_bytes(), lang, 80, LineNumbers::Off, limits);
+        }
+    }
 
     #[test]
     fn carried_languages_keep_their_state_across_pieces() {

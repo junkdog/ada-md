@@ -61,6 +61,11 @@ code = { fg = "fg", bg = "bg0_s" }
 code_text = {}           # code itself; inherits block.code, under the [syntax] colors
 code_label = { fg = "gray", bg = "bg0_s", italic = true }
 code_wrap_mark = { fg = "gray", bg = "bg0_s" }
+# code_inserted = { bg = "…" }  # a diff's added lines, under their language's colors; unset, [syntax]'s
+#                                # markup.inserted mixed 15% over block.code's background
+# code_deleted = { bg = "…" }   # its removed lines, from markup.deleted the same way
+# code_inserted_emph = { bg = "…" }  # the words an added line changed; unset, markup.inserted 25%
+# code_deleted_emph = { bg = "…" }   # the words a removed line changed, from markup.deleted
 list_bullet = { fg = "yellow" }
 list_number = { fg = "yellow" }
 task_done = { fg = "green" }

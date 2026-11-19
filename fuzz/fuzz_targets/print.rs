@@ -4,7 +4,9 @@
 //! `--match`'s matches, the git gutter from made-up hunks, and block images drawn with kitty
 //! placeholders or half-blocks. Links lead to fixed images (PNG of each color
 //! type, JPEG, truncated, not an image at all, missing) or to one file whose bytes the input
-//! holds, with sizes true or not, as a file changed since its probe. Nothing may panic.
+//! holds, with sizes true or not, as a file changed since its probe. Text in its own colors
+//! (FEAT-022: colored stdin that isn't a diff, or `-l ansi`) has its runs, read from its SGR
+//! sequences, checked against the lines it shows. Nothing may panic.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a print -- -dict=fuzz/markdown.dict -max_len=16384
@@ -19,8 +21,9 @@ use ada::app::{Head, cut_to_head};
 use ada::filetype::{self, FileType};
 use ada::geom::Size;
 use ada::git::LineMarks;
+use ada::highlight::{self, SyntaxTheme};
 use ada::images::Proto;
-use ada::layout::{ImageFit, LayoutParams, LineNumbers, TableMode};
+use ada::layout::{ImageFit, LayoutParams, LineNumbers, TableMode, expand_tabs};
 use ada::print::{self, Options, Pictures};
 use ada::search;
 use ada::theme::Theme;
@@ -75,7 +78,7 @@ const NAMES: [&str; 8] = [
 ];
 
 const FORCED: [&str; 12] = [
-    "", "", "", "mmd", "md", "txt", "rs", "yaml", "diff", "log", "toml", "html",
+    "", "", "ansi", "mmd", "md", "txt", "rs", "yaml", "diff", "log", "toml", "html",
 ];
 
 /// A made-up hunk: `(line, lines, how)`.
@@ -279,6 +282,9 @@ fuzz_target!(|data: &[u8]| {
     if let Some(dump) = std::env::var_os("ADA_FUZZ_DUMP") {
         std::fs::write(dump, text.as_bytes()).expect("dump");
     }
+    if filetype == FileType::ANSI {
+        colored_runs(&doc, &theme);
+    }
     let start = std::time::Instant::now();
     let out = print::render(&doc, &theme, filetype.params(params), opts);
     if trace {
@@ -295,3 +301,35 @@ fuzz_target!(|data: &[u8]| {
         "the output has bytes that aren't UTF-8"
     );
 });
+
+/// Text in its own colors (FEAT-022): its highlighting, read from the input's SGR sequences, has
+/// a line of runs for each line the document shows, each run on that line as tabs expand it,
+/// after the one before, and ending on a character, its style the block's own.
+fn colored_runs(doc: &ada::doc::Doc, theme: &Theme) {
+    let code = doc.code_blocks()[0];
+    let syntax = SyntaxTheme::new(&theme.syntax);
+    let spans = highlight::highlight(1, highlight::ANSI, code.highlight_text(), &syntax);
+    let lines: Vec<_> = code.lines().map(expand_tabs).collect();
+    assert_eq!(
+        spans.line_count() as usize,
+        lines.len(),
+        "a line of runs a line"
+    );
+    for (n, line) in lines.iter().enumerate() {
+        let mut start = 0;
+        for run in spans.line(n as u32) {
+            let end = run.end as usize;
+            assert!(
+                start < end && end <= line.len() && line.is_char_boundary(end),
+                "line {n} {line:?}: {:?}",
+                spans.line(n as u32)
+            );
+            assert!(
+                run.rule.0 == u16::MAX
+                    || highlight::run_style(run.rule, &theme.syntax, spans.palette()).is_some(),
+                "line {n}: {run:?} has no style"
+            );
+            start = end;
+        }
+    }
+}

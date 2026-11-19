@@ -229,6 +229,96 @@ fn find(b: &[u8], needle: &[u8]) -> Option<usize> {
     b.windows(needle.len()).position(|w| w == needle)
 }
 
+/// A unified diff's hunk header, `@@ -a[,b] +c[,d] @@ section` (X-174): how many of the old
+/// file's lines and the new file's the hunk holds, and where its section text is, the bytes
+/// [`line`] gives the section's kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hunk {
+    pub old: u32,
+    pub new: u32,
+    /// Bytes `.0..1` of the line; empty when there is no section text.
+    pub section: (usize, usize),
+}
+
+/// The hunk `line` starts, if it is a unified diff's hunk header. A combined diff's (`@@@`) is
+/// none: its lines carry a mark a parent.
+pub fn hunk(line: &str) -> Option<Hunk> {
+    let b = line.as_bytes();
+    let (lines, _, section) = unified_range(b)?;
+    let range = &b[lines.0..lines.1];
+    // `-a[,b] +c[,d]`, a count left out being 1
+    let count = |r: &[u8], sign: u8| -> Option<(u32, usize)> {
+        let at = (r.first() == Some(&sign)).then_some(1)?;
+        let digits = |at: usize| r[at..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let n = digits(at);
+        if n == 0 {
+            return None;
+        }
+        if r.get(at + n) != Some(&b',') {
+            return Some((1, at + n));
+        }
+        let m = digits(at + n + 1);
+        let c = std::str::from_utf8(&r[at + n + 1..at + n + 1 + m]).ok()?;
+        Some((c.parse().ok()?, at + n + 1 + m))
+    };
+    let (old, old_end) = count(range, b'-')?;
+    let gap = skip_spaces(range, old_end);
+    let (new, new_end) = count(&range[gap..], b'+')?;
+    if gap == old_end || gap + new_end != range.len() {
+        return None;
+    }
+    Some(Hunk { old, new, section })
+}
+
+/// What a diff's header line says of the file after it (X-174).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Header<'a> {
+    /// A new file's section starts, `diff --git a/x b/y` (the new name) or another `diff …`
+    /// line (its last word); `None` for a combined diff's (`diff --cc`, `diff --combined`).
+    Diff(Option<&'a str>),
+    /// `--- path` and `+++ path`: the old file's and the new one's, `None` for `/dev/null`.
+    From(Option<&'a str>),
+    To(Option<&'a str>),
+    /// `Index: path`.
+    Index(&'a str),
+}
+
+/// The file `line` names, if it is a header's that does. A path's timestamp after a tab and the
+/// quotes around it come off; a context diff's range (`--- 1,5 ----`) is none.
+pub fn header(line: &str) -> Option<Header<'_>> {
+    fn path(p: &str) -> &str {
+        let p = p.split('\t').next().unwrap_or(p).trim_end();
+        p.strip_prefix('"')
+            .and_then(|p| p.strip_suffix('"'))
+            .unwrap_or(p)
+    }
+    fn file(p: &str) -> Option<&str> {
+        Some(path(p)).filter(|&p| p != "/dev/null" && !p.is_empty())
+    }
+    if let Some(rest) = line.strip_prefix("diff ") {
+        if rest.starts_with("--cc ") || rest.starts_with("--combined ") {
+            return Some(Header::Diff(None));
+        }
+        let new = match rest.strip_prefix("--git ") {
+            // `a/x b/y`, either quoted when its name needs it
+            Some(paths) => paths
+                .rfind(" \"b/")
+                .or_else(|| paths.rfind(" b/"))
+                .map_or_else(|| paths.rsplit(' ').next(), |i| Some(&paths[i + 1..])),
+            None => rest.rsplit(' ').next(),
+        };
+        return Some(Header::Diff(new.map(path).filter(|p| !p.is_empty())));
+    }
+    if let Some(p) = line.strip_prefix("--- ") {
+        return (!line.ends_with(" ----")).then(|| Header::From(file(p)));
+    }
+    if let Some(p) = line.strip_prefix("+++ ") {
+        return Some(Header::To(file(p)));
+    }
+    let p = line.strip_prefix("Index: ")?;
+    file(p).map(Header::Index)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::Lang;
@@ -333,6 +423,51 @@ mod tests {
         assert_eq!(kinds("! changed").len(), 2);
         assert_eq!(kinds(" context"), []);
         assert_eq!(kinds(""), []);
+    }
+
+    #[test]
+    fn hunks() {
+        use super::{Hunk, hunk};
+        let h = |old, new, section| Some(Hunk { old, new, section });
+        assert_eq!(hunk("@@ -1,3 +1,4 @@ fn main() {"), h(3, 4, (16, 27)));
+        assert_eq!(hunk("@@ -5 +5 @@"), h(1, 1, (11, 11)));
+        assert_eq!(hunk("@@ -0,0 +1,12 @@"), h(0, 12, (16, 16)));
+        // a combined diff's, and what isn't a range
+        assert_eq!(hunk("@@@ -1,2 -1,2 +1,3 @@@"), None);
+        assert_eq!(hunk("@@ -1,2 @@"), None);
+        assert_eq!(hunk("@@ -1,x +1 @@"), None);
+        assert_eq!(hunk("@@ +1 -1 @@"), None);
+    }
+
+    #[test]
+    fn headers_name_files() {
+        use super::{Header, header};
+        assert_eq!(
+            header("diff --git a/src/a.rs b/src/b.rs"),
+            Some(Header::Diff(Some("b/src/b.rs")))
+        );
+        assert_eq!(
+            header("diff --git \"a/x y.c\" \"b/x y.c\""),
+            Some(Header::Diff(Some("b/x y.c")))
+        );
+        assert_eq!(
+            header("diff -ru old/a.py new/a.py"),
+            Some(Header::Diff(Some("new/a.py")))
+        );
+        assert_eq!(header("diff --cc a.c"), Some(Header::Diff(None)));
+        assert_eq!(
+            header("--- a/x.c\t2024-01-01 10:00:00"),
+            Some(Header::From(Some("a/x.c")))
+        );
+        assert_eq!(header("--- /dev/null"), Some(Header::From(None)));
+        assert_eq!(
+            header("+++ b/Makefile"),
+            Some(Header::To(Some("b/Makefile")))
+        );
+        assert_eq!(header("Index: src/a.c"), Some(Header::Index("src/a.c")));
+        assert_eq!(header("--- 1,5 ----"), None);
+        assert_eq!(header("---"), None);
+        assert_eq!(header("+added"), None);
     }
 
     #[test]

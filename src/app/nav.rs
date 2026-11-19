@@ -42,6 +42,9 @@ pub(super) struct Entry {
     focus: Option<LinkId>,
 }
 
+/// The status while the rest of stdin is read (PGR-008).
+pub const READING: &str = "reading stdin…";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NavOp {
     Follow,
@@ -526,6 +529,27 @@ impl State {
         vec![self.load_cmd(entry.path)]
     }
 
+    /// The rest of stdin has been read (PGR-008): the document on screen, what was read of it
+    /// at startup, is read again, keeping its place, as `r` reads a file. Elsewhere, stdin's
+    /// document is read whole when it's next shown.
+    pub(super) fn stdin_read(&mut self) -> Vec<Cmd> {
+        if self.status.as_deref() == Some(READING) {
+            self.status = None;
+        }
+        if self.nav.is_some() {
+            return Vec::new();
+        }
+        let Some(entry) = self.entry().filter(|e| e.path.as_os_str() == "-") else {
+            return Vec::new();
+        };
+        self.nav = Some(Nav {
+            path: entry.path.clone(),
+            op: NavOp::Reload,
+            land: Landing::Entry(entry.clone()),
+        });
+        vec![self.load_cmd(entry.path)]
+    }
+
     /// The document a navigation waited for has loaded.
     pub(super) fn arrive(
         &mut self,
@@ -539,7 +563,10 @@ impl State {
             if let Some(entry) = self.entry().filter(|e| e.path == nav.path) {
                 nav.land = Landing::Entry(entry);
             }
-            self.status = Some("reloaded".into());
+            // stdin isn't reloaded, but read on (PGR-008)
+            if nav.path.as_os_str() != "-" {
+                self.status = Some("reloaded".into());
+            }
             if let Some(doc) = &mut self.doc
                 && doc.path == nav.path
                 && doc.text == text

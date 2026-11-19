@@ -45,7 +45,7 @@
     <p class="sub">Follow links and come back to where you were, see what git says changed, read wide tables at
       any width, and look at the pictures.</p>
     <a class="download" href="https://github.com/junkdog/ada-md/releases">Download ada</a>
-    <p class="alt">Binaries for Linux and macOS, or <a href="#install">build it with cargo</a>.</p>
+    <p class="alt">Binaries for Linux, macOS and Windows, or <a href="#install">build it with cargo</a>.</p>
   </div>
   <figure class="ada">
     <img src="media/ada.jpg" width="560" height="340" alt="Ada, a fluffy grey mixed-breed cat, lying on a shelf and looking at the camera">
@@ -1216,10 +1216,10 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
   <h2>No crashes, on any input <a class="anchor" href="#robust" aria-label="link to this section">#</a></h2>
   <p class="lede">ada is fuzzed extensively, and as <strong>whole sessions</strong>, not one function at a time: a
     document, then up to 64 things a reader, the file system, git or the terminal can do, in any order. So far,
-    <strong>50.8 million sessions</strong> and 2.6 billion runs of the printer, scanners, highlighting lexers, image
-    codecs, terminal probe, link lookup and diagrams, over 47 hours in twenty-two runs.</p>
+    <strong>51.0 million sessions</strong> and 2.6 billion runs of the printer, scanners, highlighting lexers, image
+    codecs, terminal probe, link lookup and diagrams, over 49 hours in twenty-five runs.</p>
   <ul class="fuzz">
-    <li><h3>Any document</h3><p>Markdown, code, config, plain text and images, built from random bytes and a
+    <li><h3>Any document</h3><p>Markdown, code, config, diffs, plain text and images, built from random bytes and a
       dictionary of the parts markdown parsers find hardest. Other targets fuzz <code>--print</code>, whole
       and streamed (which must match byte for byte), every highlighting lexer (its runs checked against its own spans), image decoding, mermaid diagrams at
       any width, the sixel encoder, and the terminal's replies to ada's probe.</p></li>
@@ -1242,7 +1242,8 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 <section id="install" class="install wrap">
   <h2>Install <a class="anchor" href="#install" aria-label="link to this section">#</a></h2>
   <p>Binaries for Linux (x86_64 and aarch64: <code>gnu</code> for glibc 2.34 or newer, <code>musl</code> static for
-    any Linux, Alpine included, printing large files in up to 1.4× the time) and macOS (Apple silicon and Intel) are on the
+    any Linux, Alpine included, printing large files in up to 1.4× the time), macOS (Apple silicon and Intel)
+    and Windows (x86_64, a <code>.zip</code>) are on the
     <a href="https://github.com/junkdog/ada-md/releases">releases page</a>: unpack one and put <code>ada</code> on
     your <code>PATH</code>. The macOS binaries aren't signed, so if the archive came through a browser, run
     <code>xattr -d com.apple.quarantine ada</code> first. Or build it from
@@ -1255,8 +1256,9 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
   <pre><code>cargo ordered --locked   <span class="c"># target/release/ada, as released</span></code></pre>
   <p>Rust 1.95 or newer. ada is pure Rust, but for jemalloc in a static musl build, which needs a C compiler
     and <code>make</code>. Git integration runs the <code>git</code> command.</p>
-  <p>Windows is mostly untested: ada builds and runs there but doesn't follow Windows' conventions yet. The
-    <a href="https://github.com/junkdog/ada-md#install">README</a> lists what's missing; support is planned for 1.1.</p>
+  <p>Windows is new in 1.1 and has seen less use than Linux and macOS. The config and themes are in
+    <code>%APPDATA%\ada</code>, links and images open in their default apps, and the editor falls back to
+    <code>notepad</code>. Windows Terminal 1.22 and later draws sixel images.</p>
   <pre><code><span class="c"># read a note</span>
 ada notes/today.md
 

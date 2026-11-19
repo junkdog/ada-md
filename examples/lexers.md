@@ -408,6 +408,32 @@ CHANGELOG.md merge=union
 site/data/*.json generated
 ```
 
+## Git Config
+
+```gitconfig
+# ~/.gitconfig
+[user]
+    name = Ada Lovelace
+    email = ada@example.com
+[core]
+    editor = nvim
+    pager = ada -F
+    autocrlf = false
+[alias]
+    co = checkout
+    lg = log --graph --oneline --abbrev-commit
+    recent = "!f() { git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/heads; }; f | head -n 10"
+[remote "origin"]
+    url = https://example.com/ada.git
+    fetch = +refs/heads/*:refs/remotes/origin/*
+[color "diff"]
+    meta = 11
+    old = red bold
+    new = "#00ff00" bold
+[includeIf "gitdir:~/work/"]
+    path = ~/.gitconfig-work
+```
+
 ## Git Ignore
 
 ```gitignore

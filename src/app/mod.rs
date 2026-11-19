@@ -2,6 +2,7 @@
 //! [`update`] is the only place state changes and performs no I/O. Effects are [`Cmd`]s that the
 //! effect runner executes, feeding results back as messages.
 
+mod diffs;
 mod effects;
 mod find;
 mod handoff;
@@ -45,8 +46,8 @@ pub use imaging::{ImageFile, ImageView};
 pub use input::{Cursor, Input};
 pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
 pub use load::{Prepare, Prepared, prepare};
-pub use nav::LinkState;
 use nav::{Entry, Nav};
+pub use nav::{LinkState, READING};
 pub use run::{arenas, one_arena, run_tui};
 pub(crate) use run::{draw_frame, init_terminal, restore_terminal};
 pub use save::Saving;
@@ -523,6 +524,8 @@ pub struct Document {
     /// The file changed on disk since it was read, with `live_reload = "notify"` (FEAT-014):
     /// the status bar marks it until it is read again.
     pub changed: bool,
+    /// A diff's files and commits, read on the first `n` or `o`.
+    diff_files: std::sync::OnceLock<Vec<diffs::DiffFile>>,
 }
 
 impl Document {
@@ -557,6 +560,32 @@ impl Document {
             marks: None,
             images,
             changed: false,
+            diff_files: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Whether it is a diff, whose files `n`/`N` and `o` go between (X-174): one ada colors, or
+    /// git output in its own colors (a word diff, a plain `git log`) with a commit or a file in
+    /// it (PGR-001, PGR-004).
+    pub fn is_diff(&self) -> bool {
+        match self.filetype {
+            FileType::Text { lang: Some("Diff") } => true,
+            FileType::ANSI => !self.diff_files().is_empty(),
+            _ => false,
+        }
+    }
+
+    /// A diff's files and commits; none for any other document. Text in its own colors is read
+    /// without its escapes, on its first `n` or `o`.
+    pub(super) fn diff_files(&self) -> &[diffs::DiffFile] {
+        match self.filetype {
+            FileType::Text { lang: Some("Diff") } => self
+                .diff_files
+                .get_or_init(|| diffs::files(&self.filetype.shown_text(&self.path, &self.text))),
+            FileType::ANSI => self
+                .diff_files
+                .get_or_init(|| diffs::files(&crate::stdin::strip(&self.text))),
+            _ => &[],
         }
     }
 
@@ -932,6 +961,36 @@ impl State {
         }
     }
 
+    /// In a diff, n and N before any search (X-174, as delta's `navigate`): to the next or the
+    /// previous file's header, or commit's in `git log -p`. False when the document isn't a diff.
+    pub(super) fn jump_file(&mut self, dir: Dir) -> bool {
+        let Some(doc) = self.doc.as_ref().filter(|d| d.is_diff()) else {
+            return false;
+        };
+        let files = doc.diff_files();
+        let rows = diffs::rows(&doc.layout, files).into_iter().flatten();
+        // near the end, the files past the last screen are on it: no jump moves to them
+        let max = self.max_scroll();
+        let target = match dir {
+            Dir::Next => rows
+                .into_iter()
+                .map(|r| r.min(max))
+                .find(|&r| r > self.scroll),
+            Dir::Prev => rows.into_iter().rev().find(|&r| r < self.scroll),
+        };
+        match target {
+            Some(row) => self.scroll = row.min(max),
+            None if files.is_empty() => self.status = Some("no files to jump to".into()),
+            None => {
+                self.status = Some(match dir {
+                    Dir::Next => "no more files below".into(),
+                    Dir::Prev => "no more files above".into(),
+                });
+            }
+        }
+        true
+    }
+
     /// The first load, or one that isn't a navigation: no history.
     fn load(
         &mut self,
@@ -973,7 +1032,7 @@ impl State {
             block,
             key,
             lang: code.lang.clone()?,
-            text: code.text.clone(),
+            text: code.highlight_text().clone(),
             theme: self.syntax.clone(),
             urgent,
             first: None,
@@ -1017,7 +1076,7 @@ impl State {
                 block,
                 key,
                 lang: lang.clone(),
-                text: code.text.clone(),
+                text: code.highlight_text().clone(),
                 theme: self.syntax.clone(),
                 urgent,
                 first: None,
@@ -1076,7 +1135,7 @@ impl State {
                     block,
                     key: highlight::key(code)?,
                     lang: code.lang.clone()?,
-                    text: code.text.clone(),
+                    text: code.highlight_text().clone(),
                     theme: self.syntax.clone(),
                     urgent: true,
                     first: lines,
@@ -2932,6 +2991,160 @@ mod tests {
         assert!(!cmds.iter().any(|c| matches!(c, Cmd::RunGit { .. })));
     }
 
+    /// X-174: in a diff, n and N go from file to file and commit to commit until a search is
+    /// made; anywhere else they ask for one.
+    #[test]
+    fn n_jumps_between_a_diffs_files() {
+        let file = |name: &str| {
+            let body: String = (1..=30).map(|i| format!(" line {i}\n")).collect();
+            format!(
+                "diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1,30 +1,30 @@\n{body}"
+            )
+        };
+        let text = format!("commit 0123abcd\n\n{}{}", file("a.c"), file("b.c"));
+        let mut state = loaded("x", 80, 10);
+        update(
+            &mut state,
+            Msg::DocLoaded {
+                path: "x.diff".into(),
+                mtime: None,
+                text: text.as_str().into(),
+                doc: Computed(None),
+            },
+        );
+        let row = |line| {
+            state
+                .doc
+                .as_ref()
+                .unwrap()
+                .layout
+                .row_for_line(line)
+                .unwrap()
+        };
+        let (commit, a, b) = (row(1), row(3), row(37));
+        // the view starts at the commit
+        assert_eq!(state.scroll, commit);
+        update(&mut state, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!(state.scroll, a);
+        update(&mut state, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!(state.scroll, b.min(state.max_scroll()));
+        update(&mut state, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!(state.status.as_deref(), Some("no more files below"));
+        update(&mut state, Msg::SearchNext { dir: Dir::Prev });
+        assert_eq!(state.scroll, a);
+        update(&mut state, Msg::SearchNext { dir: Dir::Prev });
+        assert_eq!(state.scroll, commit);
+
+        let mut note = loaded(&sample(), 80, 20);
+        update(&mut note, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!(
+            note.status.as_deref(),
+            Some("no previous search: / starts one")
+        );
+    }
+
+    /// PGR-004: a file past the last screen's top is on it: `n` goes to that screen once, then
+    /// says there are no more, rather than standing still.
+    #[test]
+    fn n_near_a_diffs_end_says_no_more() {
+        let body: String = (1..=30).map(|i| format!(" line {i}\n")).collect();
+        let text = format!(
+            "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,30 +1,30 @@\n{body}\
+             diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n x\n"
+        );
+        let mut state = loaded("x", 80, 10);
+        update(
+            &mut state,
+            Msg::DocLoaded {
+                path: "x.diff".into(),
+                mtime: None,
+                text: text.as_str().into(),
+                doc: Computed(None),
+            },
+        );
+        let max = state.max_scroll();
+        assert!(state.doc.as_ref().unwrap().layout.row_for_line(35).unwrap() > max);
+        update(&mut state, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!((state.scroll, state.status.as_deref()), (max, None));
+        update(&mut state, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!(state.scroll, max);
+        assert_eq!(state.status.as_deref(), Some("no more files below"));
+    }
+
+    /// PGR-001, PGR-004: git output in its own colors, a word diff or a plain `git log`, goes
+    /// from commit to commit and file to file as a diff ada colors does.
+    #[test]
+    fn n_jumps_in_git_output_in_its_own_colors() {
+        let body: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+        let text = format!(
+            "\x1b[33mcommit 0123abcd\x1b[m\n\n\x1b[1mdiff --git a/a b/a\x1b[m\n\
+             \x1b[36m@@ -1,30 +1,30 @@\x1b[m\nx \x1b[31mold\x1b[m\x1b[32mnew\x1b[m\n{body}\
+             \x1b[33mcommit 4567abcd\x1b[m\n{body}"
+        );
+        let mut state = loaded("x", 80, 10);
+        update(
+            &mut state,
+            Msg::DocLoaded {
+                path: "-".into(),
+                mtime: None,
+                text: text.as_str().into(),
+                doc: Computed(None),
+            },
+        );
+        let doc = state.doc.as_ref().unwrap();
+        assert_eq!(doc.filetype, FileType::ANSI);
+        assert!(doc.is_diff());
+        let (a, next) = (
+            doc.layout.row_for_line(3).unwrap(),
+            doc.layout.row_for_line(36).unwrap(),
+        );
+        update(&mut state, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!(state.scroll, a);
+        update(&mut state, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!(state.scroll, next);
+    }
+
+    /// X-174: `o` in a diff lists its commits and files, each file with how it changed, and
+    /// jumps to the one picked.
+    #[test]
+    fn outline_lists_a_diffs_files() {
+        let body: String = (1..=30).map(|i| format!(" line {i}\n")).collect();
+        let text = format!(
+            "commit 0123abcd\nAuthor: A <a@b>\n\n    Subject\n\n\
+             diff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1,30 +1,31 @@\n+new\n{body}\
+             diff --git a/b.c b/b.c\nnew file mode 100644\n--- /dev/null\n+++ b/b.c\n@@ -0,0 +1 @@\n+x\n"
+        );
+        let mut state = loaded("x", 80, 10);
+        update(
+            &mut state,
+            Msg::DocLoaded {
+                path: "x.diff".into(),
+                mtime: None,
+                text: text.as_str().into(),
+                doc: Computed(None),
+            },
+        );
+        update(&mut state, Msg::OpenOutline);
+        let listed: Vec<_> = state
+            .outline_entries()
+            .iter()
+            .map(|e| (e.level, e.text.to_string(), e.dest.clone()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (1, "0123abc Subject".into(), None),
+                (2, "a.c".into(), Some("+1".into())),
+                (2, "b.c".into(), Some("added · +1".into())),
+            ]
+        );
+        let b = state.outline_entries()[2].row;
+        update(&mut state, Msg::OutlineMove { by: 2 });
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(state.scroll, b.min(state.max_scroll()));
+        assert!(state.outline.is_none());
+    }
+
     #[test]
     fn change_jumps() {
         let mut state = loaded(&sample(), 80, 20);
@@ -3003,6 +3216,40 @@ mod tests {
             Some("nothing to go back to"),
             "no history"
         );
+    }
+
+    /// PGR-008: the viewer shows what it read of stdin at first; once the rest is read, stdin's
+    /// document is read again where it is, without a "reloaded".
+    #[test]
+    fn the_rest_of_stdin_keeps_the_place() {
+        let mut state = loaded("", 80, 20);
+        let head: String = (1..=200).map(|n| format!("line {n}\n")).collect();
+        load_at(&mut state, "-", &head);
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(40),
+            },
+        );
+        let line = top_line(&state);
+        state.status = Some(READING.into());
+        let cmds = update(
+            &mut state,
+            Msg::FileChanged {
+                path: "-".into(),
+                mtime: None,
+            },
+        );
+        assert_eq!(only_load(&cmds), Some("-"));
+        assert_eq!(state.status, None);
+        let whole: String = (1..=5000).map(|n| format!("line {n}\n")).collect();
+        load_at(&mut state, "-", &whole);
+        assert_eq!(top_line(&state), line);
+        assert_eq!(state.status, None);
+        assert_eq!(state.doc.as_ref().map(|d| d.text.len()), Some(whole.len()));
+        // `r` still can't reload stdin
+        update(&mut state, Msg::Reload);
+        assert_eq!(state.status.as_deref(), Some("stdin can't be reloaded"));
     }
 
     // --- O-32: loading off the UI thread -------------------------------------------------------

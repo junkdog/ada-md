@@ -40,6 +40,7 @@ mod emit;
 mod fstab;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod git;
+mod git_config;
 mod go;
 mod header;
 mod heredoc;
@@ -102,6 +103,9 @@ pub use lang::Lang;
 // ada-md's, not the API (REL-025)
 #[doc(hidden)]
 pub use lang::{ALIASES, FirstLine, IGNORED_SUFFIXES, first_line_syntaxes};
+// a diff's files and hunks, for ada's lines in their file's language (X-174)
+#[doc(hidden)]
+pub use diff::{Header as DiffHeader, Hunk as DiffHunk, header as diff_header, hunk as diff_hunk};
 use lisp::Dialect;
 
 /// Bytes `start..end` of a line are kind `kind` of the line's language, whose scopes
@@ -401,6 +405,7 @@ fn run_lines(lang: Lang) -> Option<RunLinesOf> {
         Lang::GitAttributes => lines_run::<git::AttributesLine>,
         Lang::GitMailmap => lines_run::<git::MailmapLine>,
         Lang::GitLink => lines_run::<git::LinkLine>,
+        Lang::GitConfig => lines_run::<git_config::RunLine>,
         Lang::Fstab => lines_run::<fstab::RunLine>,
         Lang::PkgConfig => lines_run::<pkgconfig::RunLine>,
         Lang::CMakeCache => lines_run::<cmake_cache::RunLine>,
@@ -790,6 +795,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         | Lang::GitAttributes
         | Lang::GitMailmap
         | Lang::GitLink
+        | Lang::GitConfig
         | Lang::Fstab
         | Lang::PkgConfig
         | Lang::CMakeCache
@@ -902,6 +908,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::GitAttributes => out!(git::attributes),
         Lang::GitMailmap => out!(git::mailmap),
         Lang::GitLink => out!(git::link),
+        Lang::GitConfig => out!(git_config::line),
         Lang::Fstab => out!(fstab::line),
         Lang::PkgConfig => out!(pkgconfig::line),
         Lang::CMakeCache => out!(cmake_cache::line),

@@ -22,6 +22,7 @@ pub fn code(text: &str, lang: Option<&str>) -> Doc {
                 whole_file: true,
                 first_unit: 0,
                 diagram: super::diagram(lang, text),
+                colors: None,
             }),
             src: LineRange::new(1, lines),
         }],
@@ -30,6 +31,19 @@ pub fn code(text: &str, lang: Option<&str>) -> Doc {
         unit_count: lines,
         ..Doc::default()
     }
+}
+
+/// Text in its own colors (FEAT-022): `colored`, the input with its escapes, shown without them
+/// as a whole file of [`crate::highlight::ANSI`], whose highlighting reads them. Its hash is the
+/// input's, so that the same text in other colors is highlighted again.
+pub fn colored(colored: &str) -> Doc {
+    let text = crate::highlight::ansi_shown(colored);
+    let mut doc = code(&text, Some(crate::highlight::ANSI));
+    if let Some(BlockKind::Code(code)) = doc.blocks.first_mut().map(|b| &mut b.kind) {
+        code.hash = content_hash(colored);
+        code.colors = Some(colored.into());
+    }
+    doc
 }
 
 /// A piece of a longer file of code or text, printed a piece at a time (O-52): its lines, the
@@ -50,6 +64,7 @@ pub fn code_piece(text: Arc<str>, lang: Option<&str>, first_line: u32, hash: u64
                 whole_file: true,
                 first_unit: 0,
                 diagram: None,
+                colors: None,
             }),
             src: LineRange::new(first_line, first_line + lines.max(1) - 1),
         }],

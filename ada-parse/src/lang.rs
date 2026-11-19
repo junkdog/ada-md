@@ -45,6 +45,8 @@ pub enum Lang {
     GitMailmap,
     /// bat's `Git Link`.
     GitLink,
+    /// bat's `Git Config`: git's config files, and `.gitmodules` (X-177).
+    GitConfig,
     /// bat's `fstab`: fstab, crypttab and mtab.
     Fstab,
     /// pkg-config's `.pc` files and their templates (X-146): ada's own, bat's set has no syntax
@@ -353,6 +355,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     ),
     (Lang::GitMailmap, &[".mailmap", "mailmap"]),
     (Lang::GitLink, &[".git"]),
+    (Lang::GitConfig, &["gitconfig", ".gitconfig", ".gitmodules"]),
     (Lang::Fstab, &["fstab", "crypttab", "mtab"]),
     (Lang::PkgConfig, &["pc"]),
     (Lang::KnownHosts, &["known_hosts", "known_hosts.old"]),
@@ -511,6 +514,7 @@ impl Lang {
         Lang::GitAttributes,
         Lang::GitMailmap,
         Lang::GitLink,
+        Lang::GitConfig,
         Lang::Fstab,
         Lang::PkgConfig,
         Lang::KnownHosts,
@@ -578,6 +582,7 @@ impl Lang {
             Lang::GitAttributes => "Git Attributes",
             Lang::GitMailmap => "Git Mailmap",
             Lang::GitLink => "Git Link",
+            Lang::GitConfig => "Git Config",
             Lang::Fstab => "fstab",
             Lang::PkgConfig => "pkg-config",
             Lang::KnownHosts => "Known Hosts",
@@ -655,6 +660,7 @@ impl Lang {
             Lang::GitAttributes => "text.git.attributes",
             Lang::GitMailmap => "text.git.mailmap",
             Lang::GitLink => "text.git.link",
+            Lang::GitConfig => "text.git.config",
             Lang::Fstab => "source.fstab",
             Lang::PkgConfig => "source.pkgconfig",
             Lang::KnownHosts => "text.known_hosts",
@@ -770,6 +776,7 @@ impl Lang {
             Lang::SshConfig => crate::ssh_config::scopes(kind, false),
             Lang::SshdConfig => crate::ssh_config::scopes(kind, true),
             Lang::Crontab => crate::crontab::scopes(kind),
+            Lang::GitConfig => crate::git_config::scopes(kind),
             Lang::Nginx => crate::nginx::scopes(kind),
             _ => self
                 .kinds()
@@ -1093,7 +1100,12 @@ const FIRST_LINES: &[FirstLineRegex] = &[
         t.shebang() && t.has_ci("escript") || t.has_ci("erlang")
     }),
     // ^\[core\]
-    may("Git Config", |t| t.line.starts_with("[core]")),
+    decided(
+        "Git Config",
+        Lang::GitConfig,
+        |t| t.line.starts_with("[core]"),
+        |line| Some(line.starts_with("[core]")),
+    ),
     // ^\s*gitdir\s*:
     may("Git Link", |t| t.trimmed().starts_with("gitdir")),
     // ^commit\s+\h{7,}

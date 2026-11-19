@@ -5,8 +5,8 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 
 use super::load;
@@ -20,8 +20,12 @@ use crate::images::{self, mtime_of};
 use crate::links::{BuiltinResolver, Resolver};
 
 pub struct Effects {
-    /// stdin, read once at startup, served for the path `-`.
-    stdin: Option<Arc<str>>,
+    /// stdin, served for the path `-`: what was read of it at startup, then all of it once
+    /// [`Effects::read_rest`]'s thread has read the rest (PGR-008). The loader shares it.
+    stdin: Stdin,
+    /// The rest of stdin, and the bytes read of it before, read on a thread once the workers
+    /// start.
+    rest: Option<(Box<dyn Read + Send>, Vec<u8>)>,
     /// The highlight worker's queue; without a worker, highlighting runs inline.
     highlight: Option<Sender<Request>>,
     resolver: Box<dyn Resolver>,
@@ -46,7 +50,8 @@ pub struct Effects {
 impl Effects {
     pub fn new(stdin: Option<Arc<str>>) -> Self {
         Self {
-            stdin,
+            stdin: Arc::new(Mutex::new(stdin)),
+            rest: None,
             highlight: None,
             resolver: Box::new(BuiltinResolver),
             git: None,
@@ -57,6 +62,13 @@ impl Effects {
             loads: None,
             loader: None,
         }
+    }
+
+    /// Read `rest`, the rest of stdin after the bytes `read` of it, once the workers start: the
+    /// viewer shows what was read meanwhile, its first frame not waiting for a long input
+    /// (PGR-008). When it's read, stdin is all of it, and `FileChanged` for `-` says so.
+    pub fn read_rest(&mut self, rest: Box<dyn Read + Send>, read: Vec<u8>) {
+        self.rest = Some((rest, read));
     }
 
     /// Resolve links with `resolver` in place of the built-in rules.
@@ -86,6 +98,24 @@ impl Effects {
         }
         self.watcher = Some(Watcher::new(tx.clone()));
         self.loads = Some(tx.clone());
+        if let Some((rest, mut bytes)) = self.rest.take() {
+            let (stdin, tx) = (Arc::clone(&self.stdin), tx.clone());
+            thread::spawn(move || {
+                // past the cap, or failing, what was read stands
+                let _ = read_capped(rest, &mut bytes);
+                let text: Arc<str> = crate::stdin::text(bytes).into();
+                *stdin.lock().unwrap_or_else(PoisonError::into_inner) = Some(text);
+                let _ = tx.send(Msg::FileChanged {
+                    path: "-".into(),
+                    mtime: None,
+                });
+            });
+        }
+    }
+
+    /// What stdin holds so far.
+    fn stdin(&self) -> Option<Arc<str>> {
+        stdin_of(&self.stdin)
     }
 
     /// Run one command. Quick ones answer right away; slow ones go to a worker, which posts
@@ -100,13 +130,13 @@ impl Effects {
                 // with nothing on screen there is nothing to answer meanwhile: read it here
                 let tx = match &self.loads {
                     Some(tx) if !wait => tx,
-                    _ => return Some(load_doc(&path, self.stdin.as_ref())),
+                    _ => return Some(load_doc(&path, self.stdin().as_ref())),
                 };
                 let loader = self
                     .loader
-                    .get_or_insert_with(|| load::spawn_worker(self.stdin.clone(), tx.clone()));
+                    .get_or_insert_with(|| load::spawn_worker(Arc::clone(&self.stdin), tx.clone()));
                 match loader.send((path, prepare)) {
-                    Err(mpsc::SendError((path, _))) => Some(load_doc(&path, self.stdin.as_ref())),
+                    Err(mpsc::SendError((path, _))) => Some(load_doc(&path, self.stdin().as_ref())),
                     Ok(()) => None,
                 }
             }
@@ -263,6 +293,14 @@ fn open_with_system(target: &OsStr) -> std::io::Result<()> {
         }
     })?;
     Ok(())
+}
+
+/// Stdin's text, shared by the UI thread's effects, the loader and the thread reading its rest.
+pub(crate) type Stdin = Arc<Mutex<Option<Arc<str>>>>;
+
+/// What `stdin` holds so far.
+pub(crate) fn stdin_of(stdin: &Stdin) -> Option<Arc<str>> {
+    stdin.lock().unwrap_or_else(PoisonError::into_inner).clone()
 }
 
 /// Read a document: `DocLoaded` with its text, or `DocFailed`. An image has no text, and a

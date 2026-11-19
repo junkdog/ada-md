@@ -9,6 +9,8 @@
 //! Results are cached by [`key`], a hash of the language and the code.
 
 // `highlight` and `MAX_LINE` are `examples/parity.rs`'s, which includes the module by path
+mod ansi;
+mod diff;
 #[cfg(test)]
 #[allow(dead_code)]
 mod reference;
@@ -320,6 +322,119 @@ pub fn rule_style(rule: Rule, rules: &[(String, Style)]) -> Option<Style> {
     rules.get(usize::from(rule.0)).map(|(_, s)| *s)
 }
 
+/// A run's style: its rule's among the theme's `rules`, or its entry in the block's own
+/// `palette` ([`CodeSpans::palette`], FEAT-022).
+pub fn run_style(rule: Rule, rules: &[(String, Style)], palette: &[Style]) -> Option<Style> {
+    rule_style(rule, rules).or_else(|| ansi::palette_style(rule, palette))
+}
+
+/// The language of text that shows in its own colors (FEAT-022): piped output whose SGR
+/// sequences ada reads instead of lexing it (`git log --format='%C(…)'`, `ls --color`). Its
+/// block's text is without them, and its highlighting reads them from the input
+/// ([`CodeBlock::colors`]).
+pub const ANSI: &str = "ANSI";
+
+pub use ansi::{keeps_own_colors, shown as ansi_shown};
+
+/// The background a diff's changed line is drawn on, under its language's colors (X-174), and
+/// the stronger one under the words it changed (FEAT-023). Both are a line's first runs, in rules no
+/// theme has: the tint an empty run, then the changed words' runs from the line's start, the
+/// bytes up to each one's end changed or not ([`CodeSpans::words`]). [`CodeSpans::line`] leaves
+/// them out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Tint {
+    /// A line the new file has and the old one hasn't (`+`).
+    Inserted,
+    /// A line the old file has and the new one hasn't (`-`).
+    Deleted,
+}
+
+impl Tint {
+    /// The rules of the runs that carry a tint, below [`Rule::UNSET`].
+    const INSERTED: u16 = Rule::UNSET - 1;
+    const DELETED: u16 = Rule::UNSET - 2;
+    /// A changed line's words runs: bytes its pair has too, words inserted, words deleted.
+    const SAME: u16 = Rule::UNSET - 3;
+    const WORDS_INSERTED: u16 = Rule::UNSET - 4;
+    const WORDS_DELETED: u16 = Rule::UNSET - 5;
+
+    /// Whether `rule` is a tint's or a words run's, not a highlighting rule.
+    fn marks(rule: Rule) -> bool {
+        (Self::WORDS_DELETED..Rule::UNSET).contains(&rule.0)
+    }
+}
+
+/// A diff's changed line's words runs (FEAT-023): from the line's start, the bytes up to each run's
+/// end are words its pair line hasn't, or not. Past the last run, none are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Words<'a>(&'a [Run]);
+
+impl Words<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The line's end's mark, past its text (PGR-005: a `\r` its pair line hasn't, CRLF to LF):
+    /// where the line ends, and the tint whose words style the cell after it takes. A last run
+    /// ending at `u32::MAX`, which starts at the line's end.
+    pub fn end(&self) -> Option<(u32, Tint)> {
+        let (last, rest) = self.0.split_last()?;
+        let tint = match (last.end, last.rule.0) {
+            (u32::MAX, Tint::WORDS_INSERTED) => Tint::Inserted,
+            (u32::MAX, Tint::WORDS_DELETED) => Tint::Deleted,
+            _ => return None,
+        };
+        Some((rest.last().map_or(0, |r| r.end), tint))
+    }
+
+    /// Emit `text`, bytes `at..` of its line, in `style`, its changed words patched with their
+    /// tint's `words` style.
+    pub fn paint(
+        self,
+        text: &str,
+        at: u32,
+        style: Style,
+        words: impl Fn(Tint) -> Style,
+        emit: &mut impl FnMut(&str, Style),
+    ) {
+        if self.0.is_empty() {
+            return emit(text, style);
+        }
+        let end = at + text.len() as u32;
+        let (mut pos, mut start) = (at, 0);
+        for run in self.0 {
+            let (a, b) = (start.max(pos), run.end.min(end));
+            start = run.end;
+            let tint = match run.rule.0 {
+                Tint::WORDS_INSERTED => Tint::Inserted,
+                Tint::WORDS_DELETED => Tint::Deleted,
+                _ => continue,
+            };
+            if a >= b {
+                if start >= end {
+                    break;
+                }
+                continue;
+            }
+            let at = at as usize;
+            let (Some(gap), Some(piece)) = (
+                text.get(pos as usize - at..a as usize - at),
+                text.get(a as usize - at..b as usize - at),
+            ) else {
+                break;
+            };
+            if !gap.is_empty() {
+                emit(gap, style);
+            }
+            emit(piece, style.patch(words(tint)));
+            pos = b;
+        }
+        if pos < end {
+            emit(&text[(pos - at) as usize..], style);
+        }
+    }
+}
+
 /// The highlighting of one code block. Empty when the language isn't known.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CodeSpans {
@@ -329,12 +444,55 @@ pub struct CodeSpans {
     /// Only the first lines, while the worker is still on the rest (O-05).
     pub partial: bool,
     lines: LineRuns,
+    /// The styles of runs past the theme's rules: text in its own colors (FEAT-022).
+    palette: Vec<Style>,
 }
 
 impl CodeSpans {
+    /// The block's own styles, which [`run_style`] looks its runs' rules up in.
+    pub fn palette(&self) -> &[Style] {
+        &self.palette
+    }
+
     /// Line `n`'s runs; empty when the line is plain.
     pub fn line(&self, n: u32) -> &[Run] {
-        self.lines.line(n as usize).unwrap_or_default()
+        let runs = self.lines.line(n as usize).unwrap_or_default();
+        let runs = &runs[marks(runs)..];
+        match runs.len().checked_sub(2) {
+            Some(i) if runs[i].rule.0 == ansi::FILL => &runs[..i],
+            _ => runs,
+        }
+    }
+
+    /// The background line `n`'s row takes past its text, text in its own colors' (PGR-007:
+    /// an `ESC [ K` with a background set).
+    pub fn fill(&self, n: u32) -> Option<crate::style::Color> {
+        let runs = self.lines.line(n as usize)?;
+        let [fill, color] = runs.last_chunk()?;
+        if fill.rule.0 != ansi::FILL {
+            return None;
+        }
+        ansi::palette_style(color.rule, &self.palette)?.bg
+    }
+
+    /// Line `n`'s tint, if it's a diff's changed line (X-174).
+    pub fn tint(&self, n: u32) -> Option<Tint> {
+        let first = self.lines.line(n as usize)?.first()?;
+        match first.rule.0 {
+            Tint::INSERTED => Some(Tint::Inserted),
+            Tint::DELETED => Some(Tint::Deleted),
+            _ => None,
+        }
+    }
+
+    /// Line `n`'s changed words, if it's a diff's changed line paired with another (FEAT-023).
+    pub fn words(&self, n: u32) -> Words<'_> {
+        let runs = self.lines.line(n as usize).unwrap_or_default();
+        let runs = &runs[..marks(runs)];
+        let tinted = runs
+            .first()
+            .is_some_and(|r| matches!(r.rule.0, Tint::INSERTED | Tint::DELETED));
+        Words(&runs[usize::from(tinted)..])
     }
 
     /// How many lines are highlighted.
@@ -359,6 +517,7 @@ impl CodeSpans {
             rules,
             partial: false,
             lines: runs.shrink(),
+            palette: Vec::new(),
         }
     }
 
@@ -370,6 +529,11 @@ impl CodeSpans {
             ..Self::default()
         }
     }
+}
+
+/// How many of `runs`, a line's, are its tint and words runs ([`Tint`]) before its highlighting.
+fn marks(runs: &[Run]) -> usize {
+    runs.iter().take_while(|r| Tint::marks(r.rule)).count()
 }
 
 /// Lines' runs end to end: line `n`'s are `runs[ends[n - 1]..ends[n]]`, from the first run for
@@ -916,6 +1080,7 @@ impl Lexer {
             rules: theme.id,
             partial: false,
             lines: lines.done(),
+            palette: Vec::new(),
         };
         scratch.put();
         (Some(spans), state)
@@ -986,9 +1151,10 @@ impl ada_parse::Rules for Plain {
 
 /// Whether a streamed print highlights `lang`'s pieces on the threads that paint them: its
 /// lines don't depend on each other, or it is JSON, whose one state (a `/* */` open) the reader
-/// finds without lexing every line. Any other ada-parse language is a [`Lexer::Carry`].
+/// finds without lexing every line. Any other ada-parse language is a [`Lexer::Carry`], and so
+/// is a diff, whose lines are read in their file's language (X-174).
 fn streams(lang: Lang) -> bool {
-    lang == Lang::Json || lang.line_by_line()
+    lang == Lang::Json || (lang.line_by_line() && lang != Lang::Diff)
 }
 
 /// Highlights the pieces of a file printed a piece at a time in a [`Lexer::Carry`] language, in
@@ -997,55 +1163,98 @@ fn streams(lang: Lang) -> bool {
 /// state before it, and a piece's flag for tab expansion leaves a line without a control
 /// character as it is, as the whole block's does.
 pub struct Carrier<'a> {
-    rules: ParseRules,
+    /// The lexer, `None` once dropped.
+    carried: Option<Carried>,
     theme: &'a SyntaxTheme,
-    state: ada_parse::State,
-    spans: Vec<ada_parse::Span>,
     /// The piece's runs, kept from piece to piece: [`LineRuns::done`] copies them out.
     lines: LineRuns,
     buf: String,
 }
 
+/// What a [`Carrier`] carries from piece to piece.
+enum Carried {
+    Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>),
+    /// A diff's reading: its file's language and both sides' states (X-174).
+    Diff(Box<diff::Diff>),
+}
+
 impl<'a> Carrier<'a> {
     pub fn new(lang: Lang, theme: &'a SyntaxTheme) -> Self {
+        let carried = match lang {
+            Lang::Diff => Carried::Diff(Box::new(diff::Diff::new(theme, Vec::new()))),
+            lang => Carried::Parse(
+                ParseRules::cached(lang, theme.id),
+                ada_parse::State::default(),
+                Vec::new(),
+            ),
+        };
         Self {
-            rules: ParseRules::cached(lang, theme.id),
+            carried: Some(carried),
             theme,
-            state: ada_parse::State::default(),
-            spans: Vec::new(),
             lines: LineRuns::default(),
             buf: String::new(),
         }
     }
 
-    /// Highlight the next piece, `text`, whose block has the cache key `key`.
-    pub fn highlight(&mut self, key: u64, text: &str) -> CodeSpans {
+    /// Highlight the next piece, `text`, whose block has the cache key `key`. `ahead` is what
+    /// the reader holds of the text after it, in pieces of whole lines, the last one's newline
+    /// missing only at the input's end: a diff's change block is read ahead in it (FEAT-023), so it
+    /// must be [`Carrier::enough_ahead`] unless it runs to the end.
+    pub fn highlight(&mut self, key: u64, text: &str, ahead: &[&str]) -> CodeSpans {
         let expand = block_needs_expanding(text);
         let mut lines = std::mem::take(&mut self.lines);
         if let Some(text) = Lines::new(text).0 {
-            self.rules.lines_resolving(
-                text,
-                usize::MAX,
-                &mut self.state,
-                (&mut self.spans, &mut self.buf, expand),
-                self.theme,
-                &mut lines,
-            );
+            match &mut self.carried {
+                Some(Carried::Parse(rules, state, spans)) => {
+                    rules.lines_resolving(
+                        text,
+                        usize::MAX,
+                        state,
+                        (spans, &mut self.buf, expand),
+                        self.theme,
+                        &mut lines,
+                    );
+                }
+                Some(Carried::Diff(diff)) => {
+                    let buf = (&mut self.buf, expand);
+                    diff.lines(text, usize::MAX, buf, ahead, self.theme, &mut lines);
+                }
+                None => {}
+            }
         }
         let spans = CodeSpans {
             key,
             rules: self.theme.id,
             partial: false,
             lines: lines.done(),
+            palette: Vec::new(),
         };
         self.lines = lines;
         spans
     }
 }
 
+impl Carrier<'_> {
+    /// Whether [`Carrier::highlight`] reads past its piece: a diff's (FEAT-023).
+    pub fn reads_ahead(&self) -> bool {
+        matches!(self.carried, Some(Carried::Diff(_)))
+    }
+
+    /// Whether `lines` lines of `bytes` past a piece are as far as [`Carrier::highlight`] reads.
+    pub fn enough_ahead(lines: usize, bytes: usize) -> bool {
+        diff::enough_ahead(lines, bytes)
+    }
+}
+
 impl Drop for Carrier<'_> {
     fn drop(&mut self) {
-        self.rules.keep();
+        match self.carried.take() {
+            Some(Carried::Parse(mut rules, ..)) => rules.keep(),
+            Some(Carried::Diff(diff)) => {
+                diff.done();
+            }
+            None => {}
+        }
     }
 }
 
@@ -1053,6 +1262,10 @@ impl Drop for Carrier<'_> {
 enum Engine {
     /// Also whether the block's text has a control character, which `expand_tabs` changes.
     Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>, bool),
+    /// A diff, its lines in their file's language (X-174); also whether to expand.
+    Diff(Box<diff::Diff>, bool),
+    /// Text in its own colors, read from its SGR sequences (FEAT-022).
+    Ansi(Box<ansi::Ansi>),
     /// A lexer stuck on a line, for the stall watch's tests (F-06).
     #[cfg(test)]
     Stuck,
@@ -1068,10 +1281,9 @@ impl<'a> Lines<'a> {
     }
 }
 
-impl<'a> Iterator for Lines<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<&'a str> {
+impl<'a> Lines<'a> {
+    /// The next line with its `\r`, if it has one: a diff's words tell CRLF from LF (PGR-005).
+    fn next_raw(&mut self) -> Option<&'a str> {
         let rest = self.0?;
         // the memchr crate's search, vectorized: `split_once`'s was a fifth of a Diff corpus's
         // time in ada (HL-004)
@@ -1080,6 +1292,15 @@ impl<'a> Iterator for Lines<'a> {
             None => (rest, None),
         };
         self.0 = tail;
+        Some(line)
+    }
+}
+
+impl<'a> Iterator for Lines<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let line = self.next_raw()?;
         Some(line.strip_suffix('\r').unwrap_or(line))
     }
 }
@@ -1112,6 +1333,11 @@ impl<'a> Highlighter<'a> {
         let state = match own {
             #[cfg(test)]
             _ if lang == tests::STUCK => Some(Engine::Stuck),
+            _ if lang == ANSI => Some(Engine::Ansi(Box::default())),
+            Some(Lang::Diff) => Some(Engine::Diff(
+                Box::new(diff::Diff::new(theme, spans)),
+                block_needs_expanding(text),
+            )),
             Some(lang) => Some(Engine::Parse(
                 ParseRules::cached(lang, theme.id),
                 ada_parse::State::default(),
@@ -1125,7 +1351,12 @@ impl<'a> Highlighter<'a> {
             rules: theme.id,
             state,
             theme,
-            rest: Lines::new(text),
+            // text in its own colors: a last line of escapes alone shows as none (PGR-008)
+            rest: Lines::new(if lang == ANSI {
+                ansi::lines_of(text)
+            } else {
+                text
+            }),
             lines,
             buf,
         }
@@ -1168,12 +1399,49 @@ impl<'a> Highlighter<'a> {
                     }
                 }
             }
+            Engine::Diff(diff, expand) => {
+                // as `Parse`'s, a batch at a time
+                const BATCH: usize = 1024;
+                let Some(mut text) = self.rest.0 else {
+                    return false;
+                };
+                let mut left = n;
+                loop {
+                    let (max, done) = (left.min(BATCH), out.ends.len());
+                    let buf = (&mut self.buf, *expand);
+                    let next = diff.lines(text, max, buf, &[], self.theme, out);
+                    LINES.fetch_add((out.ends.len() - done) as u64, Ordering::Relaxed);
+                    left -= max;
+                    match next {
+                        Some(p) if left > 0 => text = &text[p..],
+                        next => {
+                            self.rest = Lines(next.map(|p| &text[p..]));
+                            break;
+                        }
+                    }
+                }
+            }
+            Engine::Ansi(ansi) => {
+                let done = out.ends.len();
+                for line in self.rest.by_ref().take(n) {
+                    ansi.line(line, out.open_line());
+                }
+                LINES.fetch_add((out.ends.len() - done) as u64, Ordering::Relaxed);
+            }
             #[cfg(test)]
             Engine::Stuck => loop {
                 thread::park();
             },
         }
         self.rest.0.is_some()
+    }
+
+    /// The block's own styles so far: text in its own colors' (FEAT-022).
+    fn palette(&self) -> Vec<Style> {
+        match &self.state {
+            Some(Engine::Ansi(ansi)) => ansi.palette().to_vec(),
+            _ => Vec::new(),
+        }
     }
 
     /// How many lines are done.
@@ -1188,6 +1456,7 @@ impl<'a> Highlighter<'a> {
             rules: self.rules,
             partial: true,
             lines: self.lines.clone(),
+            palette: self.palette(),
         }
     }
 
@@ -1196,6 +1465,7 @@ impl<'a> Highlighter<'a> {
             key: self.key,
             rules: self.rules,
             partial: false,
+            palette: self.palette(),
             lines: self.lines.done(),
         }
     }
@@ -1203,11 +1473,14 @@ impl<'a> Highlighter<'a> {
 
 impl Drop for Highlighter<'_> {
     fn drop(&mut self) {
-        let mut spans = Vec::new();
-        if let Some(Engine::Parse(rules, _, s, _)) = &mut self.state {
-            rules.keep();
-            spans = std::mem::take(s);
-        }
+        let spans = match self.state.take() {
+            Some(Engine::Parse(mut rules, _, spans, _)) => {
+                rules.keep();
+                spans
+            }
+            Some(Engine::Diff(diff, _)) => diff.done(),
+            _ => Vec::new(),
+        };
         BlockScratch {
             spans,
             lines: std::mem::take(&mut self.lines),
@@ -1243,6 +1516,8 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
         Lang::Json if text.contains("/*") => highlight(key, lang, text, theme),
         // without one, its lines don't depend on each other
         Lang::Json => highlight_parse_on(key, Lang::Json, text, theme, threads),
+        // a diff's lines depend on its headers and hunks (X-174)
+        Lang::Diff => highlight(key, lang, text, theme),
         own if own.line_by_line() => highlight_parse_on(key, own, text, theme, threads),
         _ => highlight(key, lang, text, theme),
     }
@@ -1322,6 +1597,7 @@ fn lines_on(
         rules: theme.id,
         partial: false,
         lines: lines.shrink(),
+        palette: Vec::new(),
     }
 }
 
@@ -1399,7 +1675,7 @@ impl Highlights {
                 continue;
             };
             if !todo.iter().any(|t| t.0 == key) {
-                todo.push((key, lang.clone(), code.text.clone()));
+                todo.push((key, lang.clone(), code.highlight_text().clone()));
             }
         }
         let code: usize = todo.iter().map(|t| t.2.len()).sum();
@@ -2453,6 +2729,522 @@ mod tests {
         assert_eq!(spans.line(3), &[]);
     }
 
+    /// A line's runs past its first byte, a diff's mark, as runs of the text after it.
+    fn past_mark(runs: &[Run]) -> Vec<Run> {
+        runs.iter()
+            .filter(|r| r.end > 1)
+            .map(|r| Run {
+                end: r.end - 1,
+                rule: r.rule,
+            })
+            .collect()
+    }
+
+    /// X-174: a diff's lines in their file's language, each side from its own state, both
+    /// fresh at each hunk; the section text the new file's; the changed lines tinted.
+    #[test]
+    fn a_diffs_lines_read_in_their_files_language() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "diff --git a/m.c b/m.c\n--- a/m.c\n+++ b/m.c\n\
+                    @@ -1,2 +1,2 @@ int main(void)\n-/* gone\n+int x; // kept\n still */ int y;\n";
+        let spans = highlight(1, "diff", text, &st);
+        let c = |line: &str| highlight(1, "c", line, &st).line(0).to_vec();
+        let tints: Vec<_> = (0..7).map(|n| spans.tint(n)).collect();
+        assert_eq!(
+            tints,
+            [
+                None,
+                None,
+                None,
+                None,
+                Some(Tint::Deleted),
+                Some(Tint::Inserted),
+                None
+            ]
+        );
+        // the old side opens a comment the new side never sees
+        assert_eq!(past_mark(spans.line(4)), c("/* gone"));
+        assert_eq!(past_mark(spans.line(5)), c("int x; // kept"));
+        assert_eq!(past_mark(spans.line(6)), c("still */ int y;"));
+        // a context line's mark is plain
+        assert_eq!(spans.line(6)[0].rule, Rule(Rule::NONE));
+        // the mark keeps Diff's rule
+        let diff_mark = |line: &str| highlight(1, "diff", line, &st).line(0)[0];
+        assert_eq!(spans.line(4)[0], diff_mark("-x"));
+        // the section text in C, the rest of the hunk header as Diff has it
+        let section = text.lines().nth(3).unwrap().find("int").unwrap() as u32;
+        let shifted: Vec<_> = spans.line(3).iter().filter(|r| r.end > section).collect();
+        let main = c("int main(void)");
+        assert_eq!(shifted.len(), main.len());
+        for (a, b) in shifted.iter().zip(&main) {
+            assert_eq!((a.end - section, a.rule), (b.end, b.rule));
+        }
+    }
+
+    /// X-174: a hunk's lines are its lines whatever they start with, the hunk's end where its
+    /// counts run out; with no language for the file, its text plain on the tint (PGR-006).
+    #[test]
+    fn a_diffs_hunks_are_counted() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "--- a/notes.rst\n+++ b/notes.rst\n@@ -1,2 +1,2 @@\n--- a rule\n+++ a rule\n \
+                    context\n+past the hunk\n";
+        let spans = highlight(1, "diff", text, &st);
+        let alone = |line: &str| highlight(1, "diff", line, &st).line(0).to_vec();
+        let tints: Vec<_> = (0..7).map(|n| spans.tint(n)).collect();
+        let (del, ins) = (Some(Tint::Deleted), Some(Tint::Inserted));
+        assert_eq!(tints, [None, None, None, del, ins, None, None]);
+        // removed and added lines, not file headers: the mark Diff's, the text plain
+        assert_eq!(spans.line(3), &alone("-x")[..1]);
+        assert_eq!(spans.line(4), &alone("+x")[..1]);
+        assert_eq!(spans.line(5), &[]);
+        assert_eq!(spans.line(6), alone("+past the hunk").as_slice());
+
+        // a side's missing last newline, noted mid-hunk, doesn't end it
+        let text = "--- a/m.c\n+++ b/m.c\n@@ -1 +1 @@\n-int a;\n\\ No newline at end of file\n\
+                    +int b;\n\\ No newline at end of file\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(spans.tint(5), Some(Tint::Inserted));
+        assert_eq!(
+            spans.line(4),
+            alone("\\ No newline at end of file").as_slice()
+        );
+    }
+
+    /// X-174: a diff printed a piece at a time reads as the whole does, its file and both sides'
+    /// states carried from piece to piece.
+    #[test]
+    fn a_streamed_diff_reads_as_the_whole() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "--- a/m.py\n+++ b/m.py\n@@ -1,3 +1,3 @@\n-s = \"\"\"open\n+s = 1  # open\n \
+                    still\"\"\" + 2\n x = 3\n";
+        let whole = highlight(1, "diff", text, &st);
+        assert_eq!(whole.tint(4), Some(Tint::Inserted));
+        assert!(!whole.words(3).is_empty(), "a pair's changed words");
+        let mut carrier = Carrier::new(Lang::Diff, &st);
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let mut n = 0;
+        for (a, b) in [(0, 4), (4, 5), (5, lines.len())] {
+            let ahead = lines[b..].concat();
+            let spans = carrier.highlight(1, &lines[a..b].concat(), &[&ahead]);
+            for i in 0..(b - a) as u32 {
+                assert_eq!(spans.line(i), whole.line(n), "line {n}");
+                assert_eq!(spans.tint(i), whole.tint(n), "line {n}");
+                assert_eq!(spans.words(i), whole.words(n), "line {n}");
+                n += 1;
+            }
+        }
+    }
+
+    /// `text`, a diff, highlighted a piece at a time, cut at each of its lines in turn, reads as
+    /// the whole does.
+    fn streams_as_whole(text: &str, st: &SyntaxTheme) {
+        let whole = highlight(1, "diff", text, st);
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        for cut in 1..lines.len() {
+            let mut carrier = Carrier::new(Lang::Diff, st);
+            let mut n = 0;
+            for (a, b) in [(0, cut), (cut, lines.len())] {
+                let ahead = lines[b..].concat();
+                let spans = carrier.highlight(1, &lines[a..b].concat(), &[&ahead]);
+                for i in 0..(b - a) as u32 {
+                    assert_eq!(spans.line(i), whole.line(n), "cut {cut}, line {n}");
+                    assert_eq!(spans.tint(i), whole.tint(n), "cut {cut}, line {n}");
+                    assert_eq!(spans.words(i), whole.words(n), "cut {cut}, line {n}");
+                    n += 1;
+                }
+            }
+        }
+    }
+
+    /// PGR-006: a rename to another extension reads each side in its own file's language,
+    /// a context line in the new one's; a file of no language ada lexes is tinted, its text
+    /// plain.
+    #[test]
+    fn a_renames_sides_read_in_their_own_languages() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "diff --git a/m.py b/m.rs\nsimilarity index 80%\nrename from m.py\n\
+                    rename to m.rs\n--- a/m.py\n+++ b/m.rs\n@@ -1,2 +1,2 @@\n-# gone\n\
+                    +// kept\n let x = 1;\n";
+        let spans = highlight(1, "diff", text, &st);
+        let lang = |lang: &str, line: &str| highlight(1, lang, line, &st).line(0).to_vec();
+        assert_eq!(past_mark(spans.line(7)), lang("python", "# gone"));
+        assert_ne!(lang("python", "# gone"), lang("rust", "# gone"));
+        assert_eq!(past_mark(spans.line(8)), lang("rust", "// kept"));
+        assert_eq!(past_mark(spans.line(9)), lang("rust", "let x = 1;"));
+        assert_eq!(spans.tint(7), Some(Tint::Deleted));
+        streams_as_whole(text, &st);
+
+        let text = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+                    @@ -1 +1 @@\n-# Old\n+# New\n";
+        let spans = highlight(1, "diff", text, &st);
+        let mark = |line: &str| highlight(1, "diff", line, &st).line(0)[0];
+        assert_eq!(
+            (spans.tint(4), spans.tint(5)),
+            (Some(Tint::Deleted), Some(Tint::Inserted))
+        );
+        assert_eq!(spans.line(4), [mark("-x")]);
+        assert_eq!(spans.line(5), [mark("+x")]);
+        assert_eq!(changed(spans.words(5)), [(3, 6)]);
+    }
+
+    /// PGR-006: a hunk that counts more lines than it has (a patch edited by hand) ends at the
+    /// next file's `---`, `+++` and `@@`, which name its language; a lone `---`, `+++` pair in
+    /// a hunk is its lines.
+    #[test]
+    fn a_miscounted_hunk_ends_at_the_next_files_headers() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "--- a/x.c\n+++ b/x.c\n@@ -1,5 +1,5 @@\n-int a;\n+int b;\n--- a/y.rs\n\
+                    +++ b/y.rs\n@@ -1 +1 @@\n-let x = 1;\n+let x = 2;\n";
+        let spans = highlight(1, "diff", text, &st);
+        let alone = |line: &str| highlight(1, "diff", line, &st).line(0).to_vec();
+        let rust = |line: &str| highlight(1, "rust", line, &st).line(0).to_vec();
+        assert_eq!(spans.line(5), alone("--- a/y.rs").as_slice());
+        assert_eq!(spans.tint(5), None);
+        assert_eq!(past_mark(spans.line(9)), rust("let x = 2;"));
+        assert_eq!(changed(spans.words(9)), [(9, 10)]);
+        streams_as_whole(text, &st);
+        // with no `@@` after them, they're the hunk's
+        let text = "--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,2 @@\n--- a/y.rs\n+++ b/y.rs\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(spans.tint(3), Some(Tint::Deleted));
+        assert_eq!(spans.tint(4), Some(Tint::Inserted));
+    }
+
+    /// PGR-006: a `format-patch` mail: its mbox line styled as a commit's, its fields quietly,
+    /// its message and diffstat plain, `-`/`+` lines too, and its signature after the last
+    /// hunk plain to the next mail.
+    #[test]
+    fn a_mails_message_and_signature_are_plain() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let rule = |scope| st.rule(&["source.diff", "meta.header.commit.diff", scope]);
+        let (dim, hash) = (
+            rule("comment.other.commit.diff"),
+            rule("constant.other.hash.diff"),
+        );
+        let none = Rule(Rule::NONE);
+        let from = "From 1234567890abcdef1234567890abcdef12345678 Mon Sep 17 00:00:00 2001";
+        let text = format!(
+            "{from}\nFrom: A B <a@b>\nDate: Wed, 19 Nov 2026\nSubject: [PATCH] fix: x\n \
+             and more\nMessage-Id: <x@y>\n\n- a list item\n+ another\n---\n x.c | 2 +-\n\n\
+             diff --git a/x.c b/x.c\n--- a/x.c\n+++ b/x.c\n@@ -1 +1 @@\n-int a;\n+int b;\n\
+             -- \n2.43.0\n\n{from}\n"
+        );
+        let spans = highlight(1, "diff", &text, &st);
+        let runs = |n: u32| -> Vec<(u32, Rule)> {
+            spans.line(n).iter().map(|r| (r.end, r.rule)).collect()
+        };
+        let len = from.len() as u32;
+        assert_eq!(runs(0), [(4, dim), (5, none), (45, hash), (len, dim)]);
+        assert_eq!(runs(1), [(5, dim), (10, none), (15, dim)]);
+        assert_eq!(runs(3), [(8, dim), (23, none)]);
+        assert_eq!(runs(4), [(9, none)]);
+        assert_eq!(runs(5), [(17, dim)]);
+        for n in [6, 7, 8, 9, 10, 11, 18, 19, 20] {
+            assert!(runs(n).is_empty(), "line {n}: {:?}", runs(n));
+        }
+        let alone = |line: &str| highlight(1, "diff", line, &st).line(0).to_vec();
+        assert_eq!(spans.line(12), alone("diff --git a/x.c b/x.c").as_slice());
+        assert_eq!(spans.tint(17), Some(Tint::Inserted));
+        assert_eq!(runs(21), runs(0));
+        streams_as_whole(&text, &st);
+    }
+
+    /// PGR-006: `--left-right`'s mark before a hash, `--parents`' and `-m`'s `(from …)`
+    /// hashes, and `--pretty=raw`'s fields.
+    #[test]
+    fn commit_lines_of_every_form() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let rule = |scope| st.rule(&["source.diff", "meta.header.commit.diff", scope]);
+        let (dim, hash, git_ref) = (
+            rule("comment.other.commit.diff"),
+            rule("constant.other.hash.diff"),
+            rule("entity.name.tag.ref.diff"),
+        );
+        let none = Rule(Rule::NONE);
+        let text = "commit < 2116fec (from 1234567) (HEAD)\ntree 89abcde\nparent 1234567\n\
+                    author A B <a@b> 1700000000 +0100\ngpgsig -----BEGIN\n x\n\n    msg\n\
+                    commit 2116fec 1234567 89abcde\n";
+        let spans = highlight(1, "diff", text, &st);
+        let runs = |n: u32| -> Vec<(u32, Rule)> {
+            spans.line(n).iter().map(|r| (r.end, r.rule)).collect()
+        };
+        assert_eq!(
+            runs(0),
+            [
+                (6, dim),
+                (9, none),
+                (16, hash),
+                (17, none),
+                (22, dim),
+                (23, none),
+                (30, hash),
+                (31, dim),
+                (32, none),
+                (33, dim),
+                (37, git_ref),
+                (38, dim),
+            ]
+        );
+        assert_eq!(runs(1), [(5, dim), (12, hash)]);
+        assert_eq!(runs(2), [(7, dim), (14, hash)]);
+        assert_eq!(runs(3), [(7, dim), (11, none), (33, dim)]);
+        assert_eq!(runs(4), [(17, dim)]);
+        assert_eq!(runs(5), [(2, dim)]);
+        assert!(runs(7).is_empty());
+        assert_eq!(
+            runs(8),
+            [
+                (6, dim),
+                (7, none),
+                (14, hash),
+                (15, none),
+                (22, hash),
+                (23, none),
+                (30, hash)
+            ]
+        );
+    }
+
+    /// A line's changed words as byte ranges of the line.
+    fn changed(words: Words<'_>) -> Vec<(u32, u32)> {
+        let mut start = 0;
+        let mut out = Vec::new();
+        for r in words.0 {
+            if r.rule.0 != Tint::SAME {
+                out.push((start, r.end));
+            }
+            start = r.end;
+        }
+        out
+    }
+
+    /// FEAT-023: a change block's removed and added lines paired with their likes, their changed
+    /// words marked past their marks; a line like none of the others has none. Across a
+    /// `\ No newline` line, and in a file of no known language too, tinted (PGR-006).
+    /// A commit's header in `git log -p` is styled quietly: the hash and its refs in color,
+    /// labels, punctuation, email and date dimmed, the author and the message plain; the diff
+    /// after it reads as Diff's.
+    #[test]
+    fn a_commits_header_is_styled_quietly() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let rule = |scope| st.rule(&["source.diff", "meta.header.commit.diff", scope]);
+        let (dim, hash, git_ref) = (
+            rule("comment.other.commit.diff"),
+            rule("constant.other.hash.diff"),
+            rule("entity.name.tag.ref.diff"),
+        );
+        assert!([dim, hash, git_ref].iter().all(|r| r.0 != Rule::NONE));
+        let none = Rule(Rule::NONE);
+        let text = "commit 2116fec (HEAD -> main, tag: v1)\nAuthor: A B <a@b>\nMerge: 1234567 89abcde\n\
+                    Date:   Wed Nov 18\n\n    feat: a thing\n\ndiff --git a/x b/x\nAuthor: x\n";
+        let spans = highlight(1, "diff", text, &st);
+        let runs = |n: u32| -> Vec<(u32, Rule)> {
+            spans.line(n).iter().map(|r| (r.end, r.rule)).collect()
+        };
+        assert_eq!(
+            runs(0),
+            [
+                (6, dim),
+                (7, none),
+                (14, hash),
+                (15, none),
+                (16, dim),
+                (20, git_ref),
+                (21, none),
+                (23, dim),
+                (24, none),
+                (28, git_ref),
+                (29, dim),
+                (30, none),
+                (34, dim),
+                (35, none),
+                (37, git_ref),
+                (38, dim),
+            ]
+        );
+        assert_eq!(runs(1), [(7, dim), (12, none), (17, dim)]);
+        assert_eq!(
+            runs(2),
+            [(6, dim), (7, none), (14, hash), (15, none), (22, hash)]
+        );
+        assert_eq!(runs(3), [(18, dim)]);
+        for n in [4, 5, 6] {
+            assert!(runs(n).is_empty(), "line {n}");
+        }
+        // past the header, Diff's lexer: `Author:` is no field
+        let alone = |line: &str| highlight(1, "diff", line, &st).line(0).to_vec();
+        assert_eq!(spans.line(7), alone("diff --git a/x b/x"));
+        assert_eq!(spans.line(8), alone("Author: x"));
+
+        // PGR-004: an annotated tag's header, its message and signature plain to its commit
+        let text = "tag v1.0\nTagger: A <a@b>\nDate:   today\n\n- not a change\n\
+                    -----BEGIN PGP SIGNATURE-----\ncommit 2116fec\n";
+        let spans = highlight(1, "diff", text, &st);
+        let runs = |n: u32| -> Vec<(u32, Rule)> {
+            spans.line(n).iter().map(|r| (r.end, r.rule)).collect()
+        };
+        assert_eq!(runs(0), [(3, dim), (4, none), (8, git_ref)]);
+        assert_eq!(runs(1), [(7, dim), (10, none), (15, dim)]);
+        for n in [3, 4, 5] {
+            assert!(runs(n).is_empty(), "line {n}");
+        }
+        assert_eq!(runs(6), [(6, dim), (7, none), (14, hash)]);
+        // a `tag` line without its `Tagger:` is Diff's
+        assert_eq!(
+            highlight(1, "diff", "tag v1.0\nx\n", &st).line(0),
+            alone("tag v1.0")
+        );
+    }
+
+    #[test]
+    fn a_diffs_changed_words_are_marked() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "--- a/m.rs\n+++ b/m.rs\n@@ -1,3 +1,3 @@\n-let x = foo(a, b);\n\
+                    -gone, all of it\n+let y = foo(a, c);\n+something else entirely!\n }\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(changed(spans.words(3)), [(5, 6), (16, 17)]);
+        assert_eq!(changed(spans.words(5)), [(5, 6), (16, 17)]);
+        for n in [0, 1, 2, 4, 6, 7] {
+            assert!(spans.words(n).is_empty(), "line {n}");
+        }
+        // the words are past the highlighting's runs, which the line's are without them
+        let bare = "--- a/m.rs\n+++ b/m.rs\n@@ -1 +1 @@\n+let y = foo(a, c);\n";
+        let alone = highlight(1, "diff", bare, &st);
+        assert_eq!(spans.line(5), alone.line(3));
+        assert_eq!(spans.tint(5), Some(Tint::Inserted));
+
+        let text = "--- a/m.c\n+++ b/m.c\n@@ -1 +1 @@\n-int a;\n\\ No newline at end of file\n\
+                    +int b;\n\\ No newline at end of file\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(changed(spans.words(3)), [(5, 6)]);
+        assert_eq!(changed(spans.words(5)), [(5, 6)]);
+
+        let text = "--- a/x.unknown\n+++ b/x.unknown\n@@ -1 +1 @@\n-one two\n+one three\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(spans.tint(3), Some(Tint::Deleted));
+        assert_eq!(changed(spans.words(3)), [(5, 8)]);
+        assert_eq!(changed(spans.words(4)), [(5, 10)]);
+    }
+
+    /// PGR-005: a diff without `@@` (a fence, a pasted snippet) has its changed words, in its
+    /// file's language when headers name one, until a header of git's shows.
+    #[test]
+    fn a_diff_without_hunk_headers_has_changed_words() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = " fn f() {\n-    let x = foo(a, b);\n+    let y = foo(a, c);\n }\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(changed(spans.words(1)), [(9, 10), (20, 21)]);
+        assert_eq!(changed(spans.words(2)), [(9, 10), (20, 21)]);
+        assert_eq!(spans.tint(1), None, "no file, no tint");
+        // a file's headers name its language; a second file's end the first's lines
+        let text = "--- a/m.rs\n+++ b/m.rs\n-let x = 1;\n+let x = 2;\n--- a/n.rs\n+++ b/n.rs\n\
+                    -let y = 1;\n+let y = 2;\n";
+        let spans = highlight(1, "diff", text, &st);
+        for n in [2, 3, 6, 7] {
+            assert_eq!(changed(spans.words(n)), [(9, 10)], "line {n}");
+        }
+        assert_eq!(spans.tint(3), Some(Tint::Inserted));
+        assert!(spans.words(4).is_empty() && spans.tint(4).is_none());
+        // after a header of git's, changed lines outside a hunk are no hunk's
+        let text = "diff --git a/m.rs b/m.rs\n-let x = 1;\n+let x = 2;\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert!(spans.words(1).is_empty() && spans.words(2).is_empty());
+    }
+
+    /// PGR-005: an added line's whitespace errors on the deleted words' tint, as git colors
+    /// them, beside its changed words; a removed line's are none.
+    #[test]
+    fn whitespace_errors_on_added_lines() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let deleted = |words: Words<'_>| -> Vec<(u32, u32)> {
+            let mut start = 0;
+            let mut out = Vec::new();
+            for r in words.0 {
+                if r.rule.0 == Tint::WORDS_DELETED {
+                    out.push((start, r.end));
+                }
+                start = r.end;
+            }
+            out
+        };
+        let text = "--- a/m.rs\n+++ b/m.rs\n@@ -1 +1,2 @@\n-let x = 1;  \n+let x = 2;  \n\
+                    +  \tlet z = 3;\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(
+            deleted(spans.words(3)),
+            [(9, 10)],
+            "a removed line's are none"
+        );
+        assert_eq!(changed(spans.words(4)), [(9, 10), (11, 13)]);
+        assert_eq!(deleted(spans.words(4)), [(11, 13)]);
+        assert_eq!(deleted(spans.words(5)), [(1, 3)]);
+    }
+
+    /// PGR-005: CRLF to LF marks the line's end, which `--color-only` draws on a cell after it.
+    #[test]
+    fn a_changed_line_end_is_marked() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "--- a/m.rs\n+++ b/m.rs\n@@ -1 +1 @@\n-let x = 1;\r\n+let x = 1;\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(spans.words(3).end(), Some((11, Tint::Deleted)));
+        assert_eq!(spans.words(4).end(), None);
+        let theme = Theme::builtin();
+        let mut out = Vec::new();
+        crate::print::write_color_only(text, Some("diff"), &theme, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        // the text without its SGR sequences
+        let plain = |line: &str| {
+            let mut s = String::new();
+            let mut rest = line;
+            while let Some(i) = rest.find('\x1b') {
+                s += &rest[..i];
+                rest = &rest[i + rest[i..].find('m').unwrap() + 1..];
+            }
+            s + rest
+        };
+        let lines: Vec<String> = out.lines().map(plain).collect();
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[3], "-let x = 1; ", "the removed line's end, a cell");
+        assert_eq!(lines[4], "+let x = 1;");
+    }
+
+    /// FEAT-023: a change block past `BLOCK_LINES` lines has no changed words, nor do its lines
+    /// read alone after it.
+    #[test]
+    fn a_long_change_block_has_no_changed_words() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let block = |n: usize| {
+            let mut t = format!("--- a/m.rs\n+++ b/m.rs\n@@ -1,{n} +1,{n} @@\n");
+            for i in 0..n {
+                t += &format!("-let x{i} = {i};\n");
+            }
+            for i in 0..n {
+                t += &format!("+let y{i} = {i};\n");
+            }
+            t
+        };
+        let spans = highlight(1, "diff", &block(20), &st);
+        assert!((3..43).all(|n| !spans.words(n).is_empty()));
+        let spans = highlight(1, "diff", &block(40), &st);
+        assert!((3..83).all(|n| spans.words(n).is_empty()));
+    }
+
+    /// X-174: a diff's `.h` is in the language of the C family's file before it, never read
+    /// ahead for, so a streamed diff reads as the whole; with none before it, C.
+    #[test]
+    fn a_diffs_header_takes_its_neighbors_language() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let file =
+            |name: &str| format!("--- a/{name}\n+++ b/{name}\n@@ -0,0 +1 @@\n+class A {{ }};\n");
+        let text = format!("{}{}", file("a.cpp"), file("a.h"));
+        let spans = highlight(1, "diff", &text, &st);
+        let alone = |lang: &str| highlight(1, lang, "class A { };", &st).line(0).to_vec();
+        assert_ne!(alone("cpp"), alone("c"), "C++ and C tell `class` apart");
+        assert_eq!(past_mark(spans.line(7)), alone("cpp"));
+        let spans = highlight(1, "diff", &file("a.h"), &st);
+        assert_eq!(past_mark(spans.line(3)), alone("c"));
+    }
+
     #[test]
     fn unknown_languages_are_plain() {
         let st = SyntaxTheme::new(&Theme::builtin().syntax);
@@ -2627,7 +3419,8 @@ mod tests {
         assert_eq!(next_whole, 3);
     }
 
-    /// The parallel highlighting gives what one thread gives, however the block is cut.
+    /// The parallel highlighting gives what one thread gives, however the block is cut. A diff
+    /// is on one thread since X-174: its lines depend on its headers and hunks.
     #[test]
     fn parallel_highlighting_matches_one_thread() {
         let theme = Theme::builtin();
@@ -2635,14 +3428,8 @@ mod tests {
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
         let json = "  {\"k\": [1, -2.5e3, true, \"s\\\"\"], \"open\": \"x\n  \"n\": null},\n";
-        let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@ fn main\n-old\n+new\n same\n";
         let ini = "[core]\n; note\neditor = \"vim\" ; the one\n";
-        for (lang, unit, reps) in [
-            ("log", log, 150),
-            ("json", json, 150),
-            ("diff", diff, 60),
-            ("ini", ini, 100),
-        ] {
+        for (lang, unit, reps) in [("log", log, 150), ("json", json, 150), ("ini", ini, 100)] {
             let text = unit.repeat(reps);
             let one = highlight(1, lang, &text, &syntax);
             assert!(one.line_count() > 200, "{lang}: highlighted at all");

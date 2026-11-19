@@ -1,5 +1,6 @@
-//! The outline popup: the headings (`o`), indented by level, the links (`l`), each with where it
-//! leads, the themes (`T`), or the columns to sort a table by (`s`); filtered by what's typed.
+//! The outline popup: the headings (`o`), indented by level, or a diff's commits and files, each
+//! with how it changed; the links (`l`), each with where it leads; the themes (`T`); or the
+//! columns to sort a table by (`s`). Filtered by what's typed.
 
 use crate::geom::{Rect, cells};
 use crate::grid::Grid;
@@ -37,7 +38,12 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
     // Sized for every entry, not just the filtered ones, so the frame holds still while typing.
     let all = state.outline_all();
     let widest = all.iter().map(entry_width).max().unwrap_or(0);
+    let diff = state
+        .doc
+        .as_ref()
+        .is_some_and(crate::app::Document::is_diff);
     let (max_width, what) = match outline.listing {
+        Listing::Headings if diff => (MAX_LINKS_WIDTH, "files"),
         Listing::Headings => (MAX_WIDTH, "outline"),
         Listing::Links => (MAX_LINKS_WIDTH, "links"),
         Listing::Themes => (MAX_WIDTH, "themes"),
@@ -123,6 +129,7 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
     let rows = usize::from(bottom - top - 2);
     if entries.is_empty() {
         let none = match (outline.filter.is_empty(), outline.listing) {
+            (true, Listing::Headings) if diff => "   no files",
             (true, Listing::Headings) => "   no headings",
             (true, Listing::Links) => "   no links",
             (true, Listing::Themes) => "   no themes",

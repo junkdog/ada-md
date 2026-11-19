@@ -33,8 +33,12 @@ pub fn sniff(text: &str) -> Option<FileType> {
     if is_html(&lines) {
         return code("HTML");
     }
-    if is_git_patch(&lines) || is_unified_diff(&lines) {
+    if is_git_patch(&lines, text) || is_unified_diff(&lines) || is_context_diff(&lines) {
         return code("Diff");
+    }
+    // git's output that isn't a diff: plain, a line for each line, not reflowed as markdown
+    if is_blame(&lines) {
+        return Some(FileType::Text { lang: None });
     }
     // before front matter: a diagram's `---` holds its config, not a note's
     if diagram::is_diagram(sample) {
@@ -69,12 +73,19 @@ pub fn sniff(text: &str) -> Option<FileType> {
     if is_toml(&lines) {
         return lang(conf::key_values(&lines));
     }
+    if conf::is_git_config_shaped(&lines) {
+        return lang(Lang::GitConfig);
+    }
     // before markdown: a log line can hold a link, but no note has a timestamp on every line
     if is_log(&lines) {
         return lang(Lang::Log);
     }
     if is_literate_haskell(&lines) {
         return lang(Lang::LiterateHaskell);
+    }
+    // before the line signals: a message's `- ` items would read as a markdown list
+    if is_commit_messages(&lines) {
+        return Some(FileType::Text { lang: None });
     }
     match signals::best(&lines) {
         Some(signals::MARKDOWN) => return Some(FileType::Markdown),
@@ -150,10 +161,11 @@ pub fn explain(text: &str) -> String {
 }
 
 /// A unified diff anywhere in the sample, after a patch's description too: a file header
-/// (`--- `, then `+++ `) and a hunk header after it.
+/// (`--- `, then `+++ `) and a hunk header after it, a merge's combined one too (`diff --cc`'s
+/// `@@@ -1,4 -1,4 +1,4 @@@`, a range for each parent).
 fn is_unified_diff(lines: &[&str]) -> bool {
     static HUNK: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^@@ -\d+(,\d+)? \+\d+(,\d+)? @@").unwrap());
+        LazyLock::new(|| Regex::new(r"^@@@* (-\d+(,\d+)? )+\+\d+(,\d+)? @@").unwrap());
     lines
         .windows(3)
         .any(|w| w[0].starts_with("--- ") && w[1].starts_with("+++ ") && HUNK.is_match(w[2]))
@@ -202,12 +214,86 @@ fn is_html(lines: &[&str]) -> bool {
     })
 }
 
-/// `git show`, `git log -p` or `git format-patch` output: a commit header, then a diff.
-fn is_git_patch(lines: &[&str]) -> bool {
+/// `git show`, `git log -p` or `git format-patch` output: a commit header, or an annotated
+/// tag's (`tag <name>`, then `Tagger:`), then a diff, a merge's combined one too (`diff --cc`).
+/// The first commit's diff may be past the sample, after a long message or a `--stat=200`
+/// (PGR-002): `text` is looked on in, as far as the next commit's header.
+fn is_git_patch(lines: &[&str], text: &str) -> bool {
     static HEADER: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^(commit|From) [0-9a-f]{7,64}\b").unwrap());
-    lines.first().is_some_and(|l| HEADER.is_match(l))
-        && lines.iter().any(|l| l.starts_with("diff --git "))
+    let diff = |l: &str| {
+        ["diff --git ", "diff --cc ", "diff --combined "]
+            .iter()
+            .any(|d| l.starts_with(d))
+    };
+    let first = lines.first().copied().unwrap_or_default();
+    let tag = first.strip_prefix("tag ").is_some_and(|n| !n.contains(' '))
+        && lines.get(1).is_some_and(|l| l.starts_with("Tagger: "));
+    if !tag && !HEADER.is_match(first) {
+        return false;
+    }
+    if lines.iter().any(|l| diff(l)) {
+        return true;
+    }
+    // the commit headers seen: a tag's commit is the tag's, the next one another commit
+    let mut headers = usize::from(!tag);
+    for l in text.lines().skip(1) {
+        if diff(l) {
+            return true;
+        }
+        if l.starts_with(['c', 'F']) && HEADER.is_match(l) {
+            headers += 1;
+            if headers > 1 {
+                return false;
+            }
+        }
+    }
+    false
+}
+
+/// A context diff (`diff -c`): a file's `*** ` and `--- ` lines, then a hunk's
+/// `***************`.
+fn is_context_diff(lines: &[&str]) -> bool {
+    lines
+        .windows(3)
+        .any(|w| w[0].starts_with("*** ") && w[1].starts_with("--- ") && w[2] == "***************")
+}
+
+/// `git blame`'s lines, every one: a hash (`^` before a boundary commit's), the path when it is
+/// shown, then the author, date and line number in parentheses (`-s` leaves only the number),
+/// and the line's text. `git annotate`'s too, its fields split by tabs.
+fn is_blame(lines: &[&str]) -> bool {
+    static LINE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^\^?[0-9a-f]{7,40}\s[^)]*?\s\d+\)").unwrap());
+    let mut content = lines.iter().filter(|l| !l.is_empty()).peekable();
+    content.peek().is_some() && content.all(|l| LINE.is_match(l))
+}
+
+/// Commit messages, as `git log --format=%B` writes them: a trailer (`Signed-off-by: Name
+/// <email>`, any `…-by:` with an email, a Gerrit `Change-Id:`), or a conventional commit's
+/// subject (`feat(scope): …`) first and its blank line after it. Not when the text has a
+/// markdown sure sign (a fence, a table, a link, a heading): a note about commits.
+fn is_commit_messages(lines: &[&str]) -> bool {
+    static TRAILER: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"^([A-Z][a-z]*(-[a-z]+)*-by: [^<]*<[^\s>]+@[^\s>]+>|Change-Id: I[0-9a-f]{40})\s*$",
+        )
+        .unwrap()
+    });
+    static SUBJECT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]*\))?!?: \S",
+        )
+        .unwrap()
+    });
+    let mut content = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty());
+    let subject = content.next().is_some_and(|(i, l)| {
+        SUBJECT.is_match(l) && lines.get(i + 1).is_none_or(|n| n.trim().is_empty())
+    });
+    (subject || lines.iter().any(|l| TRAILER.is_match(l))) && !markdown_sure(lines)
 }
 
 /// Whether `s` starts a JSON object or array, and holds only JSON values as far as it goes: a
@@ -438,6 +524,17 @@ fn is_log(lines: &[&str]) -> bool {
 /// not a block comment's ` * `; quotes; bold). Backticks alone aren't one: compilers quote code
 /// in them.
 fn is_markdown(lines: &[&str]) -> bool {
+    static WEAK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^(( {2,}|\t+)?([-*+]|\d{1,3}[.)])\s+\S| {0,3}>\s)|\*\*[^*]+\*\*").unwrap()
+    });
+    let content = lines.iter().filter(|l| !l.trim().is_empty()).count();
+    let weak = lines.iter().filter(|l| WEAK.is_match(l)).count();
+    markdown_sure(lines) || weak >= 2 && weak * 5 >= content
+}
+
+/// Markdown's sure signs: a fence, a table, a link, a heading with blank lines around it, not a
+/// sentence, a setext underline.
+fn markdown_sure(lines: &[&str]) -> bool {
     static FENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^ {0,3}(```|~~~)").unwrap());
     static TABLE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$").unwrap());
@@ -445,11 +542,8 @@ fn is_markdown(lines: &[&str]) -> bool {
         LazyLock::new(|| Regex::new(r"\[[^\]]+\]\([^)\s]+\)|\[\[[^\]]+\]\]").unwrap());
     static HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^#{1,6}\s+\S").unwrap());
     static SETEXT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^={3,}\s*$").unwrap());
-    static WEAK: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^(( {2,}|\t+)?([-*+]|\d{1,3}[.)])\s+\S| {0,3}>\s)|\*\*[^*]+\*\*").unwrap()
-    });
     let blank = |i: usize| lines.get(i).is_none_or(|l| l.trim().is_empty());
-    let sure = lines.iter().enumerate().any(|(i, l)| {
+    lines.iter().enumerate().any(|(i, l)| {
         FENCE.is_match(l)
             || TABLE.is_match(l)
             || LINK.is_match(l)
@@ -458,10 +552,7 @@ fn is_markdown(lines: &[&str]) -> bool {
                 && (i == 0 || blank(i - 1))
                 && !l.trim_end().ends_with(['.', ',', ';', ':'])
             || SETEXT.is_match(l) && i > 0 && !blank(i - 1)
-    });
-    let content = lines.iter().filter(|l| !l.trim().is_empty()).count();
-    let weak = lines.iter().filter(|l| WEAK.is_match(l)).count();
-    sure || weak >= 2 && weak * 5 >= content
+    })
 }
 
 #[cfg(test)]
@@ -470,6 +561,10 @@ mod tests {
 
     fn lang(lang: &'static str) -> Option<FileType> {
         Some(FileType::Text { lang: Some(lang) })
+    }
+
+    fn plain() -> Option<FileType> {
+        Some(FileType::Text { lang: None })
     }
 
     #[test]
@@ -505,6 +600,16 @@ mod tests {
                 lang("Diff"),
             ),
             (
+                "a conflict's combined diff",
+                "diff --cc main.rs\nindex 759277f,1b2c3d4..0000000\n--- a/main.rs\n+++ b/main.rs\n@@@ -1,4 -1,4 +1,8 @@@\n  fn main() {\n++<<<<<<< HEAD\n + a();\n",
+                lang("Diff"),
+            ),
+            (
+                "a merge's git show",
+                "commit 6bf2b19e0c\nMerge: 1234567 89abcde\nAuthor: A <a@b>\n\n    Merge x\n\ndiff --cc x.rs\n",
+                lang("Diff"),
+            ),
+            (
                 "format-patch",
                 "From 6bf2b19e0c4a Mon Sep 17 00:00:00 2001\nFrom: A <a@b>\nSubject: [PATCH] x\n\n---\ndiff --git a/x b/x\n",
                 lang("Diff"),
@@ -513,6 +618,41 @@ mod tests {
                 "git log",
                 "commit 6bf2b19e0c\nAuthor: A <a@b>\n\n    feat: x\n",
                 lang("Git Log"),
+            ),
+            (
+                "an annotated tag's git show",
+                "tag v1.0\nTagger: A <a@b>\nDate:   today\n\nRelease\n\ncommit 6bf2b19e0c\nAuthor: A <a@b>\n\n    x\n\ndiff --git a/x b/x\n",
+                lang("Diff"),
+            ),
+            (
+                "diff -c",
+                "*** a.txt\t2026-11-19\n--- b.txt\t2026-11-19\n***************\n*** 1 ****\n! a\n--- 1 ----\n! b\n",
+                lang("Diff"),
+            ),
+            (
+                "git blame",
+                "34ff1b5 (A Name 2026-10-15 19:25:17 +0200  1) # ada\n34ff1b5 (A Name 2026-10-15 19:25:17 +0200  2) \n^675afe5 (A Name 2026-10-15 19:52:14 +0200  3) - [x](y)\n",
+                plain(),
+            ),
+            (
+                "git blame -s -f",
+                "34ff1b5 README.md  1) # ada\n675afe5 README.md  2) ## heading\n",
+                plain(),
+            ),
+            (
+                "git log --format=%B",
+                "feat: keep piped text's colors\n\n- a diff ada colors itself\n- a word diff keeps git's\n\nfix(diff): one more\n\n- with a list\n- of two\n",
+                plain(),
+            ),
+            (
+                "messages with a trailer",
+                "Fix the pager\n\n- first\n- second\n\nSigned-off-by: A Name <a@b.c>\n",
+                plain(),
+            ),
+            (
+                "a note quoting a commit",
+                "fix: the pager\n\nSee [the lead](ada.md).\n\n- one\n- two\n",
+                Some(FileType::Markdown),
             ),
             (
                 "json",
@@ -780,6 +920,26 @@ mod tests {
                 lang("INI"),
             ),
             (
+                "a gitconfig without its name",
+                "[user]\n\tname = Ada\n\temail = ada@example.com\n[alias]\n\tco = checkout\n",
+                lang("Git Config"),
+            ),
+            (
+                "the XDG config, headers TOML's shape refuses",
+                "[user]\n\tname = Ada\n[includeIf \"gitdir:~/work/\"]\n\tpath = ~/.gitconfig-work\n[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n[credential \"https://github.com\"]\n\thelper =\n\thelper = !gh auth git-credential\n",
+                lang("Git Config"),
+            ),
+            (
+                "a gitconfig of bare keys and a continued alias",
+                "[user]\nname = Ada\n[core]\nquotepath\n[alias]\nlg = !git log \\\n--graph\n",
+                lang("Git Config"),
+            ),
+            (
+                "a repository's config after its first line",
+                "# local\n[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://example.com/x.git\n",
+                lang("Git Config"),
+            ),
+            (
                 "gitignore",
                 "# build output\ntarget/\n*.o\n/dist\n",
                 lang("Git Ignore"),
@@ -811,6 +971,20 @@ mod tests {
             .map(|(name, text, want)| format!("{name}: {:?}, not {want:?}", sniff(text)))
             .collect();
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// PGR-002: a commit whose diff is past the sample, after a long message: looked on for,
+    /// as far as the next commit's header.
+    #[test]
+    fn a_patch_past_the_sample() {
+        let message = "    A long line of the message, wrapped as git log indents it.\n";
+        let mut text = String::from("commit 6bf2b19e0c\nAuthor: A <a@b>\n\n    feat: x\n\n");
+        text.push_str(&message.repeat(SAMPLE / message.len() + 1));
+        let log =
+            format!("{text}\ncommit 89abcdef01\nAuthor: A <a@b>\n\n    y\n\ndiff --git a/x b/x\n");
+        assert_ne!(sniff(&log), lang("Diff"));
+        text.push_str("\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n");
+        assert_eq!(sniff(&text), lang("Diff"));
     }
 
     #[test]

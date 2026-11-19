@@ -1167,7 +1167,7 @@ mod tests {
     /// blank ones.
     #[test]
     fn line_format_runs_are_their_spans() {
-        let texts: [(Lang, &str); 10] = [
+        let texts: [(Lang, &str); 11] = [
             (
                 Lang::Ini,
                 "; c\n[sec]\nkey = value ; x\n\n  name=\"q\"\n[bad\nplain\n# h\n",
@@ -1193,6 +1193,10 @@ mod tests {
                 "# c\nA B <a@b> <c@d>\n<e@f> Name <g@h>\nbad <x\n\n",
             ),
             (Lang::GitLink, "gitdir: ../.git/modules/x\nother\n\n"),
+            (
+                Lang::GitConfig,
+                "# c\n[core] pager = less -R\n[alias]\n\tx = \"!f() { \\\n  echo 'a\\\nb'; }; f\"\n[color \"diff\"]\nold = red bold\nk = one \\\n two\n\n",
+            ),
             (
                 Lang::Fstab,
                 "# c\nUUID=ab-12 / ext4 defaults,noatime 0 1\n/dev/sda1\t/boot vfat rw 0 2\nbad\n\n",

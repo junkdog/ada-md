@@ -1,8 +1,8 @@
 //! Configuration files by their lines' shape (FEAT-020): known_hosts, pkg-config, fstab, a
 //! crontab, `.gitattributes`, `.mailmap`, ssh's and sshd's configs, `.env`, and the key-value
-//! family (TOML, INI, Java properties) told apart by their values. Each wants most of its lines
-//! in its shape, comments and blank lines aside; `.gitignore`'s globs, the loosest, are tried
-//! last of all, by the caller.
+//! family (Git Config by its headers; TOML, INI, Java properties told apart by their values).
+//! Each wants most of its lines in its shape, comments and blank lines aside; `.gitignore`'s
+//! globs, the loosest, are tried last of all, by the caller.
 
 use std::sync::LazyLock;
 
@@ -282,9 +282,13 @@ pub(super) fn is_dotenv(lines: &[&str]) -> bool {
         && content(lines).filter(|l| upper(l)).count() * 2 >= content(lines).count()
 }
 
-/// The key-value family, once [`super`]'s TOML shape holds: TOML where the values are TOML's,
-/// INI where a `[section]` holds bare values, Java properties where none does.
+/// The key-value family, once [`super`]'s TOML shape holds: Git Config where its headers are
+/// git's ([`is_git_config`]), TOML where the values are TOML's, INI where a `[section]` holds bare
+/// values, Java properties where none does.
 pub(super) fn key_values(lines: &[&str]) -> Lang {
+    if is_git_config(lines) {
+        return Lang::GitConfig;
+    }
     static SECTION: LazyLock<Regex> = LazyLock::new(|| re(r"^\[[^\]]+\]\s*([#;].*)?$"));
     static PAIR: LazyLock<Regex> =
         LazyLock::new(|| re(r"^([^=:\s]+(\s*\.\s*[^=:\s]+)*)\s*[=:]\s*(.*)$"));
@@ -311,6 +315,73 @@ pub(super) fn key_values(lines: &[&str]) -> Lang {
     } else {
         Lang::Properties
     }
+}
+
+/// A Git config section's header: `[name]`, `[name "sub"]` or `[name.sub]`.
+static GIT_HEADER: LazyLock<Regex> =
+    LazyLock::new(|| re(r#"^\[([A-Za-z0-9-]+)(\.[A-Za-z0-9.-]+|\s+"([^"\\]|\\.)*")?\]"#));
+
+/// A Git config file whose lines TOML's shape refuses, so that [`key_values`] never sees it:
+/// headers with `:`, `/`, `@` or `~` in their subsections (`[includeIf "gitdir:~/work/"]`,
+/// `[url "git@github.com:"]`, as `~/.config/git/config` has them), a key alone (`quotepath`, a
+/// boolean) or with nothing after its `=` (`helper =`), a value continued at the margin. Git's
+/// headers ([`is_git_config`]), and nine in ten lines git's: a header, a key, a `;` comment, or
+/// a line a `\` continues.
+pub(super) fn is_git_config_shaped(lines: &[&str]) -> bool {
+    static KEY: LazyLock<Regex> = LazyLock::new(|| re(r"^[A-Za-z][A-Za-z0-9-]*\s*(=.*)?$"));
+    let (mut yes, mut total, mut continued) = (0, 0, false);
+    for l in content(lines) {
+        let shaped = continued || l.starts_with(';') || GIT_HEADER.is_match(l) || KEY.is_match(l);
+        continued = l.ends_with('\\');
+        yes += usize::from(shaped);
+        total += 1;
+    }
+    yes > 0 && yes * 10 >= total * 9 && is_git_config(lines)
+}
+
+/// A Git config file named nothing ada knows (`~/.config/git/config`, an included
+/// `~/.gitconfig-work`): every header git's (`[name]`, `[name "sub"]`, `[name.sub]`), and one of
+/// them with a quoted subsection or two of them sections git reads (X-177).
+fn is_git_config(lines: &[&str]) -> bool {
+    const GIT: &[&str] = &[
+        "core",
+        "user",
+        "alias",
+        "remote",
+        "branch",
+        "color",
+        "diff",
+        "merge",
+        "push",
+        "pull",
+        "fetch",
+        "init",
+        "credential",
+        "include",
+        "includeif",
+        "url",
+        "filter",
+        "commit",
+        "gpg",
+        "rebase",
+        "submodule",
+        "http",
+        "status",
+        "log",
+        "pager",
+        "difftool",
+        "mergetool",
+    ];
+    let headers: Vec<&str> = content(lines).filter(|l| l.starts_with('[')).collect();
+    let (mut quoted, mut git) = (0, 0);
+    for h in &headers {
+        let Some(c) = GIT_HEADER.captures(h) else {
+            return false;
+        };
+        quoted += usize::from(c.get(2).is_some_and(|s| s.as_str().ends_with('"')));
+        git += usize::from(GIT.contains(&c[1].to_ascii_lowercase().as_str()));
+    }
+    quoted > 0 || git >= 2
 }
 
 /// Java properties the TOML shape misses: `key=value` lines whose keys hold what a TOML key

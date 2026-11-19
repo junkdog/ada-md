@@ -59,6 +59,18 @@ pub const FLAGS: &[Flag] = &[
         "write the rendered document to stdout and exit",
     ),
     flag(
+        Some('F'),
+        "quit-if-one-screen",
+        SWITCH,
+        "print and exit when the document fits on the screen, as\nless -F does (a git pager: core.pager = ada -F)",
+    ),
+    flag(
+        None,
+        "color-only",
+        SWITCH,
+        "write each line of the input in its colors, one line out for\neach line in, and exit (git's interactive.diffFilter)",
+    ),
+    flag(
         Some('w'),
         "width",
         ("N", Value::Number),
@@ -80,7 +92,7 @@ pub const FLAGS: &[Flag] = &[
         Some('l'),
         "language",
         ("NAME", Value::Language),
-        "show the file as language NAME instead of what ada detects\n(a syntax name or extension: md for markdown, txt for plain text)",
+        "show the file as language NAME instead of what ada detects\n(a syntax name or extension: md for markdown, txt for plain text,\nansi for text in its own colors)",
     ),
     flag(
         Some('L'),
@@ -243,6 +255,8 @@ pub enum Input {
 pub struct Args {
     pub input: Option<Input>,
     pub print: bool,
+    pub quit_if_one_screen: bool,
+    pub color_only: bool,
     pub width: Option<u16>,
     pub height: Option<u16>,
     pub max_width: Option<u16>,
@@ -302,6 +316,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         };
         match flag.as_str() {
             "-p" | "--print" => out.print = true,
+            "-F" | "--quit-if-one-screen" => out.quit_if_one_screen = true,
+            "--color-only" => out.color_only = true,
             "-w" | "--width" => out.width = Some(number(&flag, &value(&flag)?)?),
             "--height" => out.height = Some(number(&flag, &value(&flag)?)?),
             "--max-width" => out.max_width = Some(number(&flag, &value(&flag)?)?),
@@ -406,6 +422,8 @@ mod tests {
         let a = args(&["-p", "--gutter", "-m", "-foo", "-L", "3", "x.rs"]).unwrap();
         assert_eq!(a.matching.as_deref(), Some("-foo"));
         assert!(a.gutter && a.print);
+        let pager = args(&["-F", "--color-only"]).unwrap();
+        assert!(pager.quit_if_one_screen && pager.color_only);
         assert_eq!(args(&["--match="]).unwrap().matching.as_deref(), Some(""));
         assert_eq!(
             args(&["--", "-dash.md"]).unwrap().input,

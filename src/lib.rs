@@ -26,6 +26,7 @@ pub mod search;
 pub mod select;
 pub mod sixel;
 pub mod sniff;
+pub mod stdin;
 pub mod style;
 pub mod theme;
 mod toml_walk;

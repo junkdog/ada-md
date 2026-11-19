@@ -176,6 +176,10 @@ pub fn load_str(
         None => Theme::empty(),
     };
     apply(&mut theme, root, &mut cx)?;
+    // from the theme as a whole, the one it extends under it (X-174)
+    if depth == 0 {
+        theme.derive_tints();
+    }
     Ok(theme)
 }
 

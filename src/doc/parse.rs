@@ -815,6 +815,7 @@ impl Builder {
                         whole_file: false,
                         first_unit,
                         diagram,
+                        colors: None,
                     }),
                     src,
                 }

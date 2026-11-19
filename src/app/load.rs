@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
+use super::effects::{Stdin, stdin_of};
 use super::{Cmd, Computed, Document, Msg, State, load_doc};
 use crate::filetype::FileType;
 use crate::layout::{LayoutParams, Sort};
@@ -84,12 +85,12 @@ pub type Job = (PathBuf, Box<Prepare>);
 
 /// Start the loader: it reads, parses and lays out each document it's sent, in order, and posts
 /// its `DocLoaded` or `DocFailed` to `tx`.
-pub fn spawn_worker(stdin: Option<Arc<str>>, tx: Sender<Msg>) -> Sender<Job> {
+pub fn spawn_worker(stdin: Stdin, tx: Sender<Msg>) -> Sender<Job> {
     let (jobs, rx) = mpsc::channel::<Job>();
     thread::spawn(move || {
         for (path, how) in rx {
             if tx
-                .send(prepare(load_doc(&path, stdin.as_ref()), &how))
+                .send(prepare(load_doc(&path, stdin_of(&stdin).as_ref()), &how))
                 .is_err()
             {
                 return;

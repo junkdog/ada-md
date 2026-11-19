@@ -198,12 +198,20 @@ pub struct CodeBlock {
     pub first_unit: UnitId,
     /// A ```` ```mermaid ```` block ada draws (ADR-35); `None` shows the source.
     pub diagram: Option<Arc<Diagram>>,
+    /// The input as it came, escapes and all, of text in its own colors (FEAT-022,
+    /// [`crate::highlight::ANSI`]): `text` is without them, and the highlighting reads them.
+    pub colors: Option<Arc<str>>,
 }
 
 impl CodeBlock {
     /// The code's lines, without the final newline.
     pub fn lines(&self) -> impl Iterator<Item = &str> {
         code_lines(&self.text)
+    }
+
+    /// The text its highlighting reads: the input with its escapes, for text in its own colors.
+    pub fn highlight_text(&self) -> &Arc<str> {
+        self.colors.as_ref().unwrap_or(&self.text)
     }
 }
 

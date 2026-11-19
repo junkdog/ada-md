@@ -54,7 +54,7 @@ cargo run -p ada-parse --example incremental
   Objective-C, Objective-C++, PHP, PowerShell, Python, Ruby, Rust, Scala, SQL, Swift,
   TypeScript, TSX.
 - **Config and data:** CMake (and its cache, and `configure_file` templates), crontab, diff,
-  Dockerfile, `.env`, fstab, Git's own files (ignore, attributes, mailmap, link), INI, Java
+  Dockerfile, `.env`, fstab, Git's own files (config, ignore, attributes, mailmap, link), INI, Java
   properties, JSON, logs, Makefile, nginx, OpenSSH's `ssh_config`, `sshd_config` and
   `known_hosts`, pkg-config, Terraform, TOML, XML, YAML.
 

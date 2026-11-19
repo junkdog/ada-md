@@ -1,6 +1,7 @@
 //! What a file holds, and so how ada shows it: markdown it renders, an image it shows, and code
 //! or other text it shows whole, as one highlighted block (see [`doc::file`]).
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use crate::doc::{self, Doc};
@@ -12,7 +13,7 @@ use crate::{links, sniff};
 /// for a `.h` (X-134; bat's set names every `.h` Objective-C); a C or a C++ CMake template for
 /// a `.h` header's (`config.h.in`, `x.h.cmake`, X-140); `None` for any other name. As bat, a
 /// suffix it ignores comes off first where the name is neither (`x.h.orig`, X-145).
-fn header_by_text(name: &str, text: &str) -> Option<ada_parse::Lang> {
+pub(crate) fn header_by_text(name: &str, text: &str) -> Option<ada_parse::Lang> {
     use ada_parse::Lang;
     if Lang::is_header(name) {
         return Some(Lang::for_header(text.as_bytes()));
@@ -44,6 +45,12 @@ impl FileType {
     /// A mermaid file: one code block in mermaid, drawn when ada draws its kind.
     pub const MERMAID: FileType = FileType::Text {
         lang: Some(crate::diagram::LANG),
+    };
+
+    /// Text in its own colors (FEAT-022): colored stdin that isn't a diff ada colors itself, or
+    /// any text `-l ansi` names.
+    pub const ANSI: FileType = FileType::Text {
+        lang: Some(highlight::ANSI),
     };
 
     /// What the path alone says, or `None` when only the contents can tell, as for stdin (`-`).
@@ -82,8 +89,32 @@ impl FileType {
     /// What a file holds, by its path and then its contents. Stdin and a file with no extension
     /// are [sniffed](sniff::sniff); a file of an extension no syntax knows only by its first line.
     /// What neither tells is plain text, kept line for line, but for a file with no extension:
-    /// `README`, `TODO` and the like are read as markdown, as they always were.
+    /// `README`, `TODO` and the like are read as markdown, as they always were. Colored stdin is
+    /// sniffed without its escapes, and keeps its own colors unless that reads as a diff whose
+    /// colors say no more than its marks ([`highlight::keeps_own_colors`], FEAT-022). `man`'s
+    /// text struck over itself (bold, underlined) without colors too (PGR-007).
     pub fn of(path: &Path, text: &str) -> FileType {
+        let bytes = text.as_bytes();
+        if is_stdin(path)
+            && (crate::stdin::has_escape(bytes) || crate::stdin::has_overstrike(bytes))
+        {
+            // as it shows: no escape, and no character struck over another
+            let plain = match crate::stdin::has_overstrike(bytes) {
+                true => highlight::ansi_shown(text),
+                false => crate::stdin::strip(text),
+            };
+            let filetype = FileType::of_plain(path, &plain);
+            let diff = filetype == (FileType::Text { lang: Some("Diff") });
+            return match highlight::keeps_own_colors(text, diff) {
+                true => FileType::ANSI,
+                false => filetype,
+            };
+        }
+        FileType::of_plain(path, text)
+    }
+
+    /// [`FileType::of`] text that shows as it is.
+    fn of_plain(path: &Path, text: &str) -> FileType {
         let name = path.file_name().and_then(|n| n.to_str());
         if let Some(lang) = name.and_then(|n| header_by_text(n, text)) {
             return FileType::Text {
@@ -93,7 +124,7 @@ impl FileType {
         if let Some(t) = FileType::by_path(path) {
             return t;
         }
-        let stdin = path.as_os_str() == "-";
+        let stdin = is_stdin(path);
         let guess = if stdin || path.extension().is_none() {
             sniff::sniff(text)
         } else {
@@ -110,6 +141,9 @@ impl FileType {
     /// The type `-l NAME` asks for: `md` or `markdown`, a plain-text name (`txt`, `text`),
     /// `mmd` or `mermaid`, or a syntax by its name or an extension (`Rust`, `rs`, `yaml`).
     pub fn named(name: &str) -> Option<FileType> {
+        if name.eq_ignore_ascii_case("ansi") {
+            return Some(FileType::ANSI);
+        }
         if ["txt", "text", "plain"]
             .iter()
             .any(|p| name.eq_ignore_ascii_case(p))
@@ -138,6 +172,10 @@ impl FileType {
 
     /// The file `path`, holding `text`, as a document.
     pub fn parse(&self, path: &Path, text: &str) -> Doc {
+        if *self == FileType::ANSI {
+            return doc::file::colored(text);
+        }
+        let text = &*self.shown_text(path, text);
         match self {
             FileType::Markdown => doc::parse(text),
             FileType::Text { lang } => doc::file::code(text, *lang),
@@ -145,6 +183,16 @@ impl FileType {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
                 doc::file::image(&name)
             }
+        }
+    }
+
+    /// The text `path`'s document of this type shows, of `text` as read: stdin without its
+    /// escapes, unless it is in its own colors (FEAT-022); a file as it is.
+    pub fn shown_text<'a>(&self, path: &Path, text: &'a str) -> Cow<'a, str> {
+        if is_stdin(path) && *self != FileType::ANSI {
+            crate::stdin::strip(text)
+        } else {
+            Cow::Borrowed(text)
         }
     }
 
@@ -183,6 +231,8 @@ pub fn language_names() -> Vec<(String, &'static str)> {
     let mut names = vec![
         ("md".to_owned(), "Markdown"),
         ("txt".to_owned(), "Plain Text"),
+        // text in the colors its escapes give it (FEAT-022)
+        ("ansi".to_owned(), "ANSI"),
     ];
     names.extend(MERMAID.iter().map(|&m| (m.to_owned(), "Mermaid")));
     // bat's syntaxes, a line each: the name, then its extensions (ADR-43)
@@ -207,6 +257,11 @@ pub fn language_names() -> Vec<(String, &'static str)> {
     names.sort();
     names.dedup_by(|a, b| a.0 == b.0);
     names
+}
+
+/// Whether `path` is stdin's, `-`.
+fn is_stdin(path: &Path) -> bool {
+    path.as_os_str() == "-"
 }
 
 fn is_mermaid(name: &str) -> bool {
@@ -493,6 +548,79 @@ mod tests {
         let md = [Off, Code, All].map(|m| numbers(FileType::Markdown, m));
         assert_eq!(md, [Off, Off, All]);
         assert_eq!(numbers(FileType::Image, All), Off);
+    }
+
+    #[test]
+    fn colored_stdin_keeps_its_colors_but_a_diff() {
+        let stdin = Path::new("-");
+        // `git lg`: its own colors, its text without the escapes
+        let log = "* \x1b[38;5;208mabc1234\x1b[m -\x1b[38;5;214m (HEAD -> main)\x1b[m feat: x\n";
+        let ft = FileType::of(stdin, log);
+        assert_eq!(ft, FileType::ANSI);
+        let doc = ft.parse(stdin, log);
+        let code = doc.code_blocks()[0];
+        assert_eq!(&*code.text, "* abc1234 - (HEAD -> main) feat: x\n");
+        assert_eq!(code.highlight_text().as_ref(), log);
+        // a colored diff: ada's colors, its escapes gone
+        let diff = "\x1b[1mdiff --git a/x.rs b/x.rs\x1b[m\n\x1b[1m--- a/x.rs\x1b[m\n\
+                    \x1b[1m+++ b/x.rs\x1b[m\n\x1b[36m@@ -1 +1 @@\x1b[m\n\x1b[31m-a\x1b[m\n\
+                    \x1b[32m+b\x1b[m\n";
+        let ft = FileType::of(stdin, diff);
+        assert_eq!(ft, FileType::Text { lang: Some("Diff") });
+        let doc = ft.parse(stdin, diff);
+        assert!(
+            doc.code_blocks()[0]
+                .text
+                .starts_with("diff --git a/x.rs b/x.rs\n--- a/x.rs")
+        );
+        assert_eq!(doc.code_blocks()[0].colors, None);
+        // `-l` names a type: `ansi` keeps them, another drops them
+        assert_eq!(FileType::named("ansi"), Some(FileType::ANSI));
+        let named = FileType::named("txt").unwrap().parse(stdin, log);
+        assert_eq!(
+            &*named.code_blocks()[0].text,
+            "* abc1234 - (HEAD -> main) feat: x\n"
+        );
+        // a file is shown as it is
+        let file = Path::new("x.log");
+        assert_ne!(FileType::of(file, log), FileType::ANSI);
+        assert_eq!(FileType::of(file, log).shown_text(file, log), log);
+        // PGR-007: `man` with `GROFF_NO_SGR`, bold and underline struck over, no escapes
+        let man = "N\x08NA\x08AM\x08ME\x08E\n       _\x08l_\x08s - list\n";
+        assert_eq!(FileType::of(stdin, man), FileType::ANSI);
+        let doc = FileType::ANSI.parse(stdin, man);
+        assert_eq!(&*doc.code_blocks()[0].text, "NAME\n       ls - list\n");
+    }
+
+    #[test]
+    fn colored_text_prints_in_its_colors() {
+        let stdin = Path::new("-");
+        let log = "\x1b[38;5;208mabc\x1b[m x \x1b[1;38;2;1;2;3mbold\x1b[22m rgb\x1b[m\n";
+        let doc = FileType::ANSI.parse(stdin, log);
+        let params = LayoutParams {
+            width: 80,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            code_labels: false,
+            bare: true,
+            line_numbers: LineNumbers::Off,
+            glyphs_gen: 0,
+            images: None,
+        };
+        let theme = crate::theme::Theme::builtin()
+            .with_bg(false)
+            .without_code_bg();
+        let out = crate::print::render(
+            &doc,
+            &theme,
+            FileType::ANSI.params(params),
+            crate::print::Options::default(),
+        );
+        assert!(out.contains("38;5;208mabc"), "{out:?}");
+        assert!(out.contains("1;38;2;1;2;3mbold"), "{out:?}");
+        assert!(out.contains("22m rgb"), "{out:?}");
+        assert_eq!(crate::stdin::strip(&out).trim_end(), "abc x bold rgb");
     }
 
     #[test]

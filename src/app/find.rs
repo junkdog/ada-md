@@ -49,7 +49,7 @@ pub struct Prompt {
 /// What the outline lists.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Listing {
-    /// `o`: the headings, indented by level.
+    /// `o`: the headings, indented by level; in a diff, its commits and files (X-174).
     #[default]
     Headings,
     /// `l`: every link, in the order Tab visits them.
@@ -76,14 +76,15 @@ pub struct Outline {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutlineEntry<'a> {
-    /// The heading's anchor, the link, the theme's index, or how to sort a table (see
-    /// `sort::entry_id`).
+    /// The heading's anchor, the link, the theme's index, how to sort a table (see
+    /// `sort::entry_id`), or a diff's file's index.
     pub id: u32,
     /// The heading level; 0 for links.
     pub level: u8,
     pub row: u32,
     pub text: Cow<'a, str>,
-    /// Where a link leads, as written, unless the text already says so.
+    /// Where a link leads, as written, unless the text already says so; how a diff's file
+    /// changed.
     pub dest: Option<String>,
     pub broken: bool,
 }
@@ -313,6 +314,10 @@ impl State {
 
     /// `n` / `N`.
     pub(super) fn search_next(&mut self, dir: Dir) {
+        // a diff's files, until a search is made (X-174)
+        if self.search.is_none() && self.jump_file(dir) {
+            return;
+        }
         match &self.search {
             None => self.status = Some("no previous search: / starts one".into()),
             Some(s) if s.projection.order.is_empty() => {
@@ -410,6 +415,24 @@ impl State {
                 })
                 .collect(),
             (_, None) => Vec::new(),
+            (Listing::Headings, Some(doc)) if doc.is_diff() => {
+                let files = doc.diff_files();
+                files
+                    .iter()
+                    .zip(super::diffs::rows(&doc.layout, files))
+                    .enumerate()
+                    .filter_map(|(i, (f, row))| {
+                        Some(OutlineEntry {
+                            id: i as u32,
+                            level: f.level,
+                            row: row?,
+                            text: Cow::Borrowed(&f.name),
+                            dest: f.note.clone(),
+                            broken: false,
+                        })
+                    })
+                    .collect()
+            }
             (Listing::Headings, Some(doc)) => doc
                 .layout
                 .headings

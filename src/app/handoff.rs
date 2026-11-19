@@ -26,6 +26,9 @@ impl State {
     /// The watched file changed on disk: read it again, or, with `notify` (FEAT-014), mark it
     /// until `r` does. A change back to the time of the text on screen takes the mark away.
     pub(super) fn file_changed(&mut self, path: &Path, mtime: Option<u64>) -> Vec<Cmd> {
+        if path.as_os_str() == "-" {
+            return self.stdin_read();
+        }
         let Some(doc) = self.doc.as_mut().filter(|d| d.path == path) else {
             return Vec::new();
         };

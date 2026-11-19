@@ -1,23 +1,22 @@
 //! Fuzz round 2 (plan P7): a whole session, scripted by the input. The input is a document
 //! (`[len_lo, len_hi, ..len bytes]`), then bytes `arbitrary` turns into a terminal size, config,
-//! and up to 64 intents. Commands run against a stub world: links resolve to the scratch file
-//! they name, mostly, or to fuzz-chosen ones, git answers with fuzzed hunks, image probes
-//! report fuzzed sizes, and every result waits in a queue until the script delivers it, so
-//! results can arrive late, out of order, or after the document they were for is gone. Intents
-//! arrive directly or as keys and mouse events through the default keymap (a drag selects text,
-//! and presses an op or a few apart count as double and triple clicks), and `T` lists two extra
-//! themes with wide, empty and ASCII glyphs. The document is markdown, code, config, plain text
-//! or an image, as its name says, and links lead to code files at a `#L42` line. `S` and the
-//! settings popup (`F2`, `,`) read a fuzzed config file, answered at once as the interactive
-//! loop does, and it is never written: what `S` would write, and what the popup's `s` writes,
-//! must read back with nothing left to save. Every step is painted, and the rows kept on quit
-//! replay to the last frame. Nothing may panic. A `Graphics` intent sets the image encoder too,
-//! as the interactive loop does, so images are drawn for kitty, sixel and iTerm2 as well as in
-//! half-blocks: a kitty placeholder must show its image's row and column, by its diacritics or
-//! its left neighbor's, in the color of an image the terminal was sent (CS-6). Drawn for those
-//! three, the scratch images nearly always decode, so the check has placeholders to look at
-//! (F-11), and once the script runs out, links, probes and decodes are answered as the real
-//! world would; `ADA_FUZZ_REACH=1` prints how far each input got.
+//! and up to 64 intents. Commands run against a stub world: links resolve to the scratch file they
+//! name, mostly, or to fuzz-chosen ones, git answers with fuzzed hunks, image probes report fuzzed
+//! sizes, and every result waits in a queue until the script delivers it, so results can arrive
+//! late, out of order, or after the document they were for is gone. Intents arrive directly or as
+//! keys and mouse events through the default keymap (a drag selects text, and presses an op or a
+//! few apart count as double and triple clicks), and `T` lists two extra themes with wide, empty
+//! and ASCII glyphs. The document is markdown, code, config, a diff, plain text or an image, as its
+//! name says, and links lead to code files at a `#L42` line. `S` and the settings popup (`F2`, `,`)
+//! read a fuzzed config file, answered at once as the interactive loop does, and it is never
+//! written: what `S` would write, and what the popup's `s` writes, must read back with nothing left
+//! to save. Every step is painted, and the rows kept on quit replay to the last frame. Nothing may
+//! panic. A `Graphics` intent sets the image encoder too, as the interactive loop does, so images
+//! are drawn for kitty, sixel and iTerm2 as well as in half-blocks: a kitty placeholder must show
+//! its image's row and column, by its diacritics or its left neighbor's, in the color of an image
+//! the terminal was sent (CS-6). Drawn for those three, the scratch images nearly always decode, so
+//! the check has placeholders to look at (F-11), and once the script runs out, links, probes and
+//! decodes are answered as the real world would; `ADA_FUZZ_REACH=1` prints how far each input got.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
@@ -1291,13 +1290,14 @@ impl Session<'_> {
 }
 
 /// Names the document can have. Its file type decides how it's parsed and laid out: markdown
-/// mostly, then code and config in a few syntaxes, plain text, an image, a name only the first
-/// line explains (markdown unless it's a `#!` line), and an extension nothing claims.
+/// mostly, then code and config in a few syntaxes, a diff (its files in the outline and n/N,
+/// FEAT-021, FEAT-024), plain text, an image, a name only the first line explains (markdown
+/// unless it's a `#!` line), and an extension nothing claims.
 const DOC_NAMES: [&str; 12] = [
     "fuzz.md",
     "fuzz.md",
     "fuzz.md",
-    "fuzz.md",
+    "fuzz.diff",
     "fuzz.rs",
     "Cargo.toml",
     "ci.yml",

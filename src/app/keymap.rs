@@ -92,9 +92,9 @@ actions! {
     }
     "Search and outline" {
         Search => "search", "search with a regex", ["/"],
-        SearchNext => "search_next", "the next match", ["n"],
-        SearchPrev => "search_prev", "the previous match", ["N"],
-        Outline => "outline", "the outline of headings", ["o"],
+        SearchNext => "search_next", "the next match, or a diff's file", ["n"],
+        SearchPrev => "search_prev", "the previous match, or file", ["N"],
+        Outline => "outline", "the headings, or a diff's files", ["o"],
         Links => "links", "the list of links", ["l"],
     }
     "View" {

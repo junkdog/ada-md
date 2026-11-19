@@ -1,4 +1,4 @@
-use std::io::{self, IsTerminal, Read};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -123,22 +123,47 @@ fn run() -> Result<(), String> {
     };
     let path = match input {
         Input::Stdin => PathBuf::from("-"),
+        // a pipe (`ada <(cmd)`) is read once, as stdin is: typed, its escapes read (PGR-007)
+        Input::Path(path) if ada::stdin::is_pipe(&path) => {
+            let pipe = fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let _ = ada::stdin::read_from(pipe);
+            PathBuf::from("-")
+        }
         Input::Path(path) => path,
     };
     config.language = forced.map(|t| (path.clone(), t));
 
+    if args.color_only {
+        for w in &warnings {
+            eprintln!("ada: warning: {w}");
+        }
+        return color_only(&path, forced, &theme);
+    }
     if printing {
         for w in &warnings {
             eprintln!("ada: warning: {w}");
         }
         // a print lands in pagers, fzf panes and scrollback, where a background stops at the
         // text: it keeps the terminal's, whatever `theme_bg` says
-        return print_doc(&args, &config, &theme.with_bg(false), &resolver, &path);
+        return print_doc(
+            &args,
+            &config,
+            &theme.with_bg(false),
+            &resolver,
+            &path,
+            None,
+        )
+        .map(drop);
     }
 
-    let piped = (path == Path::new("-"))
-        .then(|| read_stdin(Vec::new(), None, forced))
-        .transpose()?;
+    // the viewer shows what it has read of stdin at first, the rest read meanwhile (PGR-008)
+    let (piped, rest) = match path == Path::new("-") {
+        true => {
+            let (piped, rest) = read_stdin_start(forced)?;
+            (Some(piped), rest)
+        }
+        false => (None, None),
+    };
     // a piped image is shown from a file of its own, which goes when ada quits
     let (stdin, image) = match piped {
         Some(Piped::Text(text)) => (Some(text), None),
@@ -146,6 +171,26 @@ fn run() -> Result<(), String> {
         None => (None, None),
     };
     let path = image.as_ref().map_or(path, |image| image.path.clone());
+    // `-F`: printed, as `less -F` does, when it fits on the screen; stdin past `FIT_BYTES`, as a
+    // file, goes to the viewer unprinted (a `git log -p` laid out twice, the first in memory)
+    if args.quit_if_one_screen
+        && image.is_none()
+        && rest.is_none()
+        && let Ok((_, height)) = crossterm::terminal::size()
+        && let Some(text) = stdin
+            .clone()
+            .filter(|t| t.len() as u64 <= FIT_BYTES)
+            .or_else(|| small_file(&path))
+    {
+        let theme = theme.with_bg(false);
+        let fit = Some((&text, height));
+        if print_doc(&args, &config, &theme, &resolver, &path, fit)? {
+            for w in &warnings {
+                eprintln!("ada: warning: {w}");
+            }
+            return Ok(());
+        }
+    }
     if stdin.is_none() {
         let meta = fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         if meta.is_dir() {
@@ -167,7 +212,13 @@ fn run() -> Result<(), String> {
     let mut state = State::new(theme, config);
     state.themes = themes;
     state.status = warnings.first().map(|w| format!("warning: {w}"));
+    if rest.is_some() && state.status.is_none() {
+        state.status = Some(app::READING.into());
+    }
     let mut effects = Effects::new(stdin);
+    if let Some((input, read)) = rest {
+        effects.read_rest(input, read);
+    }
     effects.set_resolver(Box::new(resolver));
     app::run_tui(state, path, effects, recorder)
 }
@@ -239,8 +290,18 @@ fn read_stdin(
     head: Option<Head>,
     forced: Option<FileType>,
 ) -> Result<Piped, String> {
+    read_stdin_from(ada::stdin::input(), read, head, forced)
+}
+
+/// [`read_stdin`] from `stdin`.
+fn read_stdin_from(
+    mut stdin: Box<dyn Read + Send>,
+    read: Vec<u8>,
+    head: Option<Head>,
+    forced: Option<FileType>,
+) -> Result<Piped, String> {
     let err = |e: io::Error| format!("stdin: {e}");
-    let mut stdin = io::stdin().lock();
+    // as it comes, escapes and all: its type says whether they're dropped (FEAT-022)
     let mut bytes = read;
     if forced.is_none() {
         (&mut stdin)
@@ -271,15 +332,46 @@ fn read_stdin(
     text_of(bytes, forced).map(Piped::Text)
 }
 
+/// How much of stdin the viewer reads before its first frame (PGR-008): as much as is read to
+/// tell whether colored text keeps its colors ([`ada::highlight::keeps_own_colors`]), so that the
+/// first frame's type is the whole input's but for what lies past it.
+const START: usize = 1 << 20;
+
+/// The rest of stdin to read, and the bytes read of it before.
+type Rest = (Box<dyn Read + Send>, Vec<u8>);
+
+/// What the viewer shows of stdin at first: all of it when it's no longer than [`START`]; else its
+/// whole lines in the first `START` bytes, and the rest to read, after the bytes read of it.
+fn read_stdin_start(forced: Option<FileType>) -> Result<(Piped, Option<Rest>), String> {
+    let err = |e: io::Error| format!("stdin: {e}");
+    let mut stdin = ada::stdin::input();
+    let mut bytes = Vec::new();
+    (&mut stdin)
+        .take(START as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(err)?;
+    if bytes.len() <= START || (forced.is_none() && filetype::image_ext(&bytes).is_some()) {
+        return read_stdin_from(stdin, bytes, None, forced).map(|p| (p, None));
+    }
+    if forced.is_none() && filetype::is_binary(&bytes) {
+        return Err("stdin: binary input (-l names a type to show it anyway)".into());
+    }
+    let lines = memchr::memrchr(b'\n', &bytes).map_or(0, |nl| nl + 1);
+    let shown = utf8(bytes[..lines].to_vec());
+    Ok((Piped::Text(shown), Some((stdin, bytes))))
+}
+
 fn text_of(bytes: Vec<u8>, forced: Option<FileType>) -> Result<Arc<str>, String> {
     if forced.is_none() && filetype::is_binary(&bytes) {
         return Err("stdin: binary input (-l names a type to show it anyway)".into());
     }
-    let text = match String::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
-    };
-    Ok(text.into())
+    Ok(utf8(bytes))
+}
+
+/// `bytes` as text, what isn't UTF-8 in them replaced, but a C1 ST ending a control string
+/// ([`ada::stdin::text`]).
+fn utf8(bytes: Vec<u8>) -> Arc<str> {
+    ada::stdin::text(bytes).into()
 }
 
 fn print_doc(
@@ -288,7 +380,8 @@ fn print_doc(
     theme: &Theme,
     resolver: &dyn Resolver,
     path: &Path,
-) -> Result<(), String> {
+    fit: Option<(&Arc<str>, u16)>,
+) -> Result<bool, String> {
     // fzf exports the whole terminal as $COLUMNS, and the preview pane as $FZF_PREVIEW_COLUMNS.
     let env_number = |name| env::var(name).ok()?.trim().parse().ok();
     let tty = io::stdout().is_terminal();
@@ -362,7 +455,8 @@ fn print_doc(
     // A whole text file, or code ada lexes itself, prints a piece at a time (O-52, PRN-003); a
     // preview reads only its head, and `--line`, `--match` and `--gutter` need the whole layout.
     let mut read = Vec::new();
-    if rows.is_none()
+    if fit.is_none()
+        && rows.is_none()
         && args.line.is_none()
         && matches.is_none()
         && !args.gutter
@@ -376,7 +470,10 @@ fn print_doc(
                     bare: true,
                     ..params
                 };
-                return stream.run(&theme, params).map_err(|e| e.to_string());
+                return stream
+                    .run(&theme, params)
+                    .map(|()| true)
+                    .map_err(|e| e.to_string());
             }
             Start::Whole(bytes) => read = bytes,
         }
@@ -384,7 +481,9 @@ fn print_doc(
     // a piped image prints from a file of its own, removed once it's printed
     let mut image = None;
     let piped = path == Path::new("-");
-    let (path, text) = if piped {
+    let (path, text) = if let Some((text, _)) = fit {
+        (path, Arc::clone(text))
+    } else if piped {
         match read_stdin(read, head, forced)? {
             Piped::Text(text) => (path, text),
             Piped::Image(piped) => (&*image.insert(piped).path, Arc::from("")),
@@ -400,7 +499,11 @@ fn print_doc(
     // a file of code prints on the terminal's background, as a note's text does
     let code_theme = matches!(filetype, FileType::Text { .. }).then(|| theme.without_code_bg());
     let theme = code_theme.as_ref().unwrap_or(theme);
-    print::start();
+    // `-F`'s print, of `FIT_BYTES` at most, may hand over to the viewer, which keeps to one
+    // malloc arena (O-32): threads started on more keep them
+    if fit.is_none() {
+        print::start();
+    }
     // git runs while the document is parsed and laid out; never for stdin or an image
     // (architecture §8)
     let diffs = (args.gutter && !piped && filetype != FileType::Image).then(|| {
@@ -432,9 +535,72 @@ fn print_doc(
         bare,
         ..filetype.params(params)
     };
+    if let Some((_, height)) = fit {
+        // laid out and written to memory first: printed only if it fits, else the viewer shows
+        // it. As `less -F`, the screen's last row is the prompt's: as many rows as the screen
+        // has don't fit
+        let mut out = Vec::new();
+        print::write(&doc, theme, params, opts, &mut out).map_err(|e| e.to_string())?;
+        if out.iter().filter(|&&b| b == b'\n').count() >= usize::from(height) {
+            return Ok(false);
+        }
+        let mut stdout = io::stdout().lock();
+        return match stdout.write_all(&out).and_then(|()| stdout.flush()) {
+            Err(e) if e.kind() != io::ErrorKind::BrokenPipe => Err(e.to_string()),
+            _ => Ok(true),
+        };
+    }
     let result = print::run(&doc, theme, params, opts);
     // ada exits next: the document is left for the OS to reclaim instead of freed (O-31).
     std::mem::forget(doc);
     std::mem::forget(text);
-    result.map_err(|e| e.to_string())
+    result.map(|()| true).map_err(|e| e.to_string())
+}
+
+/// The most of a file `-F` reads to tell whether it fits on the screen: past this, the viewer
+/// shows it, as no screen holds it.
+const FIT_BYTES: u64 = 256 * 1024;
+
+/// A file's text when it's small enough that it might fit on a screen ([`FIT_BYTES`]).
+fn small_file(path: &Path) -> Option<Arc<str>> {
+    let meta = fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > FIT_BYTES {
+        return None;
+    }
+    text_of(fs::read(path).ok()?, None).ok()
+}
+
+/// `--color-only`, as git's `interactive.diffFilter` runs it: the input's lines in their colors,
+/// one line out for each line in (X-174). A filter refuses nothing: a NUL in a diff's line (of
+/// a file git takes for text) is no binary input, and `git add -p` gives up on a filter whose
+/// lines it can't pair with its own.
+fn color_only(path: &Path, forced: Option<FileType>, theme: &Theme) -> Result<(), String> {
+    let bytes = if path == Path::new("-") {
+        let mut bytes = Vec::new();
+        app::read_capped(&mut ada::stdin::input(), &mut bytes)
+            .map_err(|e| format!("stdin: {e}"))?;
+        bytes
+    } else {
+        fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?
+    };
+    let text = utf8(bytes);
+    let filetype = forced.unwrap_or_else(|| FileType::of(path, &text));
+    // text in its own colors (`-l ansi`) is what it shows, a line for each line
+    if filetype == FileType::ANSI {
+        let mut stdout = io::stdout().lock();
+        return match stdout
+            .write_all(text.as_bytes())
+            .and_then(|()| stdout.flush())
+        {
+            Err(e) if e.kind() != io::ErrorKind::BrokenPipe => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    }
+    let lang = match filetype {
+        FileType::Text { lang } => lang,
+        _ => None,
+    };
+    let theme = theme.with_bg(false).without_code_bg();
+    let text = filetype.shown_text(path, &text);
+    print::color_only(&text, lang, &theme).map_err(|e| e.to_string())
 }

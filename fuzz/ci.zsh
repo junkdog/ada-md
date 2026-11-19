@@ -55,6 +55,8 @@ LANGS=(
   gitignore 683 1            fstab 639 1                dotenv 612 7               gitlink 607 1
   cmakecache 568 1           gitmailmap 447 1           ini 435 1                  properties 342 1
   diff 339 1
+  # X-178: from its first corpus's cmin (2026-11-19, the git pager's smokes)
+  gitconfig 2945 21
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done

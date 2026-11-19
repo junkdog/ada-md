@@ -1,6 +1,7 @@
 //! The line-format engine (X-020's second part, the parser audit's item 5): the frame under the
 //! formats read a line at a time, INI's, Java properties', `.env`'s, Git's four (X-034),
-//! fstab's and `known_hosts`' (X-045), pkg-config's (X-146). A line is a comment, a
+//! fstab's and `known_hosts`' (X-045), pkg-config's (X-146); Git Config's reads its lines with
+//! the [`Cursor`] alone (X-177). A line is a comment, a
 //! section's header or an entry (a key, its separator and a value), told apart by the first
 //! byte past its blanks on the format's table ([`Format::LEAD`], the prefix dispatch); a format
 //! reads each with the [`Cursor`]'s primitives. What a line leaves open (a value run on by a
@@ -116,6 +117,15 @@ pub struct Cursor<'l, 'o, 's, K: Sink> {
     k: &'o mut K,
     /// Where the spans so far end.
     pub at: usize,
+}
+
+impl<'l, 'o, 's, K: Sink> Cursor<'l, 'o, 's, K> {
+    /// A cursor at `b`'s start, for a format that reads its lines without [`line`]: one whose
+    /// state isn't one word (Git Config's, X-177: its section beside bash's levels).
+    #[inline(always)]
+    pub fn new(b: &'l [u8], out: &'o mut Out<'s>, k: &'o mut K) -> Self {
+        Cursor { b, out, k, at: 0 }
+    }
 }
 
 impl<K: Sink> Cursor<'_, '_, '_, K> {

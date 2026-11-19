@@ -30,6 +30,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("gitignore", Lang::GitIgnore),
     ("gitattributes", Lang::GitAttributes),
     ("mailmap", Lang::GitMailmap),
+    // X-177's corpus: this machine's repositories' `.git/config`, `.gitmodules` and gitconfigs
+    ("gitconfig", Lang::GitConfig),
     ("fstab", Lang::Fstab),
     // X-146's corpus: this machine's installed `.pc` files
     ("pkgconfig", Lang::PkgConfig),

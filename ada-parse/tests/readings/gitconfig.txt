@@ -1,0 +1,156 @@
+# GitConfig: ada-parse/tests/readings.rs, gitconfig
+   1 | # user settings
+       "#" comment.line.git.config punctuation.definition.comment.git.config
+       " user settings" comment.line.git.config
+   2 | [user]
+       "[" meta.brackets.git.config punctuation.definition.brackets.begin.git.config
+       "user" meta.brackets.git.config entity.name.section.git.config
+       "]" meta.brackets.git.config punctuation.definition.brackets.end.git.config
+   3 | \tname = Ada Lovelace
+       "name" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "Ada Lovelace" string.unquoted.value.git.config
+   4 | \temail = ada@example.com ; a comment
+       "email" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "ada@example.com " string.unquoted.value.git.config
+       ";" comment.line.git.config punctuation.definition.comment.git.config
+       " a comment" comment.line.git.config
+   5 | [core] editor = nvim
+       "[" meta.brackets.git.config punctuation.definition.brackets.begin.git.config
+       "core" meta.brackets.git.config entity.name.section.git.config
+       "]" meta.brackets.git.config punctuation.definition.brackets.end.git.config
+       "editor" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "nvim" meta.function-call.shell support.function.command.shell
+   6 | \tpager = less -FRX
+       "pager" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "less" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "FRX" variable.parameter.option.shell
+   7 | \tautocrlf = false
+       "autocrlf" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "false" constant.language.boolean.git.config
+   8 | \tbigFileThreshold = 512m
+       "bigFileThreshold" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "512m" constant.numeric.integer.decimal.git.config
+   9 | \tquotepath
+       "quotepath" meta.mapping.key.git.config entity.name.tag.git.config
+  10 | [alias]
+       "[" meta.brackets.git.config punctuation.definition.brackets.begin.git.config
+       "alias" meta.brackets.git.config entity.name.section.git.config
+       "]" meta.brackets.git.config punctuation.definition.brackets.end.git.config
+  11 | \tco = checkout
+       "co" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "checkout" meta.function-call.shell support.function.command.shell
+  12 | \tup = !git fetch; git rebase
+       "up" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "!" keyword.control.import.shell.git.config
+       "git" meta.function-call.shell support.function.command.shell
+       ";" comment.line.git.config punctuation.definition.comment.git.config
+       " git rebase" comment.line.git.config
+  13 | \tlg = "!git log --format=\"%h %s\" \
+       "lg" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "\"" string.quoted.double.git.config punctuation.definition.string.begin.git.config
+       "!" keyword.control.import.shell.git.config
+       "git" meta.function-call.shell support.function.command.shell
+       " --" punctuation.definition.parameter.shell
+       "format" variable.parameter.option.shell
+       "=" keyword.operator.assignment.option.shell
+       "\\\"" punctuation.definition.string.begin.shell
+       "%h %s" string.quoted.double.shell
+       "\\\"" punctuation.definition.string.end.shell
+       "\\" punctuation.separator.continuation.line.git.config
+  14 | \t\t--graph"
+       "\t\t--" punctuation.definition.parameter.shell
+       "graph" variable.parameter.option.shell
+       "\"" string.quoted.double.git.config punctuation.definition.string.end.git.config
+  15 | [remote "origin"]
+       "[" meta.brackets.git.config punctuation.definition.brackets.begin.git.config
+       "remote" meta.brackets.git.config entity.name.section.git.config
+       "\"" meta.brackets.git.config string.quoted.double.git.config punctuation.definition.string.begin.git.config
+       "origin" meta.brackets.git.config string.quoted.double.git.config
+       "\"" meta.brackets.git.config string.quoted.double.git.config punctuation.definition.string.end.git.config
+       "]" meta.brackets.git.config punctuation.definition.brackets.end.git.config
+  16 | \turl = https://example.com/x.git
+       "url" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "https://example.com/x.git" markup.underline.link.git.config
+  17 | \tfetch = +refs/heads/*:refs/remotes/origin/*
+       "fetch" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "+refs/heads/*:refs/remotes/origin/*" string.unquoted.value.git.config
+  18 | [color "diff"]
+       "[" meta.brackets.git.config punctuation.definition.brackets.begin.git.config
+       "color" meta.brackets.git.config entity.name.section.git.config
+       "\"" meta.brackets.git.config string.quoted.double.git.config punctuation.definition.string.begin.git.config
+       "diff" meta.brackets.git.config string.quoted.double.git.config
+       "\"" meta.brackets.git.config string.quoted.double.git.config punctuation.definition.string.end.git.config
+       "]" meta.brackets.git.config punctuation.definition.brackets.end.git.config
+  19 | \tmeta = 11
+       "meta" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "11" constant.other.color.rgb-value.git.config
+  20 | \tnew = "#00ff00" bold no-ul
+       "new" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "\"" string.quoted.double.git.config punctuation.definition.string.begin.git.config
+       "#00ff00" constant.other.color.rgb-value.git.config
+       "\"" string.quoted.double.git.config punctuation.definition.string.end.git.config
+       "bold" support.constant.color-attribute.git.config
+       "no-ul" support.constant.color-attribute.git.config
+  21 | [filter "lfs"]
+       "[" meta.brackets.git.config punctuation.definition.brackets.begin.git.config
+       "filter" meta.brackets.git.config entity.name.section.git.config
+       "\"" meta.brackets.git.config string.quoted.double.git.config punctuation.definition.string.begin.git.config
+       "lfs" meta.brackets.git.config string.quoted.double.git.config
+       "\"" meta.brackets.git.config string.quoted.double.git.config punctuation.definition.string.end.git.config
+       "]" meta.brackets.git.config punctuation.definition.brackets.end.git.config
+  22 | \tclean = git-lfs clean -- %f
+       "clean" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "git-lfs" meta.function-call.shell support.function.command.shell
+       " --" keyword.operator.end-of-options.shell
+       "%f" constant.other.placeholder.git.config
+  23 | \trequired = true
+       "required" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "true" constant.language.boolean.git.config
+  24 | [section.Sub]
+       "[" meta.brackets.git.config punctuation.definition.brackets.begin.git.config
+       "section" meta.brackets.git.config entity.name.section.git.config
+       "." meta.brackets.git.config punctuation.accessor.dot.git.config
+       "Sub" meta.brackets.git.config string.unquoted.git.config
+       "]" meta.brackets.git.config punctuation.definition.brackets.end.git.config
+  25 | \tkey = "a \"q\"\t" b#c
+       "key" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "\"" string.quoted.double.git.config punctuation.definition.string.begin.git.config
+       "a " string.quoted.double.git.config
+       "\\\"" constant.character.escape.git.config
+       "q" string.quoted.double.git.config
+       "\\\"" constant.character.escape.git.config
+       "\\t" constant.character.escape.git.config
+       "\"" string.quoted.double.git.config punctuation.definition.string.end.git.config
+       " b" string.unquoted.value.git.config
+       "#" comment.line.git.config punctuation.definition.comment.git.config
+       "c" comment.line.git.config
+  26 | \tmulti = one \
+       "multi" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "one " string.unquoted.value.git.config
+       "\\" punctuation.separator.continuation.line.git.config
+  27 | \t\ttwo
+       "\t\ttwo" string.unquoted.value.git.config
+  28 | \tbad = \q
+       "bad" meta.mapping.key.git.config entity.name.tag.git.config
+       "=" keyword.operator.assignment.git.config
+       "\\q" invalid.illegal.git.config
+  29 | \t1bad = x
+       "1bad = x" invalid.illegal.git.config

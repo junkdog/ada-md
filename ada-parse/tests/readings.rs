@@ -1725,6 +1725,46 @@ fn pkgconfig() {
     readings("pkgconfig", Lang::PkgConfig, text);
 }
 
+/// Git Config's readings (X-177), as git reads a file: headers and subsections, a variable after
+/// a header, a key alone, values with git's quotes, escapes, comments and continuations,
+/// booleans and numbers alone, color words, and commands on bash's scanner (an alias's `!`,
+/// `core.pager`, a filter's), one continued across lines; git's errors.
+#[test]
+fn gitconfig() {
+    let text = concat!(
+        "# user settings\n",
+        "[user]\n",
+        "\tname = Ada Lovelace\n",
+        "\temail = ada@example.com ; a comment\n",
+        "[core] editor = nvim\n",
+        "\tpager = less -FRX\n",
+        "\tautocrlf = false\n",
+        "\tbigFileThreshold = 512m\n",
+        "\tquotepath\n",
+        "[alias]\n",
+        "\tco = checkout\n",
+        "\tup = !git fetch; git rebase\n",
+        "\tlg = \"!git log --format=\\\"%h %s\\\" \\\n",
+        "\t\t--graph\"\n",
+        "[remote \"origin\"]\n",
+        "\turl = https://example.com/x.git\n",
+        "\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
+        "[color \"diff\"]\n",
+        "\tmeta = 11\n",
+        "\tnew = \"#00ff00\" bold no-ul\n",
+        "[filter \"lfs\"]\n",
+        "\tclean = git-lfs clean -- %f\n",
+        "\trequired = true\n",
+        "[section.Sub]\n",
+        "\tkey = \"a \\\"q\\\"\\t\" b#c\n",
+        "\tmulti = one \\\n",
+        "\t\ttwo\n",
+        "\tbad = \\q\n",
+        "\t1bad = x\n",
+    );
+    readings("gitconfig", Lang::GitConfig, text);
+}
+
 /// `known_hosts`' readings (ADR-40): markers, host patterns, hashed hosts, key types and keys,
 /// comments.
 #[test]

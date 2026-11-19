@@ -9,7 +9,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::LinkState;
 use crate::doc::CodeId;
-use crate::highlight::{self, Highlights, Run};
+use crate::highlight::{self, Highlights, Run, Words};
 use crate::layout::{Layout, Row, RowKind, Span};
 use crate::theme::{StyleKey, Theme};
 
@@ -94,10 +94,28 @@ impl Painter<'_> {
             return;
         };
         let info = self.layout.code.get(block as usize).copied();
-        let runs = info
+        let highlighted = info
             .and_then(|i| i.key)
-            .and_then(|k| self.highlights.get(k))
-            .map_or(&[][..], |s| s.line(line));
+            .and_then(|k| self.highlights.get(k));
+        let runs = highlighted.map_or(&[][..], |s| s.line(line));
+        // text in its own colors' styles (FEAT-022)
+        let palette = highlighted.map_or(&[][..], |s| s.palette());
+        // a diff's changed line, its code box on its tint (X-174), its changed words on theirs
+        // (FEAT-023)
+        let words = highlighted.map_or(Words::default(), |s| s.words(line));
+        let mut tint = highlighted
+            .and_then(|s| s.tint(line))
+            .map_or(Style::new(), |t| self.theme.tint(t));
+        // text in its own colors: the background its `ESC [ K` filled the row with (PGR-007)
+        if let Some(bg) = highlighted.and_then(|s| s.fill(line)) {
+            tint.bg = Some(bg);
+        }
+        let boxed = |key: StyleKey| {
+            matches!(
+                key,
+                StyleKey::CodeBlock | StyleKey::CodeText | StyleKey::CodeWrapMark
+            )
+        };
         let spans: Vec<_> = self.layout.spans(row).collect();
         let code = spans.iter().position(|(_, s)| s.key == StyleKey::CodeText);
 
@@ -115,21 +133,32 @@ impl Painter<'_> {
 
         let g = &self.theme.glyphs;
         for (i, (text, span)) in spans.iter().enumerate() {
-            let style = span_style(self.theme, span);
+            let mut style = span_style(self.theme, span);
+            if boxed(span.key) {
+                style = style.patch(tint);
+            }
             if Some(i) == code {
                 if wrap {
-                    overlay(text, from, runs, style, self.theme, emit);
+                    overlay(text, from, (runs, words, palette), style, self.theme, emit);
                 } else {
                     let window = Window {
                         x,
                         width: span.width,
                     };
-                    window.paint(text, runs, style, self.theme, emit);
+                    window.paint(text, (runs, words, palette), style, self.theme, emit);
                 }
+            } else if let Some(c) = code.filter(|&c| {
+                wrap && c + 1 == i && span.key == StyleKey::CodeBlock && span.width > 0
+            }) && let Some((end, t)) = words.end()
+                && end == from + spans[c].0.len() as u32
+            {
+                // a changed line end, on the cell after the text of its last row (PGR-005)
+                emit(" ", style.patch(self.theme.emph(t)));
+                spaces(usize::from(span.width) - 1, style, emit);
             } else if clipped[0] && Some(i + 1) == code {
-                self.mark(&g.code_clip[0], span.width, style, emit);
+                self.mark(&g.code_clip[0], span.width, style, tint, emit);
             } else if clipped[1] && code.is_some_and(|c| c + 1 == i) {
-                self.mark(&g.code_clip[1], span.width, style, emit);
+                self.mark(&g.code_clip[1], span.width, style, tint, emit);
             } else {
                 emit(text, style);
             }
@@ -200,9 +229,16 @@ impl Painter<'_> {
         }
     }
 
-    /// A clip mark, padded to the `width` of the span it replaces.
-    fn mark(&self, glyph: &str, width: u16, pad: Style, emit: &mut impl FnMut(&str, Style)) {
-        emit(glyph, self.theme.style(StyleKey::CodeWrapMark));
+    /// A clip mark, padded to the `width` of the span it replaces, on a changed line's `tint`.
+    fn mark(
+        &self,
+        glyph: &str,
+        width: u16,
+        pad: Style,
+        tint: Style,
+        emit: &mut impl FnMut(&str, Style),
+    ) {
+        emit(glyph, self.theme.style(StyleKey::CodeWrapMark).patch(tint));
         spaces(usize::from(width).saturating_sub(glyph.width()), pad, emit);
     }
 }
@@ -303,14 +339,53 @@ fn spaces(n: usize, style: Style, emit: &mut impl FnMut(&str, Style)) {
     }
 }
 
-/// Emit `text`, which starts at byte `from` of its line, with the line's syntax runs on top.
+/// A line's highlighting as painting reads it: its syntax runs, its changed words, and the styles
+/// of runs in its own colors (FEAT-022).
+type LineHl<'a> = (&'a [Run], Words<'a>, &'a [Style]);
+
+/// Emit `text`, which starts at byte `from` of its line, with the line's syntax runs on top, and
+/// its changed words' background on those.
 fn overlay(
     text: &str,
     from: u32,
-    runs: &[Run],
+    (runs, words, palette): LineHl<'_>,
     base: Style,
     theme: &Theme,
     emit: &mut impl FnMut(&str, Style),
+) {
+    if words.is_empty() {
+        return over_runs(
+            text,
+            from,
+            (runs, palette),
+            base,
+            theme,
+            &mut |piece, _, style| {
+                emit(piece, style);
+            },
+        );
+    }
+    let emph = |t| theme.emph(t);
+    over_runs(
+        text,
+        from,
+        (runs, palette),
+        base,
+        theme,
+        &mut |piece, at, style| {
+            words.paint(piece, at as u32, style, emph, emit);
+        },
+    );
+}
+
+/// [`overlay`]'s syntax runs, each piece emitted with its byte in the line.
+fn over_runs(
+    text: &str,
+    from: u32,
+    (runs, palette): (&[Run], &[Style]),
+    base: Style,
+    theme: &Theme,
+    emit: &mut impl FnMut(&str, usize, Style),
 ) {
     let from = from as usize;
     let end = from + text.len();
@@ -333,14 +408,15 @@ fn overlay(
             break;
         };
         if !gap.is_empty() {
-            emit(gap, base);
+            emit(gap, pos, base);
         }
-        let style = highlight::rule_style(run.rule, &theme.syntax).map_or(base, |s| base.patch(s));
-        emit(piece, style);
+        let style =
+            highlight::run_style(run.rule, &theme.syntax, palette).map_or(base, |s| base.patch(s));
+        emit(piece, a, style);
         pos = b;
     }
     if pos < end {
-        emit(&text[pos - from..], base);
+        emit(&text[pos - from..], pos, base);
     }
 }
 
@@ -356,7 +432,7 @@ impl Window {
     fn paint(
         &self,
         line: &str,
-        runs: &[Run],
+        runs: LineHl<'_>,
         base: Style,
         theme: &Theme,
         emit: &mut impl FnMut(&str, Style),
@@ -387,7 +463,17 @@ impl Window {
         spaces(cut, base, emit);
         let shown = &line[start..end];
         overlay(shown, start as u32, runs, base, theme, emit);
-        spaces(width.saturating_sub(cut + shown.width()), base, emit);
+        let mut rest = width.saturating_sub(cut + shown.width());
+        // a changed line end, on the cell after the text (PGR-005)
+        if let Some((_, t)) = runs.1.end()
+            && end == line.len()
+            && col >= x
+            && rest > 0
+        {
+            emit(" ", base.patch(theme.emph(t)));
+            rest -= 1;
+        }
+        spaces(rest, base, emit);
     }
 }
 
@@ -399,9 +485,16 @@ mod tests {
     fn overlaid(text: &str, from: u32, runs: &[Run]) -> Vec<String> {
         let mut out = Vec::new();
         let theme = Theme::builtin();
-        overlay(text, from, runs, Style::new(), &theme, &mut |t: &str, _| {
-            out.push(t.to_owned());
-        });
+        overlay(
+            text,
+            from,
+            (runs, Words::default(), &[]),
+            Style::new(),
+            &theme,
+            &mut |t: &str, _| {
+                out.push(t.to_owned());
+            },
+        );
         out
     }
 
@@ -536,9 +629,15 @@ mod tests {
         let mut out = String::new();
         let theme = Theme::builtin();
         let window = Window { x, width };
-        window.paint(line, &[], Style::new(), &theme, &mut |t: &str, _| {
-            out.push_str(t);
-        });
+        window.paint(
+            line,
+            (&[], Words::default(), &[]),
+            Style::new(),
+            &theme,
+            &mut |t: &str, _| {
+                out.push_str(t);
+            },
+        );
         out
     }
 

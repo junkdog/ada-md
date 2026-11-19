@@ -14,8 +14,9 @@
 //! pattern it is in (an ignore pattern, a quoted or an unquoted attributes pattern), or an
 //! attribute's leaf under its builtin's meta scope.
 //!
-//! `Git Config` and `Git Rebase Todo` embed a shell, and `Git Commit` and `Git Log` bat's
-//! `Diff`; they have no lexer here yet, so ada prints them plain (ADR-43).
+//! `Git Config` has a scanner of its own (`git_config.rs`, X-177). `Git Rebase Todo` embeds a
+//! shell, and `Git Commit` and `Git Log` bat's `Diff`; they have no lexer here yet, so ada prints
+//! them plain (ADR-43).
 
 use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{self, Cursor, Format, blanks, find, leads};

@@ -16,7 +16,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::app;
 use crate::doc::{Doc, LineRange, LinkId};
 use crate::git::LineMarks;
-use crate::highlight::{self, Highlights, SyntaxTheme};
+use crate::highlight::{self, Highlights, SyntaxTheme, Words};
 use crate::images::{self, Probe, Proto};
 use crate::kitty;
 use crate::layout::{self, ImageSlot, Layout, LayoutParams, Measure, Row, RowKind};
@@ -562,8 +562,8 @@ struct Slot {
 /// [`Sgr`]'s slots, a power of two.
 const SLOTS: usize = 64;
 
-/// Room for the longest pen change, six modifiers and RGB foreground, background and underline
-/// color (65 bytes; a reset form is chosen only when shorter than the diff, and the diff turns
+/// Room for the longest pen change, nine modifiers and RGB foreground, background and underline
+/// color (71 bytes; a reset form is chosen only when shorter than the diff, and the diff turns
 /// something off only when `to` lacks something), rounded up to fill a [`Slot`].
 const SGR_MAX: usize = 95;
 
@@ -630,7 +630,7 @@ fn change(from: Pen, to: Pen, out: &mut Vec<u8>, scratch: &mut Vec<u8>) {
     out.push(b'm');
 }
 
-/// What shows of a style in print: six modifiers, the colors, and an RGB underline color, in one
+/// What shows of a style in print: its modifiers, the colors, and an underline color, in one
 /// number that is the same for the same pen only (PRN-005), so that a pen change compares two and
 /// looks them up in [`Sgr`] as they are. From the top: the modifiers (16 bits), then the
 /// foreground, background and underline colors (32 each) as a cell holds them, 0 for none.
@@ -641,7 +641,10 @@ const PRINTED: Modifier = Modifier::BOLD
     .union(Modifier::DIM)
     .union(Modifier::ITALIC)
     .union(Modifier::UNDERLINED)
+    .union(Modifier::SLOW_BLINK)
+    .union(Modifier::RAPID_BLINK)
     .union(Modifier::REVERSED)
+    .union(Modifier::HIDDEN)
     .union(Modifier::CROSSED_OUT);
 
 /// Modifiers that show on a space.
@@ -653,16 +656,13 @@ impl Pen {
     fn of(style: Style) -> Pen {
         let modifier = style.add_modifier & PRINTED;
         let set = |c: Option<Color>| c.filter(|&c| c != Color::RESET);
-        let underline = match style.underline_color.map(Color::kind) {
-            Some(Kind::Rgb(r, g, b)) if modifier.contains(Modifier::UNDERLINED) => {
-                Some(Color::rgb(r, g, b))
-            }
-            _ => None,
-        };
+        // only an underline shows its color: text in its own colors sets one (`58;5;n`) apart
+        let underline =
+            set(style.underline_color).filter(|_| modifier.contains(Modifier::UNDERLINED));
         Pen::new(modifier, set(style.fg), set(style.bg), underline)
     }
 
-    /// Colors as [`Pen::of`] leaves them: none for the default, an RGB underline color.
+    /// Colors as [`Pen::of`] leaves them: none for the default.
     fn new(modifier: Modifier, fg: Option<Color>, bg: Option<Color>, ul: Option<Color>) -> Pen {
         let color = |c: Option<Color>| u128::from(c.map_or(0, Color::bits));
         Pen(u128::from(modifier.bits()) << 96 | color(fg) << 64 | color(bg) << 32 | color(ul))
@@ -695,15 +695,26 @@ fn color_at(bits: u128) -> Option<Color> {
 fn diff(from: Pen, to: Pen, out: &mut Vec<u8>) -> bool {
     let removed = from.modifier() - to.modifier();
     let mut added = to.modifier() - from.modifier();
-    if removed.intersects(Modifier::BOLD | Modifier::DIM) {
-        // 22 ends both bold and dim
-        out.extend_from_slice(b";22");
-        added |= to.modifier() & (Modifier::BOLD | Modifier::DIM);
+    // 22 ends both bold and dim, 25 both blinks
+    for pair in [
+        Modifier::BOLD | Modifier::DIM,
+        Modifier::SLOW_BLINK | Modifier::RAPID_BLINK,
+    ] {
+        if removed.intersects(pair) {
+            let code: &[u8] = if pair.contains(Modifier::BOLD) {
+                b";22"
+            } else {
+                b";25"
+            };
+            out.extend_from_slice(code);
+            added |= to.modifier() & pair;
+        }
     }
     for (flag, code) in [
         (Modifier::ITALIC, b";23"),
         (Modifier::UNDERLINED, b";24"),
         (Modifier::REVERSED, b";27"),
+        (Modifier::HIDDEN, b";28"),
         (Modifier::CROSSED_OUT, b";29"),
     ] {
         if removed.contains(flag) {
@@ -715,7 +726,10 @@ fn diff(from: Pen, to: Pen, out: &mut Vec<u8>) -> bool {
         (Modifier::DIM, b";2"),
         (Modifier::ITALIC, b";3"),
         (Modifier::UNDERLINED, b";4"),
+        (Modifier::SLOW_BLINK, b";5"),
+        (Modifier::RAPID_BLINK, b";6"),
         (Modifier::REVERSED, b";7"),
+        (Modifier::HIDDEN, b";8"),
         (Modifier::CROSSED_OUT, b";9"),
     ] {
         if added.contains(flag) {
@@ -733,8 +747,14 @@ fn diff(from: Pen, to: Pen, out: &mut Vec<u8>) -> bool {
     }
     if from.underline() != to.underline() {
         match to.underline() {
-            // RGB, as Pen::of keeps it: `;58;2;r;g;b`
-            Some(c) => color(c, 50, out),
+            // `;58;2;r;g;b` or `;58;5;n`: no short form
+            Some(c) => match c.kind() {
+                Kind::Indexed(n) => {
+                    out.extend_from_slice(b";58;5");
+                    number(n, out);
+                }
+                _ => color(c, 50, out),
+            },
             None => {
                 off = true;
                 out.extend_from_slice(b";59");
@@ -766,6 +786,99 @@ pub fn start() {
 /// The cores to highlight and paint on, eight at most.
 fn cores() -> usize {
     thread::available_parallelism().map_or(1, |n| n.get().min(8))
+}
+
+/// `--color-only` (X-174): `text`'s lines, each in `lang`'s colors and a diff's tints and changed
+/// words (FEAT-023), one line
+/// out for each line in: no layout, no margin, no padding rows, nothing past a line's text, as
+/// git's `interactive.diffFilter` wants it (`git add -p` pairs the lines up). Tabs expand as the
+/// highlighter reads them. Written to stdout, a closed pipe the end of it.
+pub fn color_only(text: &str, lang: Option<&str>, theme: &Theme) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    let result = write_color_only(text, lang, theme, &mut stdout).and_then(|()| stdout.flush());
+    match result {
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        result => result,
+    }
+}
+
+/// [`color_only`] into `w`, a piece at a time.
+pub fn write_color_only(
+    text: &str,
+    lang: Option<&str>,
+    theme: &Theme,
+    w: &mut impl Write,
+) -> io::Result<()> {
+    let syntax = SyntaxTheme::new(&theme.syntax);
+    let spans = lang.map(|lang| highlight::highlight(1, lang, text, &syntax));
+    let base = theme.style(StyleKey::CodeText);
+    let palette = spans.as_ref().map_or(&[][..], |s| s.palette());
+    let (mut out, mut sgr) = (Vec::new(), Sgr::new());
+    for (n, line) in crate::doc::code_lines(text).enumerate() {
+        let n = n as u32;
+        let line = layout::expand_tabs(line);
+        let runs = spans.as_ref().map_or(&[][..], |s| s.line(n));
+        let tint = spans.as_ref().and_then(|s| s.tint(n));
+        let words = spans.as_ref().map_or(Words::default(), |s| s.words(n));
+        let base = tint.map_or(base, |t| base.patch(theme.tint(t)));
+        let mut written = Line::default();
+        let mut span = |text: &str, style: Style| {
+            written.span(text, Pen::of(style), &mut out, &mut sgr);
+        };
+        if words.is_empty() {
+            color_runs(
+                &line,
+                (runs, palette),
+                base,
+                theme,
+                &mut |text, _, style| {
+                    span(text, style);
+                },
+            );
+        } else {
+            let emph = |t| theme.emph(t);
+            color_runs(
+                &line,
+                (runs, palette),
+                base,
+                theme,
+                &mut |text, at, style| {
+                    words.paint(text, at as u32, style, emph, &mut span);
+                },
+            );
+            // a changed line end, on the cell after the text (PGR-005)
+            if let Some((_, t)) = words.end() {
+                span(" ", base.patch(theme.emph(t)));
+            }
+        }
+        end_line(&written, &mut out);
+        if out.len() >= PIECE {
+            w.write_all(&out)?;
+            out.clear();
+        }
+    }
+    w.write_all(&out)
+}
+
+/// `line`'s `runs` in their styles over `base`, each piece emitted with its byte in the line.
+fn color_runs(
+    line: &str,
+    (runs, palette): (&[highlight::Run], &[Style]),
+    base: Style,
+    theme: &Theme,
+    emit: &mut impl FnMut(&str, usize, Style),
+) {
+    let mut start = 0;
+    for run in runs {
+        let end = (run.end as usize).min(line.len());
+        let style =
+            highlight::run_style(run.rule, &theme.syntax, palette).map_or(base, |s| base.patch(s));
+        emit(&line[start..end], start, style);
+        start = end;
+    }
+    if start < line.len() {
+        emit(&line[start..], start, base);
+    }
 }
 
 /// Print a document to stdout. A closed pipe (fzf moving on) is not an error.
@@ -875,6 +988,30 @@ mod tests {
         );
     }
 
+    /// PGR-007: text in its own colors hides, blinks and colors its underlines by index.
+    #[test]
+    fn hidden_blinking_and_indexed_underlines() {
+        let all = Style::new().add_modifier(Modifier::HIDDEN | Modifier::SLOW_BLINK);
+        assert_eq!(sgr(Style::new(), all), "\x1b[5;8m");
+        assert_eq!(sgr(all, all.remove_modifier(Modifier::HIDDEN)), "\x1b[28m");
+        let fast = Style::new().add_modifier(Modifier::RAPID_BLINK | Modifier::BOLD);
+        assert_eq!(sgr(fast, Style::new().bold()), "\x1b[25m");
+        let ul = Style::new().underlined();
+        assert_eq!(
+            sgr(ul, ul.underline_color(Color::indexed(3))),
+            "\x1b[58;5;3m"
+        );
+        assert_eq!(
+            sgr(ul, ul.underline_color(Color::indexed(200))),
+            "\x1b[58;5;200m"
+        );
+        // an underline color with no underline shows nothing
+        assert_eq!(
+            sgr(Style::new(), Style::new().underline_color(Color::RED)),
+            ""
+        );
+    }
+
     #[test]
     fn the_longest_change_fits_a_slot() {
         let white = Color::rgb(255, 255, 255);
@@ -884,7 +1021,7 @@ mod tests {
             .underline_color(white)
             .add_modifier(PRINTED);
         let longest = sgr(Style::new(), all);
-        assert_eq!(longest.len(), 65);
+        assert_eq!(longest.len(), 71);
         assert!(longest.len() <= SGR_MAX);
         assert_eq!(size_of::<Slot>(), 128);
     }
@@ -1263,6 +1400,39 @@ mod tests {
         assert_eq!(lines(off)[1], "x".repeat(30));
         assert_eq!(lines(off)[2], format!("{mark}{}", "x".repeat(29)));
         assert_eq!(lines(off)[3], format!("{mark}x"));
+    }
+
+    /// PGR-005: a diff's line whose `\r` its pair hasn't has the cell after its text on the
+    /// changed words' tint, its lines wrapped or not; its pair hasn't.
+    #[test]
+    fn a_changed_line_end_is_printed() {
+        let theme = Theme::builtin();
+        let text = "--- a/m.rs\n+++ b/m.rs\n@@ -1 +1 @@\n-let x = 1;\r\n+let x = 1;\n";
+        let file = crate::doc::file::code(text, Some("Diff"));
+        let emph = sgr_of(theme.emph(highlight::Tint::Deleted).bg.unwrap(), 40);
+        for code_wrap in [true, false] {
+            let params = LayoutParams {
+                width: 40,
+                max_width: None,
+                table_mode: Default::default(),
+                code_wrap,
+                code_labels: false,
+                bare: true,
+                line_numbers: crate::layout::LineNumbers::Off,
+                glyphs_gen: 0,
+                images: None,
+            };
+            let filetype = crate::filetype::FileType::Text { lang: Some("Diff") };
+            let out = render(&file, &theme, filetype.params(params), Options::default());
+            let lines: Vec<&str> = out.lines().collect();
+            let after = |n: usize| lines[n].split_once("1;").unwrap().1.to_owned();
+            assert!(after(3).contains(&emph), "wrap {code_wrap}: {:?}", lines[3]);
+            assert!(
+                !after(4).contains(&emph),
+                "wrap {code_wrap}: {:?}",
+                lines[4]
+            );
+        }
     }
 
     /// `md` printed 40 columns wide with `opts`, a line each.
