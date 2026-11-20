@@ -7,19 +7,24 @@
 //! name `[A-Za-z0-9.-]`, with a subsection as `[name "sub"]` (blanks, then a quoted name whose
 //! `\` takes any one character) or the old `[name.sub]`. A variable is a name (a letter, then
 //! letters, digits and `-`), then nothing (a boolean's true) or blanks, `=` and a value; anything
-//! else is git's error, read as such to the line's end.
+//! else is git's error, read as such to the line's end. A header's `[` or a quote left open at
+//! the line's end is git's error too, shown on the mark that opened it.
 //!
 //! **A value** as `parse_value` reads it: `"` opens and closes a quote anywhere in it (`a"b c"d`),
 //! `#` and `;` outside a quote start a comment wherever they stand (`x#y` is `x`), `\t`, `\b`,
 //! `\n`, `\\` and `\"` are escapes and any other `\` git's error, and a `\` that ends a line joins
 //! the next to the value, in a quote or out of one. What a value is read as is its key's: a
-//! command git runs through the shell (an alias, `core.pager`, `core.editor`, a diff driver's
-//! `textconv`, a filter's `clean`, `credential.helper`, …) is bash's scanner on the text the
-//! shell gets (git's quotes and escapes taken out, a `!` that starts an alias's or a credential
-//! helper's text the format's, a filter's or a merge driver's `%f`, `%A`, … git's placeholders),
-//! its spans laid back over the line's bytes; a key of a `[color "…"]` section is a list of color
-//! words; a remote's or a submodule's `url` and a `[url "…"]` section's `insteadOf` a link; any
-//! other value is text, a boolean or a number where it is that alone.
+//! command git runs through the shell (a `!` alias, `core.pager`, `core.editor`, a diff driver's
+//! `textconv`, a filter's `clean`, `credential.helper`, a trailer's `cmd`, …) is bash's scanner
+//! on the text the shell gets (git's quotes and escapes taken out, a `!` that starts an alias's
+//! or a credential helper's text the format's, a filter's or a merge driver's `%f`, `%A`, …
+//! git's placeholders), its spans laid back over the line's bytes. A shell comment a `\`
+//! continues goes on to the value's end, git joining the lines before the shell reads them. An
+//! alias without a `!` is a git command line, which git splits itself: bash's scanner on it with
+//! the shell's operators made its text. A key of a `[color "…"]` section is a list of color
+//! words (`highlightRecent`'s a color and a date in turn, between commas); a remote's or a
+//! submodule's `url` and a `[url "…"]` section's `insteadOf` a link; any other value is text, a
+//! boolean or a number where it is that alone.
 //!
 //! **The state:** the section's reading is carried in `arg`'s low byte (which keys run
 //! commands), what a line leaves open above it (a value continued by a `\`: its reading and
@@ -141,6 +146,9 @@ const S_HOOK: u8 = 18;
 const S_UPLOADPACK: u8 = 19;
 const S_SUBMODULE: u8 = 20;
 const S_URL: u8 = 21;
+const S_TRAILER: u8 = 22;
+const S_GUITOOL: u8 = 23;
+const S_GC: u8 = 24;
 const S_MASK: u8 = 0x3f;
 /// The section has a subsection (`[diff "x"]`, `[diff.x]`).
 const SUB: u8 = 0x40;
@@ -167,6 +175,9 @@ static SECTIONS: &[(&[u8], u8)] = &[
     (b"uploadpack", S_UPLOADPACK),
     (b"submodule", S_SUBMODULE),
     (b"url", S_URL),
+    (b"trailer", S_TRAILER),
+    (b"guitool", S_GUITOOL),
+    (b"gc", S_GC),
 ];
 
 /// A section's name's reading, ASCII case ignored, as git folds it.
@@ -184,26 +195,41 @@ const V_TEXT: u8 = 1;
 const V_COLOR: u8 = 2;
 /// A link (a remote's or a submodule's `url`, a `[url "…"]` section's `insteadOf`).
 const V_LINK: u8 = 3;
+/// `color.blame.highlightRecent`'s colors and dates (X-179), items between commas, a color's
+/// first and then a date's in turn: `blue,12 month ago,white`.
+const V_RECENT: u8 = 4;
 /// A command run through the shell: bash's scanner on the shell's text. This and the readings
-/// after it are commands.
-const V_SHELL: u8 = 4;
-/// An alias or a credential helper whose text hasn't started: a `!` first is the format's,
-/// and either way the rest is [`V_SHELL`]'s (a git command line is read as one too).
-const V_BANG: u8 = 5;
+/// after it are commands, [`shell`]'s.
+const V_SHELL: u8 = 5;
+/// A credential helper whose text hasn't started: a `!` first is the format's, and either way
+/// the rest is [`V_SHELL`]'s (git runs a helper through the shell, `git credential-` before a
+/// name).
+const V_BANG: u8 = 6;
 /// A filter's or a merge driver's command, whose `%` and a letter are git's placeholders
 /// (`%f`, `%O`, `%A`, `%B`).
-const V_DRIVER: u8 = 6;
-const V_MASK: u8 = 7;
+const V_DRIVER: u8 = 7;
+/// An alias whose text hasn't started: a `!` first is the format's and the rest [`V_SHELL`]'s,
+/// and without one the rest is [`V_GIT`]'s.
+const V_ALIAS: u8 = 8;
+/// A git command line, a non-`!` alias's (X-179): git splits it into its arguments itself
+/// (`split_cmdline`, quotes and `\` as the shell has them) and runs no shell, so `|`, `;`,
+/// `$` and `#` are its arguments' text, not the shell's.
+const V_GIT: u8 = 9;
+/// A shell's comment that a `\` continued (X-179): git joins the lines before the shell gets
+/// them, so the comment goes on to the value's end.
+const V_REM: u8 = 10;
+const V_MASK: u8 = 0x0f;
 /// The value continues in a quote.
-const IN_QUOTE: u8 = 8;
+const IN_QUOTE: u8 = 0x10;
 
 /// What key `key` of a section read as `sect` holds, ASCII case ignored.
 fn key_reading(sect: u8, key: &[u8]) -> u8 {
     let is = |w: &[u8]| key.eq_ignore_ascii_case(w);
     let sub = sect & SUB != 0;
     let shell = match (sect & S_MASK, sub) {
-        (S_ALIAS, _) => return V_BANG,
+        (S_ALIAS, _) => return V_ALIAS,
         (S_CREDENTIAL, _) if is(b"helper") => return V_BANG,
+        (S_COLOR, true) if is(b"highlightRecent") => return V_RECENT,
         (S_COLOR, true) => return V_COLOR,
         (S_REMOTE | S_SUBMODULE, true) if is(b"url") || is(b"pushurl") => return V_LINK,
         (S_URL, true) if is(b"insteadOf") || is(b"pushInsteadOf") => return V_LINK,
@@ -224,11 +250,14 @@ fn key_reading(sect: u8, key: &[u8]) -> u8 {
         (S_DIFF, false) => is(b"external"),
         (S_DIFF, true) => is(b"command") || is(b"textconv"),
         (S_DIFFTOOL | S_MERGETOOL | S_BROWSER | S_MAN, true) => is(b"cmd"),
-        (S_GPG, _) => is(b"program"),
+        (S_GPG, _) => is(b"program") || sub && is(b"defaultKeyCommand"),
         (S_SENDEMAIL, _) => is(b"sendmailCmd") || is(b"toCmd") || is(b"ccCmd"),
         (S_REMOTE, true) => is(b"uploadpack") || is(b"receivepack"),
         (S_UPLOADPACK, false) => is(b"packObjectsHook"),
         (S_HOOK, true) => is(b"command"),
+        (S_TRAILER, true) => is(b"cmd") || is(b"command"),
+        (S_GUITOOL, true) => is(b"cmd"),
+        (S_GC, false) => is(b"recentObjectsHook"),
         _ => false,
     };
     if shell { V_SHELL } else { V_TEXT }
@@ -314,7 +343,9 @@ fn char_len(x: u8) -> usize {
 }
 
 /// A section's header from its `[` at `p`: the section's reading into `sect`, and where the
-/// line goes on after its `]` (`None` where git's error ends it).
+/// line goes on after its `]` (`None` where git's error ends it). What the line's end leaves
+/// open is git's error too, and shows where it opened (X-179): the `[` of a header with no `]`
+/// (`[core`, `[remote "origin"`), the `"` of a subsection with no closing one (`[remote "o`).
 #[inline(never)]
 fn header<K: Sink>(c: &mut Cursor<K>, p: usize, sect: &mut u8) -> Option<usize> {
     let b = c.b;
@@ -324,8 +355,18 @@ fn header<K: Sink>(c: &mut Cursor<K>, p: usize, sect: &mut u8) -> Option<usize> 
     while q < n && (b[q].is_ascii_alphanumeric() || b[q] == b'-' || b[q] == b'.') {
         q += 1;
     }
+    // a subsection's quote at `r`, and where its closing quote leaves it; what follows the
+    // name, read ahead so that a `[` or a `"` left open shows as git's error
+    let r = blanks(b, q);
+    let quote = (q > s && r > q && b.get(r) == Some(&b'"')).then(|| (r, quote_end(b, r + 1)));
+    let open = match (b.get(q), quote) {
+        (None, _) => true,
+        (Some(b' ' | b'\t'), None) => r == n,
+        (_, Some((_, Some(t)))) => t == n,
+        _ => false,
+    };
     c.skip(p);
-    c.put(s, k::BRACKET_BEGIN);
+    c.put(s, if open { k::INVALID } else { k::BRACKET_BEGIN });
     // the old `[name.sub]`: the subsection from the first `.`
     let dot = b[s..q].iter().position(|&y| y == b'.').map(|i| s + i);
     let name = dot.unwrap_or(q);
@@ -341,14 +382,20 @@ fn header<K: Sink>(c: &mut Cursor<K>, p: usize, sect: &mut u8) -> Option<usize> 
             Some(q + 1)
         }
         Some(b' ' | b'\t') if q > s => {
-            let r = blanks(b, q);
-            if b.get(r) != Some(&b'"') {
+            let Some((r, end)) = quote else {
                 invalid(c, r);
                 return None;
-            }
+            };
             *sect |= SUB;
             c.skip(r);
-            c.put(r + 1, k::SUB_BEGIN);
+            c.put(
+                r + 1,
+                if end.is_some() {
+                    k::SUB_BEGIN
+                } else {
+                    k::INVALID
+                },
+            );
             let mut t = r + 1;
             loop {
                 let e = find(b, t, *b"\"\\");
@@ -382,6 +429,38 @@ fn header<K: Sink>(c: &mut Cursor<K>, p: usize, sect: &mut u8) -> Option<usize> 
             *sect = S_OTHER;
             invalid(c, q);
             None
+        }
+    }
+}
+
+/// Where a header's subsection's quote that opens before `t` closes, past its `"`: `None`
+/// when the line ends first, or in a `\` (git takes any character after one).
+fn quote_end(b: &[u8], mut t: usize) -> Option<usize> {
+    loop {
+        let e = find(b, t, *b"\"\\");
+        match b.get(e)? {
+            b'"' => return Some(e + 1),
+            _ if e + 1 == b.len() => return None,
+            _ => t = e + 1 + char_len(b[e + 1]),
+        }
+    }
+}
+
+/// Whether a value's quote that opens before `t` closes on its line, or goes on to the next
+/// (a `\` at the line's end); a quote left open at a value's end is git's error (X-179). And
+/// the first `"` or `\` from `t`, where the quote's reading stops next.
+fn value_quote_closes(b: &[u8], t: usize) -> (bool, usize) {
+    let first = find(b, t, *b"\"\\");
+    let mut e = first;
+    loop {
+        match b.get(e) {
+            None => return (false, first),
+            Some(b'"') => return (true, first),
+            _ => match escape(b, e) {
+                Escape::Continuation => return (true, first),
+                Escape::Valid(_) => e = find(b, e + 2, *b"\"\\"),
+                Escape::Invalid(len) => e = find(b, e + len, *b"\"\\"),
+            },
         }
     }
 }
@@ -506,14 +585,22 @@ fn text<K: Sink>(c: &mut Cursor<K>, mut p: usize, reading: u8, mut quoted: bool)
     let b = c.b;
     let n = b.len();
     let link = reading == V_LINK;
+    // whether `highlightRecent`'s item is a date's, a color's first
+    let mut date = false;
+    // where a quote's reading stops next, found when it opened
+    let mut next = None;
     loop {
-        let e = if quoted {
+        let e = if let Some(e) = next.take() {
+            e
+        } else if quoted {
             find(b, p, *b"\"\\")
         } else {
             find(b, p, *b"\"\\#;")
         };
         if reading == V_COLOR {
             colors(c, p, e, quoted);
+        } else if reading == V_RECENT {
+            recent(c, p, e, quoted, &mut date);
         } else {
             c.put(
                 e,
@@ -532,7 +619,15 @@ fn text<K: Sink>(c: &mut Cursor<K>, mut p: usize, reading: u8, mut quoted: bool)
         }
         match b[e] {
             b'"' => {
-                c.put(e + 1, if quoted { k::QUOTE_END } else { k::QUOTE_BEGIN });
+                let kind = match quoted {
+                    true => k::QUOTE_END,
+                    false => {
+                        let (closes, stop) = value_quote_closes(b, e + 1);
+                        next = Some(stop);
+                        if closes { k::QUOTE_BEGIN } else { k::INVALID }
+                    }
+                };
+                c.put(e + 1, kind);
                 quoted = !quoted;
                 p = e + 1;
             }
@@ -579,6 +674,29 @@ fn colors<K: Sink>(c: &mut Cursor<K>, s: usize, e: usize, quoted: bool) {
         q = w;
     }
     c.skip(e);
+}
+
+/// `b[s..e]` of `color.blame.highlightRecent`'s value (X-179), as `parse_color_fields` reads
+/// it: items between commas, a color's words and a date's text in turn, `date` whether the item
+/// `s` is in is a date's.
+#[inline(never)]
+fn recent<K: Sink>(c: &mut Cursor<K>, s: usize, e: usize, quoted: bool, date: &mut bool) {
+    let b = c.b;
+    let mut q = s;
+    loop {
+        let end = q + b[q..e].iter().position(|&y| y == b',').unwrap_or(e - q);
+        if *date {
+            c.put(end, if quoted { k::QUOTED } else { k::TEXT });
+        } else {
+            colors(c, q, end, quoted);
+        }
+        if end == e {
+            return;
+        }
+        c.skip(end + 1);
+        *date = !*date;
+        q = end + 1;
+    }
 }
 
 /// A word of a color value as git's `color_parse_mem` reads it, ASCII case ignored: a color's
@@ -654,10 +772,12 @@ std::thread_local! {
 /// A byte no kind is: plain.
 const NONE: u16 = u16::MAX;
 
-/// A command's value from `p` (`reading` [`V_SHELL`], [`V_BANG`] or [`V_DRIVER`]), in a quote
-/// where `quoted`, bash's state in `sh`: what the line leaves open. git's reading of the line
-/// first (its quotes, escapes, comment and continuation), then bash's scanner on the text that
-/// leaves, its spans mapped back to the line's bytes and git's tokens laid over them.
+/// A command's value from `p` (`reading` [`V_SHELL`] or one after it), in a quote where
+/// `quoted`, bash's state in `sh`: what the line leaves open. git's reading of the line first
+/// (its quotes, escapes, comment and continuation), then bash's scanner on the text that leaves,
+/// its spans mapped back to the line's bytes and git's tokens laid over them. A git command line
+/// ([`V_GIT`]) is bash's scanner on its text with the shell's operators made words; a comment
+/// continued ([`V_REM`]) is a comment to the value's end.
 #[inline(never)]
 fn shell<K: Sink>(
     c: &mut Cursor<K>,
@@ -677,10 +797,13 @@ fn shell<K: Sink>(
         // where the value's text ends, and whether a comment or a continuation follows
         let mut end = n;
         let mut continued = false;
+        // the mark of a quote opened on this line and open still
+        let mut opened = None;
         while q < n {
             match b[q] {
                 b'"' => {
                     let kind = if quoted { k::QUOTE_END } else { k::QUOTE_BEGIN };
+                    opened = (!quoted).then_some(v.marks.len());
                     v.marks.push((q as u32, q as u32 + 1, kind));
                     quoted = !quoted;
                     q += 1;
@@ -728,24 +851,62 @@ fn shell<K: Sink>(
                 }
             }
         }
-        // an alias's or a credential helper's text: a `!` first makes it a shell's
+        // a quote left open at the value's end: git's error, where it opened (X-179)
+        if quoted
+            && !continued
+            && let Some(i) = opened
+        {
+            v.marks[i].2 = k::INVALID;
+        }
+        // an alias's or a credential helper's text: a `!` first makes it a shell's, and an
+        // alias without one a git command line
         let mut from = 0;
-        if reading == V_BANG
+        if matches!(reading, V_BANG | V_ALIAS)
             && let Some(i) = v.cooked.iter().position(|&y| !BLANK[usize::from(y)])
         {
-            if v.cooked[i] == b'!' {
+            let bang = v.cooked[i] == b'!';
+            if bang {
                 let (s, e) = v.at[i];
                 v.marks.push((s, e, k::SHELL_MARK));
                 from = i + 1;
             }
-            reading = V_SHELL;
+            reading = if bang || reading == V_BANG {
+                V_SHELL
+            } else {
+                V_GIT
+            };
+        }
+        if reading == V_GIT {
+            // the shell's operators, expansions and comments: an argument's text to git
+            for y in &mut v.cooked[from..] {
+                if matches!(
+                    y,
+                    b'|' | b'&' | b';' | b'<' | b'>' | b'(' | b')' | b'$' | b'`'
+                ) || matches!(y, b'#' | b'{' | b'}' | b'~' | b'!' | b'*' | b'?' | b'[')
+                {
+                    *y = b'x';
+                }
+            }
         }
         if continued {
             // the shell's own continuation, so that bash reads the next line as this one's
             v.push(b'\\', end, end + 1);
         }
-        if from < v.cooked.len() {
+        let (_, rem) = crate::bash::PLAIN_COMMENT;
+        if reading == V_REM {
+            let len = v.cooked.len() as u32;
+            v.spans.push(Span {
+                start: 0,
+                end: len,
+                kind: rem,
+            });
+        } else if from < v.cooked.len() {
             crate::bash::line_spans(&v.cooked[from..], sh, &mut Out::new(&mut v.spans));
+            // a comment the `\` continues: git joins the next line to it
+            let to = (v.cooked.len() - from) as u32;
+            if continued && v.spans.last().is_some_and(|l| l.kind == rem && l.end == to) {
+                reading = V_REM;
+            }
         }
         let to = if continued { end + 1 } else { end };
         v.kinds.clear();
@@ -1097,6 +1258,106 @@ mod tests {
         has(&l, "%B", "constant.other.placeholder.git.config");
         // only a driver's: an alias's `%` is the shell's text
         lacks(&l, "%Y", "constant.other.placeholder.git.config");
+    }
+
+    /// X-179: a header's `[` or a quote left open at a line's end is git's error, on the mark
+    /// that opened it; a quote a `\` continues isn't open.
+    #[test]
+    fn what_a_line_leaves_open() {
+        has(&["[core"], "[", INVALID);
+        has(&["[core"], "core", SECTION);
+        has(&["[remote \"origin\""], "[", INVALID);
+        has(&["[remote \"origin"], "\"", INVALID);
+        lacks(&["[remote \"origin"], "[", INVALID);
+        has(&["[a]", "k = \"abc"], "\"", INVALID);
+        has(&["[a]", "k = \"abc"], "abc", QUOTED);
+        lacks(&["[a]", "k = \"a \\", "b\""], "\"", INVALID);
+        has(&["[alias]", "lg = !echo \"x"], "\"", INVALID);
+        lacks(&["[alias]", "lg = \"!echo x \\", "y\""], "\"", INVALID);
+        lacks(&["[a]", "k = \"x\"", "[b]"], "[", INVALID);
+    }
+
+    /// X-179: a shell comment in a quoted command, continued: git joins the lines, so the
+    /// comment swallows the rest of the value.
+    #[test]
+    fn a_continued_comment_goes_on() {
+        let l = [
+            "[alias]",
+            "x = \"!f() { echo hi; # note \\",
+            "    echo there; }; f\"",
+            "next = y",
+        ];
+        has(&l, "    echo there; }; f", "comment.line.number-sign.shell");
+        has(
+            &l,
+            "\"",
+            "string.quoted.double.git.config punctuation.definition.string.end.git.config",
+        );
+        has(&l, "next", KEY);
+    }
+
+    /// X-179: an alias without a `!` is a git command line, which git splits itself: the
+    /// shell's operators are its text; with a `!`, the shell's.
+    #[test]
+    fn an_alias_without_a_bang_is_gits_command_line() {
+        let l = [
+            "[alias]",
+            "l = log --oneline | head",
+            "q = log \"$x\" && y",
+            "p = !git log | head",
+        ];
+        let got = marked(Lang::GitConfig, &l);
+        let pipes = got
+            .iter()
+            .filter(|&&(t, s)| t == "|" && s.contains("pipe"))
+            .count();
+        assert_eq!(pipes, 1, "{got:#?}");
+        // the git command's name a command's, as bash reads one
+        assert!(
+            got.iter()
+                .any(|&(t, s)| t == "log" && s.starts_with("meta.function-call.shell")),
+            "{got:#?}"
+        );
+        lacks(&l, "&&", "keyword.operator.logical.and.shell");
+        lacks(&l, "$", "punctuation.definition.variable.shell");
+    }
+
+    /// X-179: the commands git runs through the shell that X-177 read as text.
+    #[test]
+    fn more_commands_are_bash() {
+        let l = [
+            "[gpg \"ssh\"]",
+            "defaultKeyCommand = ssh-add -L",
+            "[trailer \"sign\"]",
+            "cmd = echo x",
+            "[guitool \"lint\"]",
+            "cmd = make lint",
+            "[gc]",
+            "recentObjectsHook = hook-it --all",
+        ];
+        let got = marked(Lang::GitConfig, &l);
+        for word in ["ssh-add", "echo", "make", "hook-it"] {
+            assert!(
+                got.iter().any(|&(x, s)| x == word && s.ends_with(".shell")),
+                "{word}: {got:#?}"
+            );
+        }
+    }
+
+    /// X-179: `color.blame.highlightRecent`, a color and a date in turn between commas.
+    #[test]
+    fn highlight_recent_colors_and_dates() {
+        let l = [
+            "[color \"blame\"]",
+            "highlightRecent = blue,12 month ago,white bold,1 month ago,red",
+        ];
+        has(&l, "blue", "support.constant.color.git.config");
+        has(&l, "white", "support.constant.color.git.config");
+        has(&l, "bold", "support.constant.color-attribute.git.config");
+        has(&l, "red", "support.constant.color.git.config");
+        has(&l, "12 month ago", TEXT);
+        has(&l, "1 month ago", TEXT);
+        lacks(&l, "12", "constant.other.color.rgb-value.git.config");
     }
 
     #[test]

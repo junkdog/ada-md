@@ -154,7 +154,8 @@ pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
 /// Print `bytes`, a file of `lang`, as [`start`] would stream it, but cut at `limits`, `first`
 /// bytes of it read before the rest, and line numbers counted as the whole print counts them. The fuzzer's way in (F-07): it checks the
 /// output against [`super::render`] of the whole file. `lang` must be one a lexer highlights
-/// (`None`, `"log"`, `"JSON"`, or any other ada-parse language, as `"Diff"` or `"bash"`).
+/// (`None`, `"log"`, `"JSON"`, or any other ada-parse language, as `"Diff"` or `"bash"`, or
+/// `git blame`'s, as `"Git Blame (Rust)"`).
 #[doc(hidden)]
 pub fn write_bytes(
     bytes: &[u8],

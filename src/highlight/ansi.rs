@@ -223,8 +223,8 @@ impl Ansi {
 }
 
 /// The text `colored`, a document's in its own colors, shows (PGR-007): each line as a terminal
-/// shows it ([`Shown`]), its escapes gone; the same lines as `colored`'s, but for a last line of
-/// escapes alone, which shows as none ([`lines_of`]).
+/// shows it (`Shown`), its escapes gone; the same lines as `colored`'s, but for a last line of
+/// escapes alone, which shows as none (`lines_of`).
 pub fn shown(colored: &str) -> Cow<'_, str> {
     let colored = lines_of(colored);
     if memchr::memchr3(0x1b, b'\r', 0x08, colored.as_bytes()).is_none() {
@@ -806,11 +806,11 @@ const READ: usize = 1 << 20;
 /// Whether piped `text`, holding escapes, shows in its own colors rather than ada's: when it is
 /// colored at all (an SGR sequence that sets something, not only resets) and isn't a diff
 /// (`diff`, as its text without them reads) whose colors only say what its marks say. A diff's
-/// colors say more when a hunk's line reads as a word diff's ([`word_diff_line`]): git's
+/// colors say more when a hunk's line reads as a word diff's (`word_diff_line`): git's
 /// `--word-diff=color` and `--color-words`, whose lines carry no mark, the words changed only
 /// colored. A word diff whose changes are all whole indented lines, each in one color and led
 /// by a space, is told by its hunk's count instead: its added and removed lines read as
-/// context, more of them than the hunk has room for. Read as far as [`READ`], to the last
+/// context, more of them than the hunk has room for. Read as far as `READ`, to the last
 /// whole line in it.
 pub fn keeps_own_colors(text: &str, diff: bool) -> bool {
     let text = match text.get(..READ) {

@@ -294,13 +294,13 @@ pub(super) fn shown(line: &str, ranges: &mut [(u32, u32)]) -> u32 {
 
 /// Git's whitespace errors in an added `line`, as the diff has it (git's default
 /// `core.whitespace`, which `git diff` colors on added lines): blanks at its end (a `\r` aside,
-/// as `cr-at-eol` has it), and spaces before a tab in its indentation. Onto `out`, sorted, in the
-/// line as it's shown.
-pub(super) fn whitespace_errors(line: &str, out: &mut Vec<(u32, u32)>) {
+/// as `cr-at-eol` has it), and spaces before a tab in its indentation, its text after its `mark`'s
+/// bytes. Onto `out`, sorted, in the line as it's shown.
+pub(super) fn whitespace_errors(line: &str, mark: usize, out: &mut Vec<(u32, u32)>) {
     out.clear();
     let blank = |b: &u8| matches!(b, b' ' | b'\t');
     let body = line.strip_suffix('\r').unwrap_or(line).as_bytes();
-    let text = body.get(1..).unwrap_or_default();
+    let text = body.get(mark..).unwrap_or_default();
     // most lines: no blank at the end, and no tab for a space to be before
     if !text.last().is_some_and(blank) && memchr::memchr(b'\t', text).is_none() {
         return;
@@ -312,7 +312,7 @@ pub(super) fn whitespace_errors(line: &str, out: &mut Vec<(u32, u32)>) {
         match (b, spaces) {
             (b' ', None) => spaces = Some(i),
             (b'\t', Some(s)) => {
-                out.push((s as u32 + 1, i as u32 + 1));
+                out.push(((s + mark) as u32, (i + mark) as u32));
                 spaces = None;
             }
             _ => {}
@@ -320,12 +320,12 @@ pub(super) fn whitespace_errors(line: &str, out: &mut Vec<(u32, u32)>) {
     }
     let trail = text.iter().rev().take_while(|b| blank(b)).count();
     if trail > 0 {
-        let at = (text.len() - trail) as u32 + 1;
+        let at = (text.len() - trail + mark) as u32;
         // a line of only blanks: its indentation's are in its end's
         while out.last().is_some_and(|l| l.0 >= at) {
             out.pop();
         }
-        out.push((at, text.len() as u32 + 1));
+        out.push((at, (text.len() + mark) as u32));
     }
     if !out.is_empty() {
         shown(line, out);
@@ -727,7 +727,7 @@ mod tests {
     fn whitespace_errors_are_found() {
         let errors = |line: &str| {
             let mut out = Vec::new();
-            whitespace_errors(line, &mut out);
+            whitespace_errors(line, 1, &mut out);
             out
         };
         assert_eq!(errors("+x = 1;"), []);
@@ -743,6 +743,10 @@ mod tests {
         // a line of only blanks, all of it
         assert_eq!(errors("+ \t "), [(1, 5)]);
         assert_eq!(errors("+"), []);
+        // a combined diff's mark, a column a parent (X-176)
+        let mut out = Vec::new();
+        whitespace_errors("++x  ", 2, &mut out);
+        assert_eq!(out, [(3, 5)]);
     }
 
     #[test]

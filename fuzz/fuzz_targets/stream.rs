@@ -3,7 +3,8 @@
 //! lexer streams: text, a log, JSON or INI, highlighted on the painting threads, or a
 //! language whose state the reader carries from piece to piece (PRN-003), a diff's (its file's
 //! language and both sides' states, X-174; a change block's words, read ahead past a cut,
-//! FEAT-023) among them. The reader cuts it at
+//! FEAT-023) and `git blame`'s (its text's state and the commit before, FEAT-026) among them.
+//! The reader cuts it at
 //! fuzzed limits, far under the real 128 KiB and 1,024 lines, so a piece's edges are where the
 //! fuzzer's short inputs are: a cut after an empty line, the file's last empty line joining the
 //! piece before it, a JSON comment or a heredoc, string or block comment open across a cut, CRLF
@@ -28,7 +29,7 @@ use ada::print::{Options, render, write_color_only};
 use ada::theme::Theme;
 use libfuzzer_sys::fuzz_target;
 
-const LANGS: [Option<&str>; 13] = [
+const LANGS: [Option<&str>; 14] = [
     None,
     Some("log"),
     Some("JSON"),
@@ -44,6 +45,8 @@ const LANGS: [Option<&str>; 13] = [
     Some("TOML"),
     Some("HTML"),
     Some("C++"),
+    // carried by the reader since FEAT-026, its text in its file's language
+    Some("Git Blame (Rust)"),
 ];
 
 fn theme() -> &'static Theme {

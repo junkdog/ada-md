@@ -341,7 +341,10 @@ pub(super) fn is_git_config_shaped(lines: &[&str]) -> bool {
 
 /// A Git config file named nothing ada knows (`~/.config/git/config`, an included
 /// `~/.gitconfig-work`): every header git's (`[name]`, `[name "sub"]`, `[name.sub]`), and one of
-/// them with a quoted subsection or two of them sections git reads (X-177).
+/// them a section git reads with a quoted subsection, or two of them sections git reads (X-177).
+/// Each line git's too (X-179): a key as git reads one (no `_`, `.` or quotes, which TOML's and
+/// INI's have), its value no TOML array, inline table or long string. Taken by INI's and TOML's
+/// headers once (`[log]` with `[log.console]`, `[database "main"]`), by none of them since.
 fn is_git_config(lines: &[&str]) -> bool {
     const GIT: &[&str] = &[
         "core",
@@ -372,16 +375,38 @@ fn is_git_config(lines: &[&str]) -> bool {
         "difftool",
         "mergetool",
     ];
-    let headers: Vec<&str> = content(lines).filter(|l| l.starts_with('[')).collect();
-    let (mut quoted, mut git) = (0, 0);
-    for h in &headers {
-        let Some(c) = GIT_HEADER.captures(h) else {
+    static KEY: LazyLock<Regex> = LazyLock::new(|| re(r"^[A-Za-z][A-Za-z0-9-]*\s*(=\s*(.*))?$"));
+    // git's sections the headers name, each once, and whether one has a quoted subsection
+    let (mut names, mut quoted) = (Vec::new(), false);
+    let mut continued = false;
+    for l in content(lines) {
+        // a line a `\` continues is the value's, whatever it holds
+        if std::mem::replace(&mut continued, l.ends_with('\\')) || l.starts_with(';') {
+            continue;
+        }
+        if l.starts_with('[') {
+            let Some(c) = GIT_HEADER.captures(l) else {
+                return false;
+            };
+            let name = c[1].to_ascii_lowercase();
+            if GIT.contains(&name.as_str()) {
+                quoted |= c.get(2).is_some_and(|s| s.as_str().ends_with('"'));
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            continue;
+        }
+        let Some(c) = KEY.captures(l) else {
             return false;
         };
-        quoted += usize::from(c.get(2).is_some_and(|s| s.as_str().ends_with('"')));
-        git += usize::from(GIT.contains(&c[1].to_ascii_lowercase().as_str()));
+        let value = c.get(2).map_or("", |m| m.as_str());
+        if value.starts_with(['[', '{']) || value.starts_with("\"\"\"") || value.starts_with("'''")
+        {
+            return false;
+        }
     }
-    quoted > 0 || git >= 2
+    quoted || names.len() >= 2
 }
 
 /// Java properties the TOML shape misses: `key=value` lines whose keys hold what a TOML key

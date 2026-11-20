@@ -355,7 +355,10 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     ),
     (Lang::GitMailmap, &[".mailmap", "mailmap"]),
     (Lang::GitLink, &[".git"]),
-    (Lang::GitConfig, &["gitconfig", ".gitconfig", ".gitmodules"]),
+    (
+        Lang::GitConfig,
+        &["gitconfig", ".gitconfig", ".gitmodules", ".lfsconfig"],
+    ),
     (Lang::Fstab, &["fstab", "crypttab", "mtab"]),
     (Lang::PkgConfig, &["pc"]),
     (Lang::KnownHosts, &["known_hosts", "known_hosts.old"]),
@@ -853,6 +856,9 @@ impl Lang {
             && let Some(l) = Lang::from_token(ext)
         {
             return Some(l);
+        }
+        if is_git_config_family(name) {
+            return Some(Lang::GitConfig);
         }
         Lang::strip_ignored_suffix(name).and_then(Lang::from_file_name)
     }
@@ -1384,6 +1390,16 @@ fn is_php_line(line: &str) -> bool {
     })
 }
 
+/// A name of `.gitconfig`'s family (X-179): `.gitconfig` or `gitconfig`, then a `.`, `-` or `_`
+/// and more, as dotfiles name a machine's or an included file (`.gitconfig.local`,
+/// `.gitconfig-work`, `gitconfig_aliases`). An extension that names a language comes first
+/// (`gitconfig.nix`).
+fn is_git_config_family(name: &str) -> bool {
+    let rest = name.strip_prefix('.').unwrap_or(name);
+    rest.strip_prefix("gitconfig")
+        .is_some_and(|r| r.len() > 1 && matches!(r.as_bytes()[0], b'.' | b'-' | b'_'))
+}
+
 /// Whether `word` is one of `words`, ignoring ASCII case. Never inlined: inlined, the compiler
 /// unrolls the search over every word of the table into a compare of its own.
 #[inline(never)]
@@ -1628,6 +1644,20 @@ mod tests {
         assert_eq!(Lang::from_file_name(".json"), None);
         assert_eq!(Lang::from_file_name("Cargo.lock"), Some(Lang::Toml));
         assert_eq!(Lang::from_file_name("Cargo.toml"), Some(Lang::Toml));
+        // `.gitconfig`'s family and git-lfs's config (X-179); a language's extension first
+        for name in [
+            ".gitconfig.local",
+            "gitconfig.local",
+            ".gitconfig.work",
+            ".gitconfig-work",
+            ".gitconfig-aliases",
+            ".lfsconfig",
+        ] {
+            assert_eq!(Lang::from_file_name(name), Some(Lang::GitConfig), "{name}");
+        }
+        assert_eq!(Lang::from_file_name("gitconfig.nix"), Some(Lang::Nix));
+        assert_eq!(Lang::from_file_name(".gitconfigs"), None);
+        assert_eq!(Lang::from_file_name(".gitconfig-"), None);
     }
 
     /// A suffix bat ignores comes off where the name says nothing (X-145), as many times as

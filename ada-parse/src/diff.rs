@@ -229,54 +229,122 @@ fn find(b: &[u8], needle: &[u8]) -> Option<usize> {
     b.windows(needle.len()).position(|w| w == needle)
 }
 
-/// A unified diff's hunk header, `@@ -a[,b] +c[,d] @@ section` (X-174): how many of the old
-/// file's lines and the new file's the hunk holds, and where its section text is, the bytes
-/// [`line`] gives the section's kind.
+/// A unified diff's hunk header, `@@ -a[,b] +c[,d] @@ section` (X-174), or a combined diff's,
+/// `@@@ -a,b -c,d +e,f @@@ section` (X-176): how many of the old file's lines and the new file's
+/// the hunk holds, and where its section text is, the bytes [`line`] gives the section's kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Hunk {
+    /// The old file's lines; a combined diff's first parent's.
     pub old: u32,
     pub new: u32,
     /// Bytes `.0..1` of the line; empty when there is no section text.
     pub section: (usize, usize),
 }
 
+/// A range's count of lines at `at` in `r`, `sign` then `a[,b]` (a count left out being 1), and
+/// where it ends.
+fn count(r: &[u8], at: usize, sign: u8) -> Option<(u32, usize)> {
+    if r.get(at) != Some(&sign) {
+        return None;
+    }
+    let digits = |at: usize| {
+        r[at.min(r.len())..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count()
+    };
+    let at = at + 1;
+    let n = digits(at);
+    if n == 0 {
+        return None;
+    }
+    if r.get(at + n) != Some(&b',') {
+        return Some((1, at + n));
+    }
+    let m = digits(at + n + 1);
+    let c = std::str::from_utf8(&r[at + n + 1..at + n + 1 + m]).ok()?;
+    Some((c.parse().ok()?, at + n + 1 + m))
+}
+
 /// The hunk `line` starts, if it is a unified diff's hunk header. A combined diff's (`@@@`) is
-/// none: its lines carry a mark a parent.
+/// none: its lines carry a mark a parent ([`combined`]).
 pub fn hunk(line: &str) -> Option<Hunk> {
     let b = line.as_bytes();
     let (lines, _, section) = unified_range(b)?;
     let range = &b[lines.0..lines.1];
-    // `-a[,b] +c[,d]`, a count left out being 1
-    let count = |r: &[u8], sign: u8| -> Option<(u32, usize)> {
-        let at = (r.first() == Some(&sign)).then_some(1)?;
-        let digits = |at: usize| r[at..].iter().take_while(|c| c.is_ascii_digit()).count();
-        let n = digits(at);
-        if n == 0 {
-            return None;
-        }
-        if r.get(at + n) != Some(&b',') {
-            return Some((1, at + n));
-        }
-        let m = digits(at + n + 1);
-        let c = std::str::from_utf8(&r[at + n + 1..at + n + 1 + m]).ok()?;
-        Some((c.parse().ok()?, at + n + 1 + m))
-    };
-    let (old, old_end) = count(range, b'-')?;
+    let (old, old_end) = count(range, 0, b'-')?;
     let gap = skip_spaces(range, old_end);
-    let (new, new_end) = count(&range[gap..], b'+')?;
-    if gap == old_end || gap + new_end != range.len() {
+    let (new, new_end) = count(range, gap, b'+')?;
+    if gap == old_end || new_end != range.len() {
         return None;
     }
     Some(Hunk { old, new, section })
 }
 
+/// The hunk `line` starts, if it is a combined diff's hunk header (X-176), a merge's in `git
+/// diff --cc` or `git show`: an `@` for each parent and one more, a `-a,b` range for each parent,
+/// then the result's `+c,d`, each parent's count of lines into `parents`. Its lines carry a mark
+/// a parent, `-` where the line is that parent's alone, `+` where it is the result's alone.
+pub fn combined(line: &str, parents: &mut Vec<u32>) -> Option<Hunk> {
+    let b = line.as_bytes();
+    let ats = b.iter().take_while(|&&c| c == b'@').count();
+    if ats < 3 {
+        return None;
+    }
+    parents.clear();
+    // at least one space, then what `f` reads
+    let spaced = |at: usize| (b.get(at) == Some(&b' ')).then(|| skip_spaces(b, at));
+    let mut at = ats;
+    for _ in 1..ats {
+        let (n, end) = count(b, spaced(at)?, b'-')?;
+        parents.push(n);
+        at = end;
+    }
+    let (new, end) = count(b, spaced(at)?, b'+')?;
+    let close = spaced(end)?;
+    let after = close + ats;
+    if b.get(close..after)?.iter().any(|&c| c != b'@') || b.get(after).is_some_and(|&c| c != b' ') {
+        return None;
+    }
+    let section = skip_spaces(b, after);
+    let section = (section, trim_end(b, section, b.len()).max(section));
+    Some(Hunk {
+        old: parents[0],
+        new,
+        section,
+    })
+}
+
+/// A context diff's range line (X-176), `*** a,b ****` before a hunk's old file's lines or
+/// `--- c,d ----` before its new file's: whether it is the new file's, and how many lines the
+/// range holds. `a` alone is one line, `0` none (an empty file's).
+pub fn context_section(line: &str) -> Option<(bool, u32)> {
+    let (new, range) = if let Some(r) = line.strip_prefix("*** ") {
+        (false, r.strip_suffix(" ****")?)
+    } else {
+        (true, line.strip_prefix("--- ")?.strip_suffix(" ----")?)
+    };
+    let number = |s: &str| -> Option<u32> {
+        (!s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))
+            .then(|| s.parse().ok())
+            .flatten()
+    };
+    let lines = match range.split_once(',') {
+        Some((a, b)) => (number(b)? + 1).saturating_sub(number(a)?).max(1),
+        None => u32::from(number(range)? > 0),
+    };
+    Some((new, lines))
+}
+
 /// What a diff's header line says of the file after it (X-174).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Header<'a> {
-    /// A new file's section starts, `diff --git a/x b/y` (the new name) or another `diff …`
-    /// line (its last word); `None` for a combined diff's (`diff --cc`, `diff --combined`).
+    /// A new file's section starts, `diff --git a/x b/y` (the new name), a merge's `diff --cc x`
+    /// or `diff --combined x`, or another `diff …` line (its last word).
     Diff(Option<&'a str>),
-    /// `--- path` and `+++ path`: the old file's and the new one's, `None` for `/dev/null`.
+    /// `--- path` and `+++ path`: the old file's and the new one's, `None` for `/dev/null`. A
+    /// context diff's old file is its `*** path`, and its `--- path` after that the new one's
+    /// (X-176), which only the line before tells.
     From(Option<&'a str>),
     To(Option<&'a str>),
     /// `Index: path`.
@@ -284,7 +352,7 @@ pub enum Header<'a> {
 }
 
 /// The file `line` names, if it is a header's that does. A path's timestamp after a tab and the
-/// quotes around it come off; a context diff's range (`--- 1,5 ----`) is none.
+/// quotes around it come off; a context diff's range (`--- 1,5 ----`, `*** 1,5 ****`) is none.
 pub fn header(line: &str) -> Option<Header<'_>> {
     fn path(p: &str) -> &str {
         let p = p.split('\t').next().unwrap_or(p).trim_end();
@@ -296,8 +364,11 @@ pub fn header(line: &str) -> Option<Header<'_>> {
         Some(path(p)).filter(|&p| p != "/dev/null" && !p.is_empty())
     }
     if let Some(rest) = line.strip_prefix("diff ") {
-        if rest.starts_with("--cc ") || rest.starts_with("--combined ") {
-            return Some(Header::Diff(None));
+        if let Some(p) = rest
+            .strip_prefix("--cc ")
+            .or_else(|| rest.strip_prefix("--combined "))
+        {
+            return Some(Header::Diff(Some(path(p)).filter(|p| !p.is_empty())));
         }
         let new = match rest.strip_prefix("--git ") {
             // `a/x b/y`, either quoted when its name needs it
@@ -311,6 +382,9 @@ pub fn header(line: &str) -> Option<Header<'_>> {
     }
     if let Some(p) = line.strip_prefix("--- ") {
         return (!line.ends_with(" ----")).then(|| Header::From(file(p)));
+    }
+    if let Some(p) = line.strip_prefix("*** ") {
+        return (!line.ends_with(" ****")).then(|| Header::From(file(p)));
     }
     if let Some(p) = line.strip_prefix("+++ ") {
         return Some(Header::To(file(p)));
@@ -440,6 +514,43 @@ mod tests {
     }
 
     #[test]
+    fn combined_hunks() {
+        use super::{Hunk, combined};
+        let mut parents = Vec::new();
+        let h = combined("@@@ -1,5 -1,4 +1,6 @@@ int main()", &mut parents);
+        assert_eq!(
+            h,
+            Some(Hunk {
+                old: 5,
+                new: 6,
+                section: (23, 33)
+            })
+        );
+        assert_eq!(parents, [5, 4]);
+        // an octopus merge's, a count left out
+        let h = combined("@@@@ -3 -1,2 -0,0 +1,3 @@@@", &mut parents);
+        assert_eq!(h.map(|h| (h.new, h.section)), Some((3, (27, 27))));
+        assert_eq!(parents, [1, 2, 0]);
+        // a parent's range short, a closer of another width, a unified hunk's
+        assert_eq!(combined("@@@ -1,2 +1,3 @@@", &mut parents), None);
+        assert_eq!(combined("@@@ -1,2 -1,2 +1,3 @@", &mut parents), None);
+        assert_eq!(combined("@@@ -1,2 -1,2 +1,3 @@@@", &mut parents), None);
+        assert_eq!(combined("@@ -1,2 +1,3 @@", &mut parents), None);
+    }
+
+    #[test]
+    fn context_ranges() {
+        use super::context_section as context_range;
+        assert_eq!(context_range("*** 1,5 ****"), Some((false, 5)));
+        assert_eq!(context_range("--- 12,13 ----"), Some((true, 2)));
+        assert_eq!(context_range("--- 7 ----"), Some((true, 1)));
+        assert_eq!(context_range("*** 0 ****"), Some((false, 0)));
+        assert_eq!(context_range("*** a.c ****"), None);
+        assert_eq!(context_range("--- 1,5"), None);
+        assert_eq!(context_range("*** 1,5 ----"), None);
+    }
+
+    #[test]
     fn headers_name_files() {
         use super::{Header, header};
         assert_eq!(
@@ -454,7 +565,17 @@ mod tests {
             header("diff -ru old/a.py new/a.py"),
             Some(Header::Diff(Some("new/a.py")))
         );
-        assert_eq!(header("diff --cc a.c"), Some(Header::Diff(None)));
+        assert_eq!(header("diff --cc a.c"), Some(Header::Diff(Some("a.c"))));
+        assert_eq!(
+            header("diff --combined \"x y.c\""),
+            Some(Header::Diff(Some("x y.c")))
+        );
+        // a context diff's old file, its range none
+        assert_eq!(
+            header("*** a.c\t2024-01-01 10:00:00"),
+            Some(Header::From(Some("a.c")))
+        );
+        assert_eq!(header("*** 1,5 ****"), None);
         assert_eq!(
             header("--- a/x.c\t2024-01-01 10:00:00"),
             Some(Header::From(Some("a/x.c")))

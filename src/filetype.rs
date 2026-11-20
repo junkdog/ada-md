@@ -64,6 +64,18 @@ impl FileType {
         if links::is_image(path) {
             return Some(FileType::Image);
         }
+        // cargo's config, named so before `config.toml` (X-179): TOML, which only its path tells
+        // from a Git config of the same sections (`[alias]`, `[http]`)
+        if path.file_name().is_some_and(|n| n == "config")
+            && path
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|d| d == ".cargo")
+        {
+            return Some(FileType::Text {
+                lang: Some(ada_parse::Lang::Toml.label()),
+            });
+        }
         let ext = path.extension().and_then(|e| e.to_str());
         if ext.is_some_and(is_mermaid) {
             return Some(FileType::MERMAID);
@@ -431,6 +443,18 @@ mod tests {
         assert_eq!(
             of("main.rs", "#!/bin/sh\n"),
             FileType::Text { lang: Some("Rust") }
+        );
+        // cargo's config by its old name, which git's could be (X-179)
+        let cargo = "[alias]\nb = \"build\"\n[http]\nproxy = \"host:3128\"\n";
+        assert_eq!(
+            of("/home/a/.cargo/config", cargo),
+            FileType::Text { lang: Some("TOML") }
+        );
+        assert_eq!(
+            of("/home/a/.gitconfig.local", cargo),
+            FileType::Text {
+                lang: Some("Git Config")
+            }
         );
     }
 

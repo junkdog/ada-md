@@ -1,8 +1,9 @@
 //! What a text holds when its name can't tell: piped stdin, or a file with no extension. Only
 //! the first few KB are looked at (ADR-30, FEAT-020). Sure signals come first, in a fixed
-//! order: HTML's doctype, a git patch, a mermaid diagram, the first line as bat's syntax set
-//! reads it (a shebang, `<?php`, `<?xml`), JSON, front matter, the configuration formats whose
-//! every line has one shape (`conf`), YAML, `.env`, the key-value family and a log. Code and
+//! order: HTML's doctype, a git patch, `git blame`'s lines (typed with the language of the file
+//! they blame, FEAT-026), a mermaid diagram, the first line as bat's syntax set reads it (a
+//! shebang, `<?php`, `<?xml`), JSON, front matter, the configuration formats whose every line
+//! has one shape (`conf`), YAML, `.env`, the key-value family and a log. Code and
 //! markdown are then told by the weight of their lines' signals (`signals`), the C family
 //! split as a `.h` is. Markdown's own signals and `.gitignore`'s globs are tried last. Text none
 //! of them claims is left to the caller.
@@ -10,12 +11,14 @@
 mod conf;
 mod signals;
 
+use std::path::Path;
 use std::sync::LazyLock;
 
 use ada_parse::Lang;
 use regex::Regex;
 
 use crate::filetype::FileType;
+use crate::highlight::blame;
 use crate::{diagram, highlight};
 
 /// How much of the text is looked at.
@@ -23,7 +26,10 @@ const SAMPLE: usize = 8 * 1024;
 
 /// The type `text`'s contents show, or `None` when nothing stands out.
 pub fn sniff(text: &str) -> Option<FileType> {
+    // a byte-order mark is no part of the first line (X-179: a Git config's header after one
+    // was no header)
     let sample = sample(text);
+    let sample = sample.strip_prefix('\u{feff}').unwrap_or(sample);
     let lines: Vec<&str> = sample.lines().collect();
     let first = lines.first().copied().unwrap_or_default();
     let code = |lang| Some(FileType::Text { lang: Some(lang) });
@@ -36,9 +42,11 @@ pub fn sniff(text: &str) -> Option<FileType> {
     if is_git_patch(&lines, text) || is_unified_diff(&lines) || is_context_diff(&lines) {
         return code("Diff");
     }
-    // git's output that isn't a diff: plain, a line for each line, not reflowed as markdown
+    // git's output that isn't a diff, a line for each line: blame's text in its file's
+    // language (FEAT-026)
     if is_blame(&lines) {
-        return Some(FileType::Text { lang: None });
+        let name = highlight::blame::name(blame_language(&lines));
+        return Some(FileType::Text { lang: Some(name) });
     }
     // before front matter: a diagram's `---` holds its config, not a note's
     if diagram::is_diagram(sample) {
@@ -259,14 +267,73 @@ fn is_context_diff(lines: &[&str]) -> bool {
         .any(|w| w[0].starts_with("*** ") && w[1].starts_with("--- ") && w[2] == "***************")
 }
 
-/// `git blame`'s lines, every one: a hash (`^` before a boundary commit's), the path when it is
-/// shown, then the author, date and line number in parentheses (`-s` leaves only the number),
-/// and the line's text. `git annotate`'s too, its fields split by tabs.
+/// `git blame`'s lines, every one ([`blame::fields`]): a hash of 7 digits at least (`^` before
+/// a boundary commit's), the path when it is shown, then the author, date and line number in
+/// parentheses (`-s` leaves only the number), and the line's text. `git annotate`'s too, its
+/// fields split by tabs.
 fn is_blame(lines: &[&str]) -> bool {
-    static LINE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^\^?[0-9a-f]{7,40}\s[^)]*?\s\d+\)").unwrap());
+    let line =
+        |l: &&str| blame::fields(l, blame::is_tabbed(l)).is_some_and(|f| f.hash.1 - f.hash.0 >= 7);
     let mut content = lines.iter().filter(|l| !l.is_empty()).peekable();
-    content.peek().is_some() && content.all(|l| LINE.is_match(l))
+    content.peek().is_some() && content.all(line)
+}
+
+/// The language of the file `lines` blame, in ada-parse's (FEAT-026): the file's name when ada
+/// is git's pager ([`crate::pager::blamed_file`]), else the path `-f` shows on most lines, else
+/// the lines' text as the sniffer reads it. A name says it alone when it says anything, plain
+/// text or markdown too; `None` for a file in no language ada lexes.
+fn blame_language(lines: &[&str]) -> Option<Lang> {
+    let mut text = String::new();
+    let mut paths: Vec<(&str, usize)> = Vec::new();
+    for line in lines {
+        let Some(f) = blame::fields(line, blame::is_tabbed(line)) else {
+            continue;
+        };
+        text.push_str(&line[f.code..]);
+        text.push('\n');
+        if let Some(path) = f.path(line) {
+            match paths.iter_mut().find(|(p, _)| *p == path) {
+                Some((_, n)) => *n += 1,
+                None => paths.push((path, 1)),
+            }
+        }
+    }
+    let own = |label: &str| match highlight::find_syntax(label) {
+        Some(highlight::Syntax::Own(l)) => Some(l),
+        _ => None,
+    };
+    // `Some(None)` for a name that says plain text, markdown, or a language of no lexer's
+    let by_name = |path: &str| -> Option<Option<Lang>> {
+        let name = Path::new(path).file_name()?.to_str()?;
+        if let Some(l) = crate::filetype::header_by_text(name, &text) {
+            return Some(Some(l));
+        }
+        match highlight::named_language(Path::new(name)) {
+            Some(Some(label)) => Some(own(label)),
+            Some(None) => Some(None),
+            None => highlight::file_language(Path::new(name)).map(own),
+        }
+    };
+    // the first of the paths shown most
+    let mut most: Option<(&str, usize)> = None;
+    for &(p, n) in &paths {
+        if most.is_none_or(|(_, m)| n > m) {
+            most = Some((p, n));
+        }
+    }
+    let named = crate::pager::blamed_file().and_then(by_name);
+    if let Some(lang) = named.or_else(|| most.and_then(|(p, _)| by_name(p))) {
+        return lang;
+    }
+    // blame of a file of blame's lines is read no deeper
+    let text_lines: Vec<&str> = text.lines().collect();
+    if is_blame(&text_lines) {
+        return None;
+    }
+    match sniff(&text)? {
+        FileType::Text { lang: Some(label) } => own(label),
+        _ => None,
+    }
 }
 
 /// Commit messages, as `git log --format=%B` writes them: a trailer (`Signed-off-by: Name
@@ -567,6 +634,12 @@ mod tests {
         Some(FileType::Text { lang: None })
     }
 
+    fn blamed(lang: Option<Lang>) -> Option<FileType> {
+        Some(FileType::Text {
+            lang: Some(crate::highlight::blame::name(lang)),
+        })
+    }
+
     #[test]
     fn samples() {
         let log = lang("log");
@@ -629,15 +702,41 @@ mod tests {
                 "*** a.txt\t2026-11-19\n--- b.txt\t2026-11-19\n***************\n*** 1 ****\n! a\n--- 1 ----\n! b\n",
                 lang("Diff"),
             ),
+            // FEAT-026: blame's lines, their text in its file's language; markdown's is plain
             (
                 "git blame",
                 "34ff1b5 (A Name 2026-10-15 19:25:17 +0200  1) # ada\n34ff1b5 (A Name 2026-10-15 19:25:17 +0200  2) \n^675afe5 (A Name 2026-10-15 19:52:14 +0200  3) - [x](y)\n",
-                plain(),
+                blamed(None),
             ),
             (
                 "git blame -s -f",
                 "34ff1b5 README.md  1) # ada\n675afe5 README.md  2) ## heading\n",
-                plain(),
+                blamed(None),
+            ),
+            (
+                "git blame -s, numbers of one digit",
+                "7401e68 3) use std::io;\n7401e68 4) \n",
+                blamed(None),
+            ),
+            (
+                "git blame of rust, by its text",
+                "7401e68 (A Name 2026-11-13 16:17:54 +0100 1) use std::io;\n7401e68 (A Name 2026-11-13 16:17:54 +0100 2) \n7401e68 (A Name 2026-11-13 16:17:54 +0100 3) pub fn main() {\n7401e68 (A Name 2026-11-13 16:17:54 +0100 4)     let x: u32 = 1;\n7401e68 (A Name 2026-11-13 16:17:54 +0100 5) }\n",
+                blamed(Some(Lang::Rust)),
+            ),
+            (
+                "git blame -f, by the path shown most",
+                "7401e68 a.py  (A 2026-11-13 16:17:54 +0100 1) x = 1\n7401e68 b.rs  (A 2026-11-13 16:17:54 +0100 2) y = 2\n7401e68 a.py  (A 2026-11-13 16:17:54 +0100 3) z = 3\n",
+                blamed(Some(Lang::Python)),
+            ),
+            (
+                "git annotate",
+                "7401e68\t(A Name\t2026-11-13 16:17:54 +0100\t1)#!/bin/bash\n7401e68\t(A Name\t2026-11-13 16:17:54 +0100\t2)echo hi\n",
+                blamed(Some(Lang::Bash)),
+            ),
+            (
+                "an uncommitted line, its author in parentheses",
+                "0000000 (External file (--contents) 2026-11-20 23:00:17 +0100 1) x\n",
+                blamed(None),
             ),
             (
                 "git log --format=%B",
@@ -938,6 +1037,32 @@ mod tests {
                 "a repository's config after its first line",
                 "# local\n[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://example.com/x.git\n",
                 lang("Git Config"),
+            ),
+            (
+                "a gitconfig after a byte-order mark",
+                "\u{feff}[user]\n\tname = Ada\n[alias]\n\tco = checkout\n",
+                lang("Git Config"),
+            ),
+            // X-179: INI and TOML once taken for git's
+            (
+                "toml's sections, one of git's names twice",
+                "[log]\nlevel = \"info\"\n[log.console]\nenabled = true\n",
+                lang("TOML"),
+            ),
+            (
+                "an ini's quoted subsection of no git section",
+                "[database \"main\"]\nhost = localhost\nport = 5432\n",
+                lang("INI"),
+            ),
+            (
+                "toml of git's section names and toml's keys",
+                "[http]\nlisten_addr = \"0.0.0.0\"\nport = 8080\n[status]\nshow_untracked = true\n",
+                lang("TOML"),
+            ),
+            (
+                "a cargo config's array",
+                "[alias]\nb = \"build\"\n[http]\nproxy = \"host:3128\"\n[build]\nrustflags = [\"-C\", \"target-cpu=native\"]\n",
+                lang("TOML"),
             ),
             (
                 "gitignore",

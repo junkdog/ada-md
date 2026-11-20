@@ -10,6 +10,7 @@
 
 // `highlight` and `MAX_LINE` are `examples/parity.rs`'s, which includes the module by path
 mod ansi;
+pub(crate) mod blame;
 mod diff;
 #[cfg(test)]
 #[allow(dead_code)]
@@ -1034,19 +1035,30 @@ pub enum Lexer {
     /// An ada-parse language whose lines don't depend on each other (`Lang::line_by_line`),
     /// or JSON: each piece is highlighted on the thread that paints it.
     Parse(ParseRules),
-    /// Any other ada-parse language, whose state carries from line to line (PRN-003): one
-    /// [`Carrier`] highlights the pieces in order, and the threads that paint them get them
-    /// highlighted.
-    Carry(Lang),
+    /// Any other ada-parse language, whose state carries from line to line (PRN-003), or
+    /// `git blame`'s lines (FEAT-026): one [`Carrier`] highlights the pieces in order, and the
+    /// threads that paint them get them highlighted.
+    Carry(Carry),
+}
+
+/// What a [`Carrier`] reads: an ada-parse language, or `git blame`'s lines whose text is in one
+/// (`blame::of_name`; `None` for a file in no language ada lexes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Carry {
+    Lang(Lang),
+    Blame(Option<Lang>),
 }
 
 impl Lexer {
     /// The lexer for a file in `lang`: plain for none, or one no lexer of ada's covers.
     pub fn new(lang: Option<&str>, theme: &SyntaxTheme) -> Self {
+        if let Some(code) = lang.and_then(blame::of_name) {
+            return Lexer::Carry(Carry::Blame(code));
+        }
         match lang.and_then(own) {
             None => Lexer::Plain,
             Some(l) if streams(l) => Lexer::Parse(ParseRules::new(l, theme)),
-            Some(l) => Lexer::Carry(l),
+            Some(l) => Lexer::Carry(Carry::Lang(l)),
         }
     }
 
@@ -1157,11 +1169,11 @@ fn streams(lang: Lang) -> bool {
     lang == Lang::Json || (lang.line_by_line() && lang != Lang::Diff)
 }
 
-/// Highlights the pieces of a file printed a piece at a time in a [`Lexer::Carry`] language, in
-/// order, carrying the lexer's state from each piece to the next (PRN-003). Its pieces' lines
-/// get [`highlight`]'s spans for the whole file: a line's spans depend only on the line and the
-/// state before it, and a piece's flag for tab expansion leaves a line without a control
-/// character as it is, as the whole block's does.
+/// Highlights the pieces of a file printed a piece at a time in a [`Lexer::Carry`] language (or
+/// `git blame`'s lines), in order, carrying the lexer's state from each piece to the next
+/// (PRN-003). Its pieces' lines get [`highlight`]'s spans for the whole file: a line's spans
+/// depend only on the line and the state before it, and a piece's flag for tab expansion leaves
+/// a line without a control character as it is, as the whole block's does.
 pub struct Carrier<'a> {
     /// The lexer, `None` once dropped.
     carried: Option<Carried>,
@@ -1176,13 +1188,18 @@ enum Carried {
     Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>),
     /// A diff's reading: its file's language and both sides' states (X-174).
     Diff(Box<diff::Diff>),
+    /// `git blame`'s: its text's state and the line before's commit (FEAT-026).
+    Blame(Box<blame::Blame>),
 }
 
 impl<'a> Carrier<'a> {
-    pub fn new(lang: Lang, theme: &'a SyntaxTheme) -> Self {
-        let carried = match lang {
-            Lang::Diff => Carried::Diff(Box::new(diff::Diff::new(theme, Vec::new()))),
-            lang => Carried::Parse(
+    pub fn new(carry: Carry, theme: &'a SyntaxTheme) -> Self {
+        let carried = match carry {
+            Carry::Blame(code) => {
+                Carried::Blame(Box::new(blame::Blame::new(code, theme, Vec::new())))
+            }
+            Carry::Lang(Lang::Diff) => Carried::Diff(Box::new(diff::Diff::new(theme, Vec::new()))),
+            Carry::Lang(lang) => Carried::Parse(
                 ParseRules::cached(lang, theme.id),
                 ada_parse::State::default(),
                 Vec::new(),
@@ -1219,6 +1236,10 @@ impl<'a> Carrier<'a> {
                     let buf = (&mut self.buf, expand);
                     diff.lines(text, usize::MAX, buf, ahead, self.theme, &mut lines);
                 }
+                Some(Carried::Blame(blame)) => {
+                    let buf = (&mut self.buf, expand);
+                    blame.lines(text, usize::MAX, buf, self.theme, &mut lines);
+                }
                 None => {}
             }
         }
@@ -1253,6 +1274,9 @@ impl Drop for Carrier<'_> {
             Some(Carried::Diff(diff)) => {
                 diff.done();
             }
+            Some(Carried::Blame(blame)) => {
+                blame.done();
+            }
             None => {}
         }
     }
@@ -1264,6 +1288,9 @@ enum Engine {
     Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>, bool),
     /// A diff, its lines in their file's language (X-174); also whether to expand.
     Diff(Box<diff::Diff>, bool),
+    /// `git blame`'s lines, their text in its file's language (FEAT-026); also whether to
+    /// expand.
+    Blame(Box<blame::Blame>, bool),
     /// Text in its own colors, read from its SGR sequences (FEAT-022).
     Ansi(Box<ansi::Ansi>),
     /// A lexer stuck on a line, for the stall watch's tests (F-06).
@@ -1330,10 +1357,16 @@ impl<'a> Highlighter<'a> {
         } else {
             own(lang)
         };
+        // `git blame`'s lines (FEAT-026), and the language of their text
+        let blamed = blame::of_name(lang);
         let state = match own {
             #[cfg(test)]
             _ if lang == tests::STUCK => Some(Engine::Stuck),
             _ if lang == ANSI => Some(Engine::Ansi(Box::default())),
+            _ if blamed.is_some() => Some(Engine::Blame(
+                Box::new(blame::Blame::new(blamed.flatten(), theme, spans)),
+                block_needs_expanding(text),
+            )),
             Some(Lang::Diff) => Some(Engine::Diff(
                 Box::new(diff::Diff::new(theme, spans)),
                 block_needs_expanding(text),
@@ -1421,6 +1454,28 @@ impl<'a> Highlighter<'a> {
                     }
                 }
             }
+            Engine::Blame(blame, expand) => {
+                // as `Diff`'s
+                const BATCH: usize = 1024;
+                let Some(mut text) = self.rest.0 else {
+                    return false;
+                };
+                let mut left = n;
+                loop {
+                    let (max, done) = (left.min(BATCH), out.ends.len());
+                    let buf = (&mut self.buf, *expand);
+                    let next = blame.lines(text, max, buf, self.theme, out);
+                    LINES.fetch_add((out.ends.len() - done) as u64, Ordering::Relaxed);
+                    left -= max;
+                    match next {
+                        Some(p) if left > 0 => text = &text[p..],
+                        next => {
+                            self.rest = Lines(next.map(|p| &text[p..]));
+                            break;
+                        }
+                    }
+                }
+            }
             Engine::Ansi(ansi) => {
                 let done = out.ends.len();
                 for line in self.rest.by_ref().take(n) {
@@ -1479,6 +1534,7 @@ impl Drop for Highlighter<'_> {
                 spans
             }
             Some(Engine::Diff(diff, _)) => diff.done(),
+            Some(Engine::Blame(blame, _)) => blame.done(),
             _ => Vec::new(),
         };
         BlockScratch {
@@ -2779,6 +2835,13 @@ mod tests {
         for (a, b) in shifted.iter().zip(&main) {
             assert_eq!((a.end - section, a.rule), (b.end, b.rule));
         }
+
+        // `diff -u`'s timestamps after a tab, which the block's expanded tabs would make spaces
+        // of: the name before it all the same (X-176)
+        let text = "--- m.c\t2026-11-20 10:00:00\n+++ m.c\t2026-11-20 10:00:00\n@@ -1 +1 @@\n\
+                    -int a;\n+int b;\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(past_mark(spans.line(4)), c("int b;"));
     }
 
     /// X-174: a hunk's lines are its lines whatever they start with, the hunk's end where its
@@ -2810,6 +2873,101 @@ mod tests {
         );
     }
 
+    /// X-176: a context diff's hunk, its old file's section and then its new one's, each counted
+    /// from its range, its mark two bytes wide; a context line on its section's side alone.
+    #[test]
+    fn a_context_diffs_sections_read_in_their_files_language() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "*** m.c\t2026-11-20 10:00:00\n--- m.c\t2026-11-20 10:00:00\n***************\n\
+                    *** 1,3 ****\n  int a;\n! /* gone\n  int b;\n--- 1,3 ----\n  int a;\n\
+                    ! int x; // kept\n  int b;\n***************\n*** 9 ****\n- int z;\n--- 8 ----\n\
+                    - past the hunk\n";
+        let spans = highlight(1, "diff", text, &st);
+        let c = |text: &str, n: u32| highlight(1, "c", text, &st).line(n).to_vec();
+        let past = |runs: &[Run]| -> Vec<Run> {
+            let runs = runs.iter().filter(|r| r.end > 2);
+            runs.map(|r| Run {
+                end: r.end - 2,
+                rule: r.rule,
+            })
+            .collect()
+        };
+        let (del, ins) = (Some(Tint::Deleted), Some(Tint::Inserted));
+        let tints: Vec<_> = (0..16).map(|n| spans.tint(n)).collect();
+        assert_eq!(
+            tints,
+            [
+                None, None, None, None, None, del, None, None, None, ins, None, None, None, del,
+                None, None
+            ]
+        );
+        // the old section's comment goes on in its context line; the new one never opens it
+        assert_eq!(past(spans.line(5)), c("/* gone", 0));
+        assert_eq!(past(spans.line(6)), c("/* gone\nint b;", 1));
+        assert_eq!(past(spans.line(9)), c("int x; // kept", 0));
+        assert_eq!(past(spans.line(10)), c("int b;", 0));
+        // `!` keeps Diff's rule; a range and the stars too
+        let diff = |line: &str| highlight(1, "diff", line, &st).line(0).to_vec();
+        assert_eq!(spans.line(9)[0].rule, diff("! x")[0].rule);
+        assert_eq!(spans.line(2), diff("***************").as_slice());
+        assert_eq!(spans.line(7), diff("--- 1,3 ----").as_slice());
+        // a section with no change left out, and past the hunk Diff's line alone
+        assert_eq!(past(spans.line(13)), c("int z;", 0));
+        assert_eq!(spans.line(15), diff("- past the hunk").as_slice());
+        streams_as_whole(text, &st);
+
+        // `*** ` names the old file and the `--- ` after it the new one; `-p`'s section text in
+        // the new file's language
+        let text = "*** m.py\n--- m.c\n*************** int main(void)\n*** 1 ****\n! # py\n\
+                    --- 1 ----\n! x; // c\n";
+        let spans = highlight(1, "diff", text, &st);
+        let py = highlight(1, "python", "# py", &st).line(0).to_vec();
+        assert_eq!(past(spans.line(4)), py);
+        assert_eq!(past(spans.line(6)), c("x; // c", 0));
+        let section: Vec<_> = spans.line(2).iter().filter(|r| r.end > 16).collect();
+        let main = c("int main(void)", 0);
+        assert_eq!(section.len(), main.len());
+        assert_eq!(
+            section.last().map(|r| r.end - 16),
+            main.last().map(|r| r.end)
+        );
+        streams_as_whole(text, &st);
+    }
+
+    /// X-176: a merge's combined diff, its mark a column a parent: the result's lines on the new
+    /// side, a parent's alone on the old one, the hunk's end where every count runs out.
+    #[test]
+    fn a_combined_diffs_lines_read_by_the_results_side() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "diff --cc m.c\nindex 1111111,2222222..3333333\n\
+                    @@@ -1,4 -1,2 +1,4 @@@ int main(void)\n  int a;\n- /* ours\n +int b; // theirs\n\
+                    ++int c;\n  int d */;\n +past the hunk\n";
+        let spans = highlight(1, "diff", text, &st);
+        let c = |text: &str| highlight(1, "c", text, &st).line(0).to_vec();
+        let past = |runs: &[Run]| -> Vec<Run> {
+            let runs = runs.iter().filter(|r| r.end > 2);
+            runs.map(|r| Run {
+                end: r.end - 2,
+                rule: r.rule,
+            })
+            .collect()
+        };
+        let (del, ins) = (Some(Tint::Deleted), Some(Tint::Inserted));
+        let tints: Vec<_> = (0..9).map(|n| spans.tint(n)).collect();
+        assert_eq!(tints, [None, None, None, None, del, ins, ins, None, None]);
+        // the first parent's comment is the old side's: the result's lines never see it
+        assert_eq!(past(spans.line(4)), c("/* ours"));
+        assert_eq!(past(spans.line(5)), c("int b; // theirs"));
+        assert_eq!(past(spans.line(7)), c("int d */;"));
+        // the marks Diff's `-` and `+`, two columns wide; past the hunk, Diff's line alone
+        let diff = |line: &str| highlight(1, "diff", line, &st).line(0).to_vec();
+        assert_eq!(spans.line(4)[0].rule, diff("-x")[0].rule);
+        assert_eq!(spans.line(5)[0].rule, diff("+x")[0].rule);
+        assert_eq!(spans.line(4)[0].end, 2);
+        assert_eq!(spans.line(8), diff(" +past the hunk").as_slice());
+        streams_as_whole(text, &st);
+    }
+
     /// X-174: a diff printed a piece at a time reads as the whole does, its file and both sides'
     /// states carried from piece to piece.
     #[test]
@@ -2820,7 +2978,7 @@ mod tests {
         let whole = highlight(1, "diff", text, &st);
         assert_eq!(whole.tint(4), Some(Tint::Inserted));
         assert!(!whole.words(3).is_empty(), "a pair's changed words");
-        let mut carrier = Carrier::new(Lang::Diff, &st);
+        let mut carrier = Carrier::new(Carry::Lang(Lang::Diff), &st);
         let lines: Vec<&str> = text.split_inclusive('\n').collect();
         let mut n = 0;
         for (a, b) in [(0, 4), (4, 5), (5, lines.len())] {
@@ -2841,7 +2999,7 @@ mod tests {
         let whole = highlight(1, "diff", text, st);
         let lines: Vec<&str> = text.split_inclusive('\n').collect();
         for cut in 1..lines.len() {
-            let mut carrier = Carrier::new(Lang::Diff, st);
+            let mut carrier = Carrier::new(Carry::Lang(Lang::Diff), st);
             let mut n = 0;
             for (a, b) in [(0, cut), (cut, lines.len())] {
                 let ahead = lines[b..].concat();

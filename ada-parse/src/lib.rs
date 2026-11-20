@@ -103,9 +103,12 @@ pub use lang::Lang;
 // ada-md's, not the API (REL-025)
 #[doc(hidden)]
 pub use lang::{ALIASES, FirstLine, IGNORED_SUFFIXES, first_line_syntaxes};
-// a diff's files and hunks, for ada's lines in their file's language (X-174)
+// a diff's files and hunks, for ada's lines in their file's language (X-174, X-176)
 #[doc(hidden)]
-pub use diff::{Header as DiffHeader, Hunk as DiffHunk, header as diff_header, hunk as diff_hunk};
+pub use diff::{
+    Header as DiffHeader, Hunk as DiffHunk, combined as diff_combined_hunk,
+    context_section as diff_context_range, header as diff_header, hunk as diff_hunk,
+};
 use lisp::Dialect;
 
 /// Bytes `start..end` of a line are kind `kind` of the line's language, whose scopes

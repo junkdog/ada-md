@@ -27,6 +27,15 @@
 //! A diff without hunk headers (a ```` ```diff ```` fence, a pasted snippet) reads its changed
 //! lines as a hunk's of no counts ([`Diff::loose`], PGR-005), until a header of git's shows.
 //!
+//! A context diff's hunks (`diff -c`, X-176) and a merge's combined ones (`diff --cc`) are read
+//! as `patch` and git read them ([`Other`]): a context hunk's old file's lines, then its new
+//! one's, each section counted from its range and its mark two bytes wide (`! `, `- `, `+ `,
+//! two spaces of context), its context lines on their section's side alone; a combined hunk's
+//! mark a column for each parent, its lines the result's (`+` in a column, or context) or a
+//! parent's alone (`-`), the result's side the new file's. Their changed lines are tinted, but
+//! their words aren't compared: a context hunk's changed lines are sections apart, and a combined
+//! hunk's are against more than one file.
+//!
 //! A commit's header in `git log -p` or `git show`, its `commit <hash>` line and the `Author:`,
 //! `Date:` lines after it, is styled quietly ([`Preamble`]), so it doesn't draw the eye from the
 //! code: the hash and its refs in color, the labels, punctuation, email and date dimmed, the
@@ -94,6 +103,36 @@ impl<'a> Iterator for Ahead<'a> {
     }
 }
 
+/// A hunk's line: the side whose state it's lexed on, its mark's, and how wide its mark is.
+#[derive(Clone, Copy)]
+struct Body {
+    /// [`Side::Both`]'s is lexed on both sides and shows in the new file's language.
+    side: Side,
+    /// A changed line's mark's rules and its text's, an index into [`Diff::marks`]: `+`, `-` or
+    /// `!`; `None` for a context line.
+    mark: Option<usize>,
+    /// The mark's bytes: 1, a context diff's 2, a combined diff's a parent each.
+    width: u32,
+}
+
+/// [`Diff::marks`]' `!`, a context diff's changed line's.
+const CHANGED: usize = 2;
+
+/// A hunk of another format than unified's being read (X-176); a unified hunk's counts are
+/// [`Diff::left`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Other {
+    /// A context diff's `***************`: its `*** a,b ****` range next.
+    Stars,
+    /// A context diff's old file's lines (`  `, `- `, `! `), how many its range has left; its new
+    /// file's `--- c,d ----` range ends them, the section left out when it has no change.
+    Old(u32),
+    /// Its new file's (`  `, `+ `, `! `), how many are left.
+    New(u32),
+    /// A combined diff's, the result's lines left; each parent's are [`Diff::parents`].
+    Combined(u32),
+}
+
 /// Which file a hunk's line is from.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Side {
@@ -108,15 +147,15 @@ enum Side {
 const NONE: Rule = Rule(Rule::NONE);
 
 /// A commit header's rules, resolved from scopes under `source.diff` whose last scope names a
-/// kind every theme styles: dimmed, the hash's, a ref's.
-struct Preamble {
-    dim: Rule,
-    hash: Rule,
+/// kind every theme styles: dimmed, the hash's, a ref's. `git blame`'s fields' too (FEAT-026).
+pub(super) struct Preamble {
+    pub(super) dim: Rule,
+    pub(super) hash: Rule,
     git_ref: Rule,
 }
 
 impl Preamble {
-    fn new(theme: &SyntaxTheme) -> Self {
+    pub(super) fn new(theme: &SyntaxTheme) -> Self {
         let rule = |scope| theme.rule(&["source.diff", "meta.header.commit.diff", scope]);
         Preamble {
             dim: rule("comment.other.commit.diff"),
@@ -175,10 +214,17 @@ pub(super) struct Diff {
     c_family: Option<Lang>,
     /// The old file's lines and the new one's that the hunk has left; `None` outside a hunk.
     left: Option<(u32, u32)>,
+    /// A context diff's hunk or a combined diff's, being read in place of `left`.
+    other: Option<Other>,
+    /// A combined hunk's parents' lines left.
+    parents: Vec<u32>,
+    /// Whether the line before was a context diff's old file's `*** path`: the `--- path` after
+    /// it names the new file.
+    context_file: bool,
     old: State,
     new: State,
-    /// `+`'s and `-`'s rules, the mark's and the text's, as Diff's lexer gives them.
-    marks: [(Rule, Rule); 2],
+    /// `+`'s, `-`'s and `!`'s rules, the mark's and the text's, as Diff's lexer gives them.
+    marks: [(Rule, Rule); 3],
     spans: Vec<Span>,
     /// A line's runs as a lexer gives them, before they're laid into the block's.
     runs: Vec<Run>,
@@ -212,9 +258,12 @@ impl Diff {
             named: None,
             c_family: None,
             left: None,
+            other: None,
+            parents: Vec::new(),
+            context_file: false,
             old: State::default(),
             new: State::default(),
-            marks: [(NONE, NONE); 2],
+            marks: [(NONE, NONE); 3],
             spans,
             runs: Vec::new(),
             spare: Vec::new(),
@@ -229,7 +278,7 @@ impl Diff {
             mail: false,
         };
         // the marks' rules as Diff's lexer has them, read from a changed line of each side
-        for (i, line) in ["+x", "-x"].into_iter().enumerate() {
+        for (i, line) in ["+x", "-x", "!x"].into_iter().enumerate() {
             d.diff_runs(line, theme);
             d.marks[i] = (rule_at(&d.runs, 0), rule_at(&d.runs, 1));
         }
@@ -313,11 +362,14 @@ impl Diff {
         theme: &SyntaxTheme,
         out: &mut LineRuns,
     ) {
+        let context_file = std::mem::take(&mut self.context_file);
         self.loose(line, ahead, theme);
-        let left = self.left;
-        if let Some(side) = self.body(line, ahead) {
-            self.block(own, side, left, ahead);
-            return self.body_line((line, own), side, theme, out);
+        let (left, unified) = (self.left, self.other.is_none());
+        if let Some(body) = self.body(line, ahead) {
+            if unified {
+                self.block(own, body.side, left, ahead);
+            }
+            return self.body_line((line, own), body, theme, out);
         }
         // `\ No newline at end of file` is between a block's lines
         if !line.starts_with('\\') {
@@ -329,17 +381,40 @@ impl Diff {
             return;
         }
         if let Some(hunk) = ada_parse::diff_hunk(line) {
-            self.unhunked = false;
-            self.resolve(theme);
+            self.start(theme);
             self.left = (hunk.old > 0 || hunk.new > 0).then_some((hunk.old, hunk.new));
-            (self.old, self.new) = (State::default(), State::default());
             let (s, e) = hunk.section;
-            return self.hunk_line(line, (s as u32, e as u32), theme, out);
+            return self.hunk_line(line, line, (s as u32, e as u32), theme, out);
         }
-        if let Some(header) = ada_parse::diff_header(line) {
+        if let Some(hunk) = ada_parse::diff_combined_hunk(line, &mut self.parents) {
+            self.start(theme);
+            let lines = hunk.new > 0 || self.parents.iter().any(|&n| n > 0);
+            self.other = lines.then_some(Other::Combined(hunk.new));
+            let (s, e) = hunk.section;
+            return self.hunk_line(line, line, (s as u32, e as u32), theme, out);
+        }
+        if let Some(section) = context_hunk(line) {
+            self.start(theme);
+            self.other = Some(Other::Stars);
+            return self.hunk_line(line, &line[..STARS.len()], section, theme, out);
+        }
+        // a path from the line as the diff has it: expanded, the tab before a timestamp would be
+        // spaces, which a name can have
+        let raw = own.strip_suffix('\r').unwrap_or(own);
+        if let Some(header) = ada_parse::diff_header(raw) {
             if matches!(header, DiffHeader::Diff(_) | DiffHeader::Index(_)) {
                 self.unhunked = false;
             }
+            let header = match header {
+                DiffHeader::From(p) if context_file && line.starts_with("--- ") => {
+                    DiffHeader::To(p)
+                }
+                DiffHeader::From(_) if line.starts_with("*** ") => {
+                    self.context_file = true;
+                    header
+                }
+                header => header,
+            };
             self.name(header);
         }
         self.diff_runs(line, theme);
@@ -348,6 +423,18 @@ impl Diff {
             open.push(r.end, r.rule);
         }
         open.end();
+    }
+
+    /// A hunk starts, of any format: the files its headers named looked up, both sides' states
+    /// fresh, no change block's words.
+    fn start(&mut self, theme: &SyntaxTheme) {
+        self.unhunked = false;
+        self.resolve(theme);
+        (self.left, self.other) = (None, None);
+        (self.old, self.new) = (State::default(), State::default());
+        if self.block.take().is_some() || !self.words.line(self.next).is_empty() {
+            self.words.block(&[], 0);
+        }
     }
 
     /// A commit header's `line`, an annotated tag's or a mail's, styled quietly, or a mail's
@@ -518,7 +605,10 @@ impl Diff {
     /// line that ends it early (a hunk's lines miscounted, as a patch edited by hand has them:
     /// a line neither side has room for, or a file's `---`, `+++` and `@@`, PGR-006). `ahead`
     /// are the lines after it.
-    fn body(&mut self, line: &str, ahead: Ahead<'_>) -> Option<Side> {
+    fn body(&mut self, line: &str, ahead: Ahead<'_>) -> Option<Body> {
+        if let Some(other) = self.other {
+            return self.other_body(other, line);
+        }
         let loose = self.left == Some(LOOSE);
         let (old, new) = self.left.as_mut()?;
         let side = match line.as_bytes().first() {
@@ -550,7 +640,122 @@ impl Diff {
         } else if (*old, *new) == (0, 0) {
             self.left = None;
         }
-        Some(side)
+        let mark = (side != Side::Both).then_some(side as usize);
+        Some(Body {
+            side,
+            mark,
+            width: 1,
+        })
+    }
+
+    /// [`Diff::body`] in a context diff's hunk or a combined diff's: `None` for its ranges (a
+    /// context hunk's old section's `*** a,b ****` and its new one's `--- c,d ----`) and its
+    /// `\ No newline at end of file`, the hunk going on, and for a line that ends it.
+    fn other_body(&mut self, other: Other, line: &str) -> Option<Body> {
+        let b = line.as_bytes();
+        let (side, left) = match other {
+            Other::Stars => {
+                // a range of none still has its new section's range after it
+                self.other = match ada_parse::diff_context_range(line) {
+                    Some((false, n)) => Some(Other::Old(n)),
+                    _ => None,
+                };
+                return None;
+            }
+            Other::Combined(new) => return self.combined_body(new, line),
+            Other::Old(left) => {
+                if let Some((true, n)) = ada_parse::diff_context_range(line) {
+                    self.other = (n > 0).then_some(Other::New(n));
+                    return None;
+                }
+                (Side::Old, left)
+            }
+            Other::New(left) => (Side::New, left),
+        };
+        if b.first() == Some(&b'\\') {
+            return None;
+        }
+        // `!` changed, `-` removed in the old section and `+` added in the new one, a blank
+        // context; a mark's second byte a space, a tab with `-T`, or none at a line's end
+        let mark = match (b.first(), b.get(1)) {
+            // an empty context line, as `--suppress-blank-empty` writes one
+            (None, _) => Some(None),
+            (Some(&m), None | Some(b' ' | b'\t')) => match m {
+                b' ' => Some(None),
+                b'!' => Some(Some(CHANGED)),
+                b'-' if side == Side::Old => Some(Some(side as usize)),
+                b'+' if side == Side::New => Some(Some(side as usize)),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(mark) = mark.filter(|_| left > 0) else {
+            self.other = None;
+            return None;
+        };
+        self.other = match side {
+            Side::Old => Some(Other::Old(left - 1)),
+            _ => (left > 1).then_some(Other::New(left - 1)),
+        };
+        Some(Body {
+            side,
+            mark,
+            width: 2,
+        })
+    }
+
+    /// [`Diff::body`] in a combined diff's hunk, the result's lines `new` left: a line's mark, a
+    /// column for each parent, says which files have it, as git writes it. A line with a `-` is
+    /// the parents' whose column is `-`, not the result's; any other the result's, and the
+    /// parents' whose column is a space (`+` where that parent hasn't it). A line of the result
+    /// shows on the new side, a parent's alone on the old one.
+    fn combined_body(&mut self, mut new: u32, line: &str) -> Option<Body> {
+        let b = line.as_bytes();
+        if b.first() == Some(&b'\\') {
+            return None;
+        }
+        let n = self.parents.len();
+        // an empty line an empty context line, as some tools write one
+        let marks = match b.get(..n) {
+            Some(m) if m.iter().all(|c| b" +-".contains(c)) => m,
+            None if b.is_empty() => &[][..],
+            _ => {
+                self.other = None;
+                return None;
+            }
+        };
+        let (plus, minus) = (marks.contains(&b'+'), marks.contains(&b'-'));
+        let parents = |i: usize| match marks.get(i) {
+            Some(&c) if minus => c == b'-',
+            c => c != Some(&b'+'),
+        };
+        let fits = !(plus && minus)
+            && (minus || new > 0)
+            && (0..n).all(|i| !parents(i) || self.parents[i] > 0);
+        if !fits {
+            self.other = None;
+            return None;
+        }
+        if !minus {
+            new -= 1;
+        }
+        for i in 0..n {
+            if parents(i) {
+                self.parents[i] -= 1;
+            }
+        }
+        let done = new == 0 && self.parents.iter().all(|&n| n == 0);
+        self.other = (!done).then_some(Other::Combined(new));
+        let (side, mark) = match (plus, minus) {
+            (_, true) => (Side::Old, Some(Side::Old as usize)),
+            (true, _) => (Side::New, Some(Side::New as usize)),
+            _ => (Side::Both, None),
+        };
+        Some(Body {
+            side,
+            mark,
+            width: n as u32,
+        })
     }
 
     /// Where a hunk's line, `own` as the diff has it, of `side`, the hunk's counts `left` before
@@ -588,13 +793,15 @@ impl Diff {
     fn body_line(
         &mut self,
         (line, own): (&str, &str),
-        side: Side,
+        Body { side, mark, width }: Body,
         theme: &SyntaxTheme,
         out: &mut LineRuns,
     ) {
         let mut open = out.open_line();
         let len = line.len() as u32;
-        if side != Side::Both {
+        // the mark's end: a line can be shorter than a mark's width (`!` alone)
+        let marked = width.min(len);
+        if mark.is_some() {
             let tint = match side {
                 Side::New => Tint::INSERTED,
                 _ => Tint::DELETED,
@@ -609,7 +816,7 @@ impl Diff {
             let changed = self.words.line(self.next);
             self.errors.clear();
             if side == Side::New {
-                words::whitespace_errors(own, &mut self.errors);
+                words::whitespace_errors(own, width as usize, &mut self.errors);
             }
             if self.errors.is_empty() {
                 for &(a, b) in changed {
@@ -651,17 +858,17 @@ impl Diff {
             _ => Side::New,
         } as usize];
         if shown == File::Unnamed {
-            if side != Side::Both {
-                let (mark, text) = self.marks[side as usize];
-                open.push(1, mark);
-                if len > 1 {
+            if let Some(m) = mark {
+                let (mark, text) = self.marks[m];
+                open.push(marked, mark);
+                if len > marked {
                     open.push(len, text);
                 }
             }
             return open.end();
         }
-        // the mark is one byte, ASCII, or the line is empty
-        let text = line.get(1..).unwrap_or_default();
+        // the mark is ASCII, or the line is shorter than it
+        let text = line.get(marked as usize..).unwrap_or_default();
         self.runs.clear();
         match side {
             Side::Old => self.lex(Side::Old, text, theme, true),
@@ -678,15 +885,13 @@ impl Diff {
                 }
             }
         }
-        if side == Side::Both {
-            if !self.runs.is_empty() {
-                open.push(1, NONE);
-            }
-        } else {
-            open.push(1, self.marks[side as usize].0);
+        match mark {
+            Some(m) => open.push(marked, self.marks[m].0),
+            None if !self.runs.is_empty() => open.push(marked, NONE),
+            None => {}
         }
         for r in &self.runs {
-            open.push(r.end + 1, r.rule);
+            open.push(r.end + marked, r.rule);
         }
         open.end();
     }
@@ -727,16 +932,17 @@ impl Diff {
         }
     }
 
-    /// A hunk header, as Diff's lexer has it but its section text, bytes `section`, in the file's
-    /// language from a fresh state.
+    /// A hunk header, as Diff's lexer has its start `diff` (the whole line, or a context hunk's
+    /// stars) but its section text, bytes `section`, in the file's language from a fresh state.
     fn hunk_line(
         &mut self,
         line: &str,
+        diff: &str,
         (s, e): (u32, u32),
         theme: &SyntaxTheme,
         out: &mut LineRuns,
     ) {
-        self.diff_runs(line, theme);
+        self.diff_runs(diff, theme);
         let mut open = out.open_line();
         let section = match self.files[Side::New as usize] {
             File::Lang(i) if s < e => {
@@ -767,7 +973,10 @@ impl Diff {
         for r in &self.spare {
             open.push(r.end + s, r.rule);
         }
-        clipped(&mut open, &self.runs, e, line.len() as u32);
+        // a context hunk's runs end at its stars
+        if e < line.len() as u32 {
+            clipped(&mut open, &self.runs, e, line.len() as u32);
+        }
         open.end();
     }
 
@@ -917,6 +1126,21 @@ fn file_follows(line: &str, mut after: Ahead<'_>, loose: bool) -> bool {
         && (loose || after.next().is_some_and(|n| n.starts_with("@@ ")))
 }
 
+/// A context diff's hunk's first line's start.
+const STARS: &str = "***************";
+
+/// Whether `line` starts a context diff's hunk, `***************`, and where its section text
+/// is, as `diff -c -p` writes it (`*************** int main ()`).
+fn context_hunk(line: &str) -> Option<(u32, u32)> {
+    let rest = line.strip_prefix(STARS)?;
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        return None;
+    }
+    let s = line.len() - rest.trim_start_matches(' ').len();
+    let e = line.trim_end_matches(' ').len().max(s);
+    Some((s as u32, e as u32))
+}
+
 /// A loose hunk's counts ([`Diff::loose`]): more lines than any diff has.
 const LOOSE: (u32, u32) = (u32::MAX, u32::MAX);
 
@@ -967,25 +1191,25 @@ fn language(path: &str, c_family: Option<Lang>) -> Option<Lang> {
 
 /// The rule `runs` give byte `at`, plain past them.
 /// A line's runs pushed in order, an empty one skipped.
-struct Runs<'a> {
+pub(super) struct Runs<'a> {
     open: OpenLine<'a>,
     at: u32,
 }
 
 impl<'a> Runs<'a> {
-    fn new(open: OpenLine<'a>) -> Self {
+    pub(super) fn new(open: OpenLine<'a>) -> Self {
         Runs { open, at: 0 }
     }
 
     /// The bytes up to `end` take `rule`.
-    fn to(&mut self, end: u32, rule: Rule) {
+    pub(super) fn to(&mut self, end: u32, rule: Rule) {
         if end > self.at {
             self.open.push(end, rule);
             self.at = end;
         }
     }
 
-    fn end(self) {
+    pub(super) fn end(self) {
         self.open.end();
     }
 }

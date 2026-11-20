@@ -18,6 +18,7 @@ pub mod iterm;
 pub mod kitty;
 pub mod layout;
 pub mod links;
+pub mod pager;
 pub mod pixels;
 pub mod print;
 pub mod probe;
