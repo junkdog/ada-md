@@ -37,9 +37,11 @@
 # ADA_FUZZ_LANGS=LANG, as lang.zsh's). A run's lists, logs, picks and replay findings are in target/cover/NAME/
 # until the next (its control files are removed at the end: print's are 5 GB); an input that failed in a
 # replay is a finding (`failed:` in its cover log). Each command builds the target first, as CI does
-# (`ci.zsh build`: `tokens` without trace-compares, F-019; COVER_BUILD=0 skips it). Timers: an input times
+# (`ci.zsh build`: `tokens`, `session`, `print` and `render` without trace-compares, F-019, F-021;
+# COVER_BUILD=0 skips it). Timers: an input times
 # out after COVER_INPUT_TIMEOUT seconds (30, as the rounds' -timeout), and runs over 3072 MB of RSS
-# (COVER_RSS_MB) as an OOM; bench/work.zsh caps the whole job (WORK_FUZZ_MAX).
+# (COVER_RSS_MB) as an OOM; a smoke's worker still running COVER_STOP_GRACE seconds (60) after the SIGTERM
+# that ends it is killed; bench/work.zsh caps the whole job (WORK_FUZZ_MAX).
 # e.g. bench/work.zsh fuzz "session cmin" /home/junkdog/opt/dev/rust/ada-md/fuzz/cover.zsh cmin session
 #      bench/work.zsh fuzz "print smoke" /home/junkdog/opt/dev/rust/ada-md/fuzz/cover.zsh smoke print 600 SEEDS
 setopt err_exit pipe_fail no_unset extended_glob
@@ -224,6 +226,22 @@ smoke() {
     sleep 1
   done
   kill -TERM $pids 2> /dev/null || true
+  # libFuzzer's SIGTERM handler allocates (it prints its stats and removes its temp dir before _Exit),
+  # so a worker it interrupts inside malloc deadlocks on the allocator's lock, and its timeout alarm
+  # with it (2026-11-21, F-021's smoke: one of 12, an hour on a futex): SIGKILL what is left after
+  # COVER_STOP_GRACE seconds
+  local -i grace=$(( EPOCHSECONDS + ${COVER_STOP_GRACE:-60} ))
+  while (( EPOCHSECONDS < grace )); do
+    alive=0
+    for p in $pids; do kill -0 $p 2> /dev/null && (( alive += 1 )); done
+    (( alive )) || break
+    sleep 1
+  done
+  for k in {1..$n}; do
+    kill -0 $pids[k] 2> /dev/null || continue
+    print -r -- "worker $k still running ${COVER_STOP_GRACE:-60} s after SIGTERM: SIGKILL"
+    kill -KILL $pids[k] 2> /dev/null || true
+  done
   for p in $pids; do wait $p || true; done
   trap - INT TERM EXIT
   local -i t3=$EPOCHSECONDS

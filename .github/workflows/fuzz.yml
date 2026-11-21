@@ -55,7 +55,8 @@ jobs:
         with:
           workspaces: fuzz
       # as the local rounds build them (`ci.zsh build`): no sanitizer, debug assertions on, and
-      # `tokens` without trace-compares (F-019). The target triple is named, as the prebuilt
+      # `tokens`, `session`, `print` and `render` without trace-compares (F-019, F-021: ci.zsh's
+      # NOTC). The target triple is named, as the prebuilt
       # cargo-fuzz is a musl build and defaults to its own
       - name: 🔨 Build the targets
         working-directory: fuzz

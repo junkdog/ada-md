@@ -78,11 +78,14 @@ LANGS=(
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done
 
-# The targets built without trace-compares (F-019): libFuzzer's compare hooks are 51–72% of `tokens`'
-# time (F-018); without them a CI lane runs 2.6–3.5× the inputs and adds 2.4× the edges in 30 minutes
-# (C#, TOML), and the edges only compare-guided runs reached were no more than one more run reaches.
-# They build into target/notc, so neither build's flags rebuild the other's dependencies.
-NOTC=(tokens)
+# The targets built without trace-compares (F-019, F-021): libFuzzer's compare hooks are 51–72% of
+# `tokens`' time (F-018) and ~60% of `session`'s; without them a CI lane runs 2.6–3.5× the inputs and
+# adds 2.4× the edges in 30 minutes (C#, TOML), and six plain workers a side, a pair on each sixth of a
+# markdown target's corpus, add 2.1× the edges (`session`), 1.35× (`print`) and 2.2× (`render`) in 30
+# minutes, every worker that ran them ahead of its pair. What only the compare-guided runs reached was a
+# fraction of what only the others did. They build into target/notc, so neither build's flags rebuild
+# the other's dependencies.
+NOTC=(tokens session print render)
 
 binary() {
   if (( ${NOTC[(Ie)$1]} )); then
@@ -102,11 +105,13 @@ build() {
     fi
     return
   fi
-  # every target (NOTC's too, unused: `cargo fuzz build` builds them all), and NOTC's beside it
+  # every target (NOTC's too, unused: `cargo fuzz build` builds them all), and beside it NOTC's, one
+  # after another into their one target dir
   local -a pids
   local t p rc=0
   $fz & pids+=($!)
-  for t in $NOTC; do CARGO_TARGET_DIR=$F/target/notc $fz --no-trace-compares $t & pids+=($!); done
+  { for t in $NOTC; do CARGO_TARGET_DIR=$F/target/notc $fz --no-trace-compares $t || exit 1; done } &
+  pids+=($!)
   for p in $pids; do wait $p || rc=$?; done
   return $rc
 }

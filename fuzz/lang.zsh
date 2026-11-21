@@ -27,7 +27,7 @@
 #   lang.zsh names TARGET                   the languages TARGET takes
 #
 # Each builds the target first, as CI does (`ci.zsh build`: `tokens` without trace-compares, F-019, into
-# target/notc). A language new to the target starts
+# target/notc, as ci.zsh's NOTC). A language new to the target starts
 # empty, so `corpus` with its seeds (census files, a dir each) comes first.
 #
 # Timers (X-125, after a merge ran 43 minutes on a lexer that hung on 78 inputs: libFuzzer's merge restarts

@@ -901,7 +901,7 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSe
             if !symbol.is_empty() && width <= 2 && !cell.is_image() {
                 let m = cell.modifier();
                 let blank = symbol == " " && !m.intersects(VISIBLE_ON_BLANK);
-                let styles = [
+                let mut styles = [
                     Modifier::BOLD,
                     Modifier::DIM,
                     Modifier::ITALIC,
@@ -909,6 +909,13 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSe
                     Modifier::REVERSED,
                 ]
                 .map(|s| m.contains(s));
+                // bold and dim together (text that keeps its own colors, `ESC [ 1 ; 2 m`), as
+                // xterm, VTE and kitty show them: vt100 holds one intensity, ECMA-48's, so `1`
+                // and `2` replace each other there, and the terminal shows whichever the encoder
+                // sent last (`1` then `2` when both are added, `22;2;1` past a reset)
+                if m.contains(Modifier::BOLD | Modifier::DIM) && seen.bold() != seen.dim() {
+                    styles[..2].copy_from_slice(&[seen.bold(), seen.dim()]);
+                }
                 let want = (
                     symbol,
                     term_color(cell.bg()),
