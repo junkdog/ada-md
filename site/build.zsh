@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # Records the site's clips and stills into site/media: each tape in site/tapes, after
 # settings.tape, run from site/ so the paths in the tapes are relative to it. Clips become
-# animated WebP (KEEP_GIF=1 keeps the GIFs, to look at frames). Needs vhs, tmux, ffmpeg, and
+# animated WebP (KEEP_GIF=1 keeps the GIFs, to look at frames). Needs vhs, tmux, ffmpeg, man-db, and
 # ada built in release (cargo build --release).
 #
 #   site/build.zsh             # every tape
@@ -10,7 +10,7 @@ set -euo pipefail
 
 site=${0:A:h}
 base=$($site/tapes/setup.zsh)
-export SITE=$site NOTES=$base/notes CLEAN=$base/clean XDG_CONFIG_HOME=$base/config
+export SITE=$site NOTES=$base/notes CLEAN=$base/clean LOG=$base/log XDG_CONFIG_HOME=$base/config
 export ADA=${site:h}/target/release/ada
 cd $site
 mkdir -p media/.scratch

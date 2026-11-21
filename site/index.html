@@ -210,6 +210,44 @@
     </div>
   </article>
 
+  <div class="pair">
+    <article id="git-pager" class="card">
+      <div class="text">
+        <h2>git's pager <a class="anchor" href="#git-pager" aria-label="link to this section">#</a></h2>
+        <p>Diffs and <code>git blame</code> in <strong>their files' languages</strong>, the changed words picked
+          out. The outline lists the commits and their files, each with how it changed. As
+          <code>interactive.diffFilter</code>, <code>git add -p</code> gets the same colors.</p>
+        <pre><code>git config --global core.pager 'ada -F'
+git config --global interactive.diffFilter \
+  'ada --color-only'</code></pre>
+        <p class="keys"><kbd>o</kbd> commits and files <kbd>n</kbd> <kbd>N</kbd> next, previous file</p>
+      </div>
+      <figure>
+        <a class="term" href="#zoom-git">
+          <div class="term-bar"><i></i><i></i><i></i><span>git log -p</span></div>
+          <img src="media/git.webp" width="680" height="420" loading="lazy" alt="git log -p paged by ada: the outline lists four commits and their files with lines added and removed, then jumps to a Rust change and to a TOML change, highlighted in their languages">
+        </a>
+      </figure>
+    </article>
+
+    <article id="man-pager" class="card">
+      <div class="text">
+        <h2>man's pager <a class="anchor" href="#man-pager" aria-label="link to this section">#</a></h2>
+        <p>A man page is highlighted from <code>man</code>'s own output: <strong>options and their
+          parameters</strong>, the synopsis, commands, environment variables and references to other pages.
+          The outline lists its sections and subsections.</p>
+        <pre><code>export MANPAGER='ada -F'</code></pre>
+        <p class="keys"><kbd>o</kbd> sections <kbd>/</kbd> search</p>
+      </div>
+      <figure>
+        <a class="term" href="#zoom-man">
+          <div class="term-bar"><i></i><i></i><i></i><span>man feeder</span></div>
+          <img src="media/man.webp" width="680" height="420" loading="lazy" alt="the cat feeder's man page in ada: the outline of its sections, a jump to OPTIONS, then a filter to BUGS">
+        </a>
+      </figure>
+    </article>
+  </div>
+
   <article id="preview" class="card">
     <div class="text">
       <h2>One previewer for fzf <a class="anchor" href="#preview" aria-label="link to this section">#</a></h2>
@@ -1295,6 +1333,8 @@ fzf --preview 'ada --print {}'</code></pre>
 <div class="zoom" id="zoom-diagrams"><a href="#diagrams" aria-label="close"></a><img src="media/diagrams.webp" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-gantt"><a href="#gantt" aria-label="close"></a><img src="media/gantt.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-preview"><a href="#preview" aria-label="close"></a><img src="media/preview.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-git"><a href="#git-pager" aria-label="close"></a><img src="media/git.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-man"><a href="#man-pager" aria-label="close"></a><img src="media/man.webp" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-gruvbox-dark"><a href="#themes" aria-label="close"></a><img src="media/theme-gruvbox-dark.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-catppuccin-mocha"><a href="#themes" aria-label="close"></a><img src="media/theme-catppuccin-mocha.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-catppuccin-macchiato"><a href="#themes" aria-label="close"></a><img src="media/theme-catppuccin-macchiato.png" loading="lazy" alt=""></div>

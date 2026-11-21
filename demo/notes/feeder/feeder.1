@@ -1,0 +1,98 @@
+.\" The feeder's man page, for the site's man-pager clip (site/tapes/man.tape).
+.TH FEEDER 1 2026-10-02 "feeder 0.3" "Cat Feeder Manual"
+.SH NAME
+feeder \- dispense a cat's meals on schedule
+.SH SYNOPSIS
+.B feeder
+.RB [ \-n ]
+.RB [ \-c
+.IR file ]
+.RB [ \-p
+.IR grams ]
+.RB [ \-r
+.IR count ]
+.RB [ run | now | status ]
+.SH DESCRIPTION
+.B feeder
+reads the day's meals from the SD card and turns the auger at each one until
+the portion is out, 2.5 g a turn.
+A turn that takes longer than 650 ms counts as a jam: the auger backs up half a
+turn and tries again.
+.PP
+Every turn, jam and meal is written to the log, which
+.BR ada (1)
+reads well.
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config =\fIfile\fR
+Read the schedule from
+.I file
+instead of
+.IR /sd/feeder.toml .
+.TP
+.BR \-n ", " \-\-dry\-run
+Count the turns and log them, and keep the kibble.
+.TP
+.BR \-p ", " \-\-portion =\fIgrams\fR
+Dispense
+.I grams
+at every meal, whatever the schedule says.
+Ada would like this to be larger.
+.TP
+.BR \-r ", " \-\-retries =\fIcount\fR
+Retry a jammed turn up to
+.I count
+times before giving up (default 3).
+.SH COMMANDS
+.TP
+.B run
+Wait for the next meal, dispense it, and repeat.
+The default.
+.TP
+.B now
+Dispense one portion at once.
+Neumann has learned the sound of this command.
+.TP
+.B status
+Print the next meal, the grams left in the hopper, and the last jam.
+.SH SCHEDULE
+.SS Meals
+Each
+.B [[meal]]
+has a time and a portion in grams:
+07:00 20 g, 12:00 15 g, 22:00 10 g.
+.SS By hand
+A meal with no portion is served by hand; the feeder only logs that it was due.
+Dinner at 17:00 is one, at Ada's insistence.
+.SS Skipped days
+A
+.B skip
+list of dates leaves those days out, for the vet's fasting rules.
+Ada has not been told about this.
+.SH ENVIRONMENT
+.TP
+.B FEEDER_LOG
+Where the log goes, in place of
+.IR /sd/log.txt .
+.TP
+.B TZ
+The time zone the schedule is in.
+.SH FILES
+.TP
+.I /sd/feeder.toml
+The schedule.
+.TP
+.I /sd/log.txt
+One line a turn, a jam, or a paw on the lid.
+.SH EXIT STATUS
+0 when the feeder was stopped, 1 when a turn stayed jammed after every retry,
+and 2 when the hopper ran empty.
+.SH BUGS
+A paw on the lid stops the motor mid-turn.
+Ada has learned this, and that a stopped motor is followed by a human.
+.PP
+Who opened the cheese drawer is still unsolved.
+.SH SEE ALSO
+.BR ada (1),
+.BR crontab (5),
+.BR neumann (7)
