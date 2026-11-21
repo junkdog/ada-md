@@ -122,7 +122,8 @@ pub struct LayoutParams {
     /// [whole file](crate::doc::CodeBlock::whole_file) has no such row in either.
     pub code_labels: bool,
     /// A file of code printed on the terminal's background, which is its page: no margin, and
-    /// its block takes no columns of its own but a wrapped line's mark.
+    /// its block takes no columns of its own but a wrapped line's mark. A man page is laid out
+    /// so in the viewer too, as `man` filled it to the terminal's width (X-188).
     pub bare: bool,
     /// Rows are numbered unless `Off`: [`FileType::params`](crate::filetype::FileType::params)
     /// turns the mode off for the files it doesn't cover.

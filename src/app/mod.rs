@@ -3163,6 +3163,47 @@ mod tests {
         assert!(state.outline.is_none());
     }
 
+    /// X-188: `man` fills its page to one column short of the terminal's width, so the viewer
+    /// lays it out without margins: no full line of it wraps, and it starts at the screen's edge.
+    #[test]
+    fn a_man_page_takes_the_whole_width() {
+        let width = 40;
+        let full = format!("     {}", "word ".repeat(7).trim_end());
+        assert_eq!(full.len(), usize::from(width) - 1);
+        let text = format!(
+            "LS(1)        User Commands        LS(1)\n\nNAME\n{full}\n{full}\n\n\
+             GNU coreutils 9.12   Oct 2026   LS(1)\n"
+        );
+        assert!(text.lines().all(|l| l.len() < usize::from(width)));
+        let mut state = loaded("x", width, 10);
+        update(
+            &mut state,
+            Msg::DocLoaded {
+                path: "-".into(),
+                mtime: None,
+                text: text.as_str().into(),
+                doc: Computed(None),
+            },
+        );
+        let doc = state.doc.as_ref().unwrap();
+        assert!(doc.is_man_page());
+        assert_eq!(doc.layout.margin, 0);
+        assert_eq!(
+            doc.layout.row_count(),
+            text.lines().count() as u32,
+            "{text}"
+        );
+        // and narrower than the page, a line wraps as before
+        update(
+            &mut state,
+            Msg::Resize {
+                size: Size { w: 30, h: 10 },
+            },
+        );
+        let doc = state.doc.as_ref().unwrap();
+        assert!(doc.layout.row_count() > text.lines().count() as u32);
+    }
+
     /// X-188: `o` in a man page, piped from `man` with its bold struck over, lists its sections
     /// and subsections (not its title or footer), and jumps to the one picked.
     #[test]

@@ -4,10 +4,10 @@
 //! is its lines alone, viewed or printed. With `code_wrap` on, long lines wrap with the theme's
 //! `↪`. With it off, each source line is one row whose code span
 //! is a fixed-width window, sliced at paint time by the shared horizontal offset, so scrolling
-//! sideways never relayouts. Highlighting is overlaid at paint, too. A printed file of code
-//! ([`LayoutParams::bare`](super::LayoutParams::bare)) has no columns of the block's own left of
-//! its lines, nor right of them when they wrap: a wrapped line's mark takes its continuation's
-//! first column.
+//! sideways never relayouts. Highlighting is overlaid at paint, too. A printed file of code, or
+//! a man page viewed ([`LayoutParams::bare`](super::LayoutParams::bare)), has no columns of the
+//! block's own left of its lines, nor right of them when they wrap: a wrapped line's mark takes
+//! its continuation's first column.
 
 use std::borrow::Cow;
 

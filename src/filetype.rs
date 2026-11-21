@@ -260,6 +260,11 @@ impl FileType {
             FileType::Text { .. } => {
                 params.max_width = None;
                 *numbers = (*numbers).min(LineNumbers::Code);
+                // `man` filled its page to the terminal's width (one column short of it), so
+                // the viewer takes no columns of its own either, or every full line wraps (X-188)
+                if *self == FileType::MANPAGE {
+                    params.bare = true;
+                }
             }
             FileType::Image => {
                 *numbers = LineNumbers::Off;
