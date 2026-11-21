@@ -1349,11 +1349,14 @@ impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let BlockScratch { spans, lines, buf } = BlockScratch::take();
         // a header's fence (```` ```h ````) by its text, as a `.h` file (X-134); a header
-        // template's (```` ```h.in ````) too (X-140)
+        // template's (```` ```h.in ````) too (X-140); an assembly fence's (```` ```asm ````)
+        // architecture (X-171)
         let own = if lang.eq_ignore_ascii_case("h") {
             Some(Lang::for_header(text.as_bytes()))
         } else if lang.eq_ignore_ascii_case("h.in") {
             Some(Lang::for_header_template(text.as_bytes()))
+        } else if lang.eq_ignore_ascii_case("asm") || lang.eq_ignore_ascii_case("assembly") {
+            Some(Lang::for_assembly(text.as_bytes(), Lang::X86Asm))
         } else {
             own(lang)
         };
@@ -2213,7 +2216,9 @@ mod tests {
     /// bat names `x.h.in` by `x.h` (X-140, X-144); and another language's template named for
     /// CMake (`x.java.cmake`) is that language's, where the set says CMake (X-144); pkg-config's
     /// `.pc` and its templates (`x.pc.in`, `x.pc.cmake`) are pkg-config's, where the set says Perl
-    /// (its `pc`) or CMake (X-146). A file's
+    /// (its `pc`) or CMake (X-146); RISC-V's, MIPS's, Z80's, 6502's and 68k's assembly are ada's
+    /// own, by tokens (```` ```riscv ````, ```` ```z80 ````, ```` ```m68k ````) and names (`.z80`,
+    /// `.a65`, `.x68`) the set has no syntax for (X-181, X-183). A file's
     /// name is read as bat reads it: the set's, then, where that names nothing, without a
     /// suffix bat ignores (`x.py.in`, `x.pyx.in`, X-145).
     #[test]
@@ -2226,6 +2231,16 @@ mod tests {
             ours == Some(Lang::JavaScript.name()) && full == Some("JavaScript")
                 || template && ours != full
                 || ours == Some(Lang::PkgConfig.name()) && full != ours
+                || [
+                    Lang::RiscvAsm,
+                    Lang::MipsAsm,
+                    Lang::Z80Asm,
+                    Lang::Mos6502Asm,
+                    Lang::M68kAsm,
+                ]
+                .iter()
+                .any(|l| ours == Some(l.name()))
+                    && full != ours
                 || full == Some("CMake") && file.and_then(Lang::configured_file).is_some()
         };
         let mut words = words();
@@ -3401,6 +3416,63 @@ mod tests {
         assert_eq!(past_mark(spans.line(7)), alone("cpp"));
         let spans = highlight(1, "diff", &file("a.h"), &st);
         assert_eq!(past_mark(spans.line(3)), alone("c"));
+    }
+
+    /// X-180: a diff's `.S`, `.s` or `.asm` hunk is in the architecture its lines name, else the
+    /// file's so far: its earlier hunks', else its path's directory's, else the last such
+    /// file's, else its name's (bat's: `.S` ARM's).
+    #[test]
+    fn a_diffs_assembly_takes_its_hunks_architecture() {
+        let st = SyntaxTheme::new(&Theme::builtin().syntax);
+        let file = |name: &str, line: &str| {
+            format!("--- a/{name}\n+++ b/{name}\n@@ -1 +1,2 @@\n {line}\n+{line}\n")
+        };
+        let att = "    movq %rsp, %rbp";
+        let alone = |lang: &str, line: &str| highlight(1, lang, line, &st).line(0).to_vec();
+        assert_ne!(alone("x86asm", att), alone("armasm", att));
+        let spans = highlight(1, "diff", &file("entry_64.S", att), &st);
+        assert_eq!(past_mark(spans.line(3)), alone("x86asm", att));
+        assert_eq!(past_mark(spans.line(4)), alone("x86asm", att));
+        // no register in the next file's hunk: the last assembly file's architecture
+        // `#` a comment on x86, after a blank; nothing on ARM
+        let label = "    ret # done";
+        assert_ne!(alone("x86asm", label), alone("armasm", label));
+        let text = format!("{}{}", file("entry_64.S", att), file("ret.S", label));
+        let spans = highlight(1, "diff", &text, &st);
+        assert_eq!(past_mark(spans.line(8)), alone("x86asm", label));
+        let spans = highlight(1, "diff", &file("ret.S", label), &st);
+        assert_eq!(past_mark(spans.line(3)), alone("armasm", label));
+        let a64 = "    stp x29, x30, [sp, #-16]!";
+        let spans = highlight(1, "diff", &file("f.asm", a64), &st);
+        assert_eq!(past_mark(spans.line(3)), alone("armasm", a64));
+        let spans = highlight(1, "diff", &file("arch/x86/lib/ret.S", label), &st);
+        assert_eq!(past_mark(spans.line(3)), alone("x86asm", label));
+        // a later hunk's registers decide it, and the next's that don't
+        let hunk = |at: u32, line: &str| format!("@@ -{at} +{at},2 @@\n {line}\n+{line}\n");
+        let text = format!(
+            "--- a/ret.S\n+++ b/ret.S\n{}{}{}",
+            hunk(1, label),
+            hunk(9, att),
+            hunk(20, label)
+        );
+        let spans = highlight(1, "diff", &text, &st);
+        assert_eq!(past_mark(spans.line(3)), alone("armasm", label));
+        assert_eq!(past_mark(spans.line(6)), alone("x86asm", att));
+        assert_eq!(past_mark(spans.line(9)), alone("x86asm", label));
+        // a `.i` plain until a hunk's lines are 68k's (X-186), then 68k's
+        let ndk = "    STRUCTURE LN,0";
+        let swig = "%module example";
+        let text = format!(
+            "--- a/types.i\n+++ b/types.i\n{}{}",
+            hunk(1, swig),
+            hunk(9, ndk)
+        );
+        let spans = highlight(1, "diff", &text, &st);
+        assert!(past_mark(spans.line(3)).is_empty());
+        assert_eq!(past_mark(spans.line(6)), alone("m68k", ndk));
+        assert!(!alone("m68k", ndk).is_empty());
+        let spans = highlight(1, "diff", &file("example.i", swig), &st);
+        assert!(past_mark(spans.line(3)).is_empty());
     }
 
     #[test]

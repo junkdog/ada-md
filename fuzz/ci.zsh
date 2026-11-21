@@ -57,6 +57,10 @@ LANGS=(
   diff 339 1
   # X-178: from its first corpus's cmin (2026-11-19, the git pager's smokes)
   gitconfig 2945 21
+  # the assembly languages (X-171, X-181, X-183): from their cmin after X-186's 300 s smokes
+  # (2026-11-21; 68k's first, X-183's, had counted a third of its edges)
+  x86asm 3645 10             armasm 3141 6              riscvasm 2681 5            mipsasm 2476 5
+  z80asm 3357 7              mos6502asm 3720 8          m68kasm 3999 9
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done

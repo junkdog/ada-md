@@ -1,0 +1,185 @@
+# Z80Asm: ada-parse/tests/readings.rs, z80asm
+
+## block 1
+   1 | INCLUDE "hardware.inc"
+       "INCLUDE" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "hardware.inc" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+   2 | SECTION "Main", ROM0[$150]
+       "SECTION" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "Main" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "ROM0" storage.modifier.asm
+       "$150" constant.numeric.hex.asm
+   3 | Main::
+       "Main" entity.name.constant.asm
+       "::" punctuation.separator.asm
+   4 | \tldh a, [rLY]
+       "ldh" keyword.operator.word.mnemonic.asm
+       "a" constant.language.register.asm
+       "," operator.separator.asm
+       "rLY" entity.name.constant.asm
+   5 | \tcp 144
+       "cp" keyword.operator.word.mnemonic.asm
+       "144" constant.numeric.decimal.asm
+   6 | \tjr c, Main
+       "jr" keyword.operator.word.mnemonic.asm
+       "c" storage.modifier.asm
+       "," operator.separator.asm
+       "Main" entity.name.constant.asm
+   7 | .loop
+       ".loop" entity.name.constant.asm
+   8 | \tld [hl+], a ; next
+       "ld" keyword.operator.word.mnemonic.asm
+       "hl" constant.language.register.asm
+       "+" keyword.operator.arithmetic.asm
+       "," operator.separator.asm
+       "a" constant.language.register.asm
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " next" comment.line.asm
+   9 | \tdec b
+       "dec" keyword.operator.word.mnemonic.asm
+       "b" constant.language.register.asm
+  10 | \tjr nz, .loop
+       "jr" keyword.operator.word.mnemonic.asm
+       "nz" storage.modifier.asm
+       "," operator.separator.asm
+       ".loop" entity.name.constant.asm
+  11 | \tret z
+       "ret" keyword.operator.word.mnemonic.asm
+       "z" storage.modifier.asm
+  12 | MACRO lb
+       "MACRO" support.function.directive.asm
+       "lb" entity.name.function.preprocessor.asm
+  13 | \tld \1, (\2 << 8) | \3
+       "ld" keyword.operator.word.mnemonic.asm
+       "\\" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "1" variable.other.preprocessor.asm
+       "," operator.separator.asm
+       "\\" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "2" variable.other.preprocessor.asm
+       "<<" keyword.operator.bitwise.asm
+       "8" constant.numeric.decimal.asm
+       "|" keyword.operator.bitwise.asm
+       "\\" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "3" variable.other.preprocessor.asm
+  14 | ENDM
+       "ENDM" support.function.directive.asm
+  15 | \tdw `01233210
+       "dw" storage.type.asm
+       "`01233210" constant.numeric.binary.asm
+  16 | DEF COUNT EQU 4
+       "DEF" support.function.directive.asm
+       "COUNT" entity.name.constant.asm
+       "EQU" support.function.directive.asm
+       "4" constant.numeric.decimal.asm
+
+## block 2
+   1 | \tDEVICE ZXSPECTRUM48
+       "DEVICE" support.function.directive.asm
+       "ZXSPECTRUM48" entity.name.constant.asm
+   2 | \torg $8000
+       "org" support.function.directive.asm
+       "$8000" constant.numeric.hex.asm
+   3 | start\tld hl, msg
+       "start" entity.name.constant.asm
+       "ld" keyword.operator.word.mnemonic.asm
+       "hl" constant.language.register.asm
+       "," operator.separator.asm
+       "msg" entity.name.constant.asm
+   4 | \tex af, af'
+       "ex" keyword.operator.word.mnemonic.asm
+       "af" constant.language.register.asm
+       "," operator.separator.asm
+       "af'" constant.language.register.asm
+   5 | \tld (ix+5), %10100101
+       "ld" keyword.operator.word.mnemonic.asm
+       "ix" constant.language.register.asm
+       "+" keyword.operator.arithmetic.asm
+       "5" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "%10100101" constant.numeric.binary.asm
+   6 | loop\tdjnz loop
+       "loop" entity.name.constant.asm
+       "djnz" keyword.operator.word.mnemonic.asm
+       "loop" entity.name.constant.asm
+   7 | \tjp po, start
+       "jp" keyword.operator.word.mnemonic.asm
+       "po" storage.modifier.asm
+       "," operator.separator.asm
+       "start" entity.name.constant.asm
+   8 | msg\tdefb "hi", 0
+       "msg" entity.name.constant.asm
+       "defb" storage.type.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "hi" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "0" constant.numeric.decimal.asm
+   9 | count\tequ 5
+       "count" entity.name.constant.asm
+       "equ" support.function.directive.asm
+       "5" constant.numeric.decimal.asm
+  10 | \tld a, #FF
+       "ld" keyword.operator.word.mnemonic.asm
+       "a" constant.language.register.asm
+       "," operator.separator.asm
+       "#FF" constant.numeric.hex.asm
+
+## block 3
+   1 | \t.area _CODE
+       ".area" support.function.directive.asm
+       "_CODE" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+   2 | \t.globl _main
+       ".globl" support.function.directive.asm
+       "_main" entity.name.constant.asm
+   3 | _main:
+       "_main" entity.name.constant.asm
+       ":" punctuation.separator.asm
+   4 | \tld a, #0x10
+       "ld" keyword.operator.word.mnemonic.asm
+       "a" constant.language.register.asm
+       "," operator.separator.asm
+       "#0x10" constant.numeric.hex.asm
+   5 | \tret
+       "ret" keyword.operator.word.mnemonic.asm
+
+## block 4
+   1 | BDOS\tEQU\t5
+       "BDOS" entity.name.constant.asm
+       "EQU" support.function.directive.asm
+       "5" constant.numeric.decimal.asm
+   2 | START:\tLXI\tH,BUF\t; the buffer
+       "START" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "LXI" keyword.operator.word.mnemonic.asm
+       "H" constant.language.register.asm
+       "," operator.separator.asm
+       "BUF" entity.name.constant.asm
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " the buffer" comment.line.asm
+   3 | \tMVI\tC,2
+       "MVI" keyword.operator.word.mnemonic.asm
+       "C" constant.language.register.asm
+       "," operator.separator.asm
+       "2" constant.numeric.decimal.asm
+   4 | \tMOV\tA,M
+       "MOV" keyword.operator.word.mnemonic.asm
+       "A" constant.language.register.asm
+       "," operator.separator.asm
+       "M" constant.language.register.asm
+   5 | \tPUSH\tPSW
+       "PUSH" keyword.operator.word.mnemonic.asm
+       "PSW" constant.language.register.asm
+   6 | \tDAD\tD
+       "DAD" keyword.operator.word.mnemonic.asm
+       "D" constant.language.register.asm
+   7 | \tJNZ\tSTART
+       "JNZ" keyword.operator.word.mnemonic.asm
+       "START" entity.name.constant.asm
+   8 | \tCALL\tBDOS
+       "CALL" keyword.operator.word.mnemonic.asm
+       "BDOS" entity.name.constant.asm

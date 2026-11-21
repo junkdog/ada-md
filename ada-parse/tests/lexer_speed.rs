@@ -52,6 +52,17 @@ const LANGS: &[(&str, Lang)] = &[
     ("objcpp", Lang::ObjCpp),
     ("csharp", Lang::CSharp),
     ("go", Lang::Go),
+    // X-171's corpus: cloned repositories' x86 (NASM, MASM, GAS) and ARM (ARM32, AArch64)
+    ("x86asm", Lang::X86Asm),
+    ("armasm", Lang::ArmAsm),
+    // X-181's corpus: cloned repositories' RISC-V, MIPS (GAS, MARS, armips), Z80 (rgbds, sjasmplus,
+    // z80asm, TASM) and 6502 (ca65, DASM, ACME)
+    ("riscvasm", Lang::RiscvAsm),
+    ("mipsasm", Lang::MipsAsm),
+    ("z80asm", Lang::Z80Asm),
+    ("asm6502", Lang::Mos6502Asm),
+    // X-183's corpus: cloned repositories' 68k (vasm, Devpac, asm68k, AS, GAS's and MIT's)
+    ("m68kasm", Lang::M68kAsm),
     ("python", Lang::Python),
     ("lua", Lang::Lua),
     // X-099's corpus: twenty cloned PHP repositories

@@ -27,6 +27,7 @@
 // own, not by syntect (X-116): its unit tests, `tests/readings.rs`' snapshots of its readings,
 // and the `tokens` fuzz target's invariants.
 
+mod asm;
 mod bash;
 mod cc;
 mod clike;
@@ -569,6 +570,13 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Racket => (lisp::block_runs_racket, lisp::line_runs_racket),
         Lang::Clojure => (lisp::clojure::block_runs, lisp::clojure::line_runs),
         Lang::Go => (go::block_runs, go::line_runs),
+        Lang::X86Asm => (asm::block_runs, asm::line_runs),
+        Lang::ArmAsm => (asm::block_runs_arm, asm::line_runs_arm),
+        Lang::RiscvAsm => (asm::block_runs_riscv, asm::line_runs_riscv),
+        Lang::MipsAsm => (asm::block_runs_mips, asm::line_runs_mips),
+        Lang::Z80Asm => (asm::block_runs_z80, asm::line_runs_z80),
+        Lang::Mos6502Asm => (asm::block_runs_6502, asm::line_runs_6502),
+        Lang::M68kAsm => (asm::block_runs_68k, asm::line_runs_68k),
         Lang::Lua => (lua::block_runs, lua::line_runs),
         Lang::Php => (php::block_runs, php::line_runs),
         Lang::Swift => (swift::block_runs, swift::line_runs),
@@ -605,10 +613,17 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Java if SPANS => java::block,
         Lang::Python if SPANS => python::block,
         Lang::Go if SPANS => go::block,
+        Lang::X86Asm if SPANS => asm::block,
+        Lang::ArmAsm if SPANS => asm::block_arm,
+        Lang::RiscvAsm if SPANS => asm::block_riscv,
+        Lang::MipsAsm if SPANS => asm::block_mips,
+        Lang::Z80Asm if SPANS => asm::block_z80,
+        Lang::Mos6502Asm if SPANS => asm::block_6502,
+        Lang::M68kAsm if SPANS => asm::block_68k,
         Lang::CSharp if SPANS => cs::block,
         Lang::TypeScript if SPANS => typescript::block,
         Lang::TypeScriptReact if SPANS => typescript::block_tsx,
-        Lang::JavaScript => javascript::block,
+        Lang::JavaScript if SPANS => javascript::block,
         Lang::Cpp if SPANS => cc::block,
         Lang::C if SPANS => cc::block_c,
         Lang::ObjC if SPANS => cc::block_objc,
@@ -811,6 +826,25 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         {
             |_, _, _| unreachable!("a line format's runs come from its own scan")
         }
+        // the carried scans' runs come from their run copies (`carried_runs`, which both run
+        // paths try first): their span arms dead there, said so, so the span copies stay out of
+        // ada's binary however LLVM inlines (X-171: C's, C++'s, CSS's and JavaScript's came back
+        // into it, +370 KB, when assembly's scans joined the tables)
+        Lang::C
+        | Lang::Cpp
+        | Lang::ObjC
+        | Lang::ObjCpp
+        | Lang::Css
+        | Lang::JavaScript
+        | Lang::TypeScript
+        | Lang::Lisp
+        | Lang::EmacsLisp
+        | Lang::Scheme
+        | Lang::Racket
+            if !SPANS =>
+        {
+            |_, _, _| unreachable!("a carried scan's runs come from its run copy")
+        }
         Lang::Log => |l, _, v| logs::tokens(l, v),
         Lang::Json if !SPANS => |_, _, _| unreachable!("JSON's runs come from its own scan"),
         Lang::Json => |l, s, v| {
@@ -849,6 +883,24 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::CSharp => out!(cs::line),
         Lang::Go if !SPANS => |_, _, _| unreachable!("Go's runs come from its own scan"),
         Lang::Go => out!(go::line),
+        Lang::X86Asm if !SPANS => |_, _, _| unreachable!("assembly's runs come from its own scan"),
+        Lang::X86Asm => out!(asm::line),
+        Lang::ArmAsm if !SPANS => |_, _, _| unreachable!("assembly's runs come from its own scan"),
+        Lang::ArmAsm => out!(asm::line_arm),
+        Lang::RiscvAsm if !SPANS => {
+            |_, _, _| unreachable!("assembly's runs come from its own scan")
+        }
+        Lang::RiscvAsm => out!(asm::line_riscv),
+        Lang::MipsAsm if !SPANS => |_, _, _| unreachable!("assembly's runs come from its own scan"),
+        Lang::MipsAsm => out!(asm::line_mips),
+        Lang::Z80Asm if !SPANS => |_, _, _| unreachable!("assembly's runs come from its own scan"),
+        Lang::Z80Asm => out!(asm::line_z80),
+        Lang::Mos6502Asm if !SPANS => {
+            |_, _, _| unreachable!("assembly's runs come from its own scan")
+        }
+        Lang::Mos6502Asm => out!(asm::line_6502),
+        Lang::M68kAsm if !SPANS => |_, _, _| unreachable!("assembly's runs come from its own scan"),
+        Lang::M68kAsm => out!(asm::line_68k),
         Lang::Python if !SPANS => |_, _, _| unreachable!("Python's runs come from its own scan"),
         Lang::Python => out!(python::line),
         Lang::Lua if !SPANS => |_, _, _| unreachable!("Lua's runs come from its own scan"),

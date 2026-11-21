@@ -2,6 +2,106 @@
 
 One fenced snippet for each language ada highlights with a lexer of its own, so you can check them all in one place (`ada examples/lexers.md`). Where a language has regexes (literals, or strings a regex call takes), its snippet holds one, read as that language's regex engine reads it.
 
+## 6502 Assembly
+
+```asm6502
+; ca65's syntax
+	.setcpu	"65C02"
+	.segment "CODE"
+.proc	clear
+	lda	#<buffer
+	sta	ptr
+	lda	#>buffer
+	sta	ptr+1
+	ldy	#0
+@loop:	lda	#$20		; a blank
+	sta	(ptr),y
+	iny
+	bne	@loop
+:	dex
+	bne	:-
+	rts
+.endproc
+_clear := clear
+
+; DASM's: labels in the first column, `*` the location counter
+	processor 6502
+	org	$f000
+Start	sei
+	ldx	#%11111111
+	txs
+	jmp	*
+
+// Kick Assembler's: `!` labels, a macro's call
+BasicUpstart2(main)
+main:	ldx	#0
+!loop:	lda	#$20		// a blank
+	sta	$0400,x
+	inx
+	bne	!loop-
+```
+
+## 68k Assembly
+
+```m68k
+; vasm's and Devpac's syntax: labels in the first column, a comment field without a mark
+	section	code,code_c
+	xdef	_start
+_start	move.l	4.w,a6			exec base
+	lea	$dff000,a5
+	movem.l	d0-d7/a0-a6,-(sp)
+.loop	move.w	(a0,d1.w*2),d2
+	dbra	d0,.loop
+1$	btst	#6,$bfe001
+	bne.s	1$
+	movem.l	(sp)+,d0-d7/a0-a6
+	rts
+* a table
+table	dc.w	$0100,%0101,'AB'
+	even
+
+| GAS's, MIT's operands (linux's)
+	.text
+	jbsr	sys_fork
+	movel	%a1,%sp@-
+	lea	%sp@(24),%sp
+```
+
+## ARM Assembly
+
+```armasm
+// AArch64, GAS's syntax
+#include "asmdefs.h"
+
+	.text
+	.p2align 4
+	.global	copy_tail
+	.type	copy_tail, %function
+copy_tail:
+	stp	x29, x30, [sp, #-16]!	// a frame
+	ld1	{v0.16b, v1.16b}, [x1], #32
+	adrp	x2, table
+	add	x2, x2, :lo12:table
+1:	subs	x3, x3, #1
+	b.ne	1b
+	msr	tpidr_el0, x2
+	ldp	x29, x30, [sp], #16
+	ret
+	.size	copy_tail, .-copy_tail
+
+	.macro	push2 a, b
+	stp	\a, \b, [sp, #-16]!
+	.endm
+
+@ ARM32, Thumb-2
+	.syntax unified
+	.thumb
+f:	push	{r4-r7, lr}
+	ldr	r0, =0x12345678
+	addeq	r0, r0, r1, lsl #2
+	bx	lr
+```
+
 ## Bash
 
 ```bash
@@ -898,6 +998,36 @@ clean:
 	-rm -rf target/$(PROFILE) $(patsubst %.o,%.d,$(OBJS))
 ```
 
+## MIPS Assembly
+
+```mips
+# GAS's syntax, linux's regdef.h names
+	.set	noreorder
+	.globl	strlen
+	.ent	strlen
+strlen:	move	v0, a0
+1:	lbu	t0, 0(v0)
+	bnez	t0, 1b
+	 addiu	v0, v0, 1	# the delay slot
+	jr	ra
+	 subu	v0, v0, a0
+	.end	strlen
+
+# MARS's: `$` registers, syscalls, macros
+.data
+msg:	.asciiz	"hello\n"
+.text
+.macro	print (%label)
+	li	$v0, 4
+	la	$a0, %label
+	syscall
+.end_macro
+main:	print	msg
+	lui	$t0, %hi(table)
+	lw	$t1, %lo(table)($t0)
+	jr	$31
+```
+
 ## nginx
 
 ```nginx
@@ -1146,6 +1276,25 @@ async def main(paths: list[str], *, limit: int = 0x10) -> None:
 
 (match (list 1 2) [(list a b) (+ a b)] [_ #f])
 #;(displayln "commented out")
+```
+
+## RISC-V Assembly
+
+```riscv
+#include <asm/asm.h>
+	.option	norelax
+	.section .text.init, "ax", @progbits
+	.globl	_start
+_start:	addi	sp, sp, -16	# a frame
+	sd	ra, 8(sp); sd s0, 0(sp)
+1:	auipc	a0, %pcrel_hi(msg)
+	addi	a0, a0, %pcrel_lo(1b)
+	csrrw	t0, mscratch, t0
+	vsetvli	t1, a2, e32, m2, ta, ma
+	vle32.v	v8, (a1), v0.t
+	fcvt.w.d	a0, fa1, rtz
+	beqz	x5, 1b
+	ecall
 ```
 
 ## Ruby
@@ -1544,6 +1693,34 @@ export const Card: FC<Props> = ({ title, words = 0 }) => {
 };
 ```
 
+## x86_64 Assembly
+
+```nasm
+; NASM: hello, world on Linux x86-64
+%define SYS_WRITE 1
+%macro syscall3 4
+    mov     rax, %1
+    mov     rdi, %2
+    lea     rsi, [rel %3]
+    mov     rdx, %4
+    syscall
+%endmacro
+
+section .data
+msg     db      "hello, world", 10, `tab\t`
+len     equ     $ - msg
+
+section .text
+global _start
+_start:
+    syscall3 SYS_WRITE, 1, msg, len
+    vpaddd  zmm0{k1}{z}, zmm1, dword [rbx+rcx*4+0x40]
+.done:
+    xor     edi, edi
+    mov     eax, 0x3c       ; exit
+    syscall
+```
+
 ## XML
 
 ```xml
@@ -1592,4 +1769,36 @@ jobs:
       folded text
       on two lines
 ...
+```
+
+## Z80 Assembly
+
+```z80
+; rgbds' (the Game Boy's SM83)
+INCLUDE "hardware.inc"
+SECTION "Main", ROM0[$150]
+WaitVBlank::
+	ldh	a, [rLY]
+	cp	144
+	jr	c, WaitVBlank
+.copy
+	ld	[hl+], a	; next byte
+	dec	b
+	jr	nz, .copy
+	ret	z
+	dw	`01233210
+
+; sjasmplus' and TASM's: labels without `:`
+	org	$8000
+start	ld	hl, msg
+	ex	af, af'
+	ld	(ix+5), %10100101
+loop	djnz	loop
+	jp	po, start
+msg	defb	"hi", 0
+
+; 8080's, as CP/M's sources
+	MVI	C,2
+	MOV	A,M
+	PUSH	PSW
 ```

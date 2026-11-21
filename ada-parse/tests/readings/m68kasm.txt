@@ -1,0 +1,345 @@
+# M68kAsm: ada-parse/tests/readings.rs, m68kasm
+
+## block 1
+   1 | ; startup
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " startup" comment.line.asm
+   2 | \tsection\tcode,code_c
+       "section" support.function.directive.asm
+       "code" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+       "," operator.separator.asm
+       "code_c" storage.modifier.asm
+   3 | \txdef\t_start
+       "xdef" support.function.directive.asm
+       "_start" entity.name.constant.asm
+   4 | _start\tmove.l\t4.w,a6\t\texec base
+       "_start" entity.name.constant.asm
+       "move.l" keyword.operator.word.mnemonic.asm
+       "4" constant.numeric.decimal.asm
+       ".w" storage.type.asm
+       "," operator.separator.asm
+       "a6" constant.language.register.asm
+       "exec base" comment.line.asm
+   5 | \tlea\t$dff000,a5
+       "lea" keyword.operator.word.mnemonic.asm
+       "$dff000" constant.numeric.hex.asm
+       "," operator.separator.asm
+       "a5" constant.language.register.asm
+   6 | \tmove.w\t#$7fff,$9a(a5)
+       "move.w" keyword.operator.word.mnemonic.asm
+       "#$7fff" constant.numeric.hex.asm
+       "," operator.separator.asm
+       "$9a" constant.numeric.hex.asm
+       "a5" constant.language.register.asm
+   7 | \tmovem.l\td0-d7/a0-a6,-(sp)
+       "movem.l" keyword.operator.word.mnemonic.asm
+       "d0" constant.language.register.asm
+       "-" keyword.operator.arithmetic.asm
+       "d7" constant.language.register.asm
+       "/" keyword.operator.arithmetic.asm
+       "a0" constant.language.register.asm
+       "-" keyword.operator.arithmetic.asm
+       "a6" constant.language.register.asm
+       "," operator.separator.asm
+       "-" keyword.operator.arithmetic.asm
+       "sp" constant.language.register.asm
+   8 | .loop\tmove.w\t(a0,d1.w*2),d2
+       ".loop" entity.name.constant.asm
+       "move.w" keyword.operator.word.mnemonic.asm
+       "a0" constant.language.register.asm
+       "," operator.separator.asm
+       "d1.w" constant.language.register.asm
+       "*" keyword.operator.arithmetic.asm
+       "2" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "d2" constant.language.register.asm
+   9 | \tdbra\td0,.loop
+       "dbra" keyword.operator.word.mnemonic.asm
+       "d0" constant.language.register.asm
+       "," operator.separator.asm
+       ".loop" entity.name.constant.asm
+  10 | 1$\tbtst\t#%0110,$bfe001
+       "1$" entity.name.constant.asm
+       "btst" keyword.operator.word.mnemonic.asm
+       "#%0110" constant.numeric.binary.asm
+       "," operator.separator.asm
+       "$bfe001" constant.numeric.hex.asm
+  11 | \tbne.s\t1$
+       "bne.s" keyword.operator.word.mnemonic.asm
+       "1$" entity.name.constant.asm
+  12 | \tmovem.l\t(sp)+,d0-d7/a0-a6
+       "movem.l" keyword.operator.word.mnemonic.asm
+       "sp" constant.language.register.asm
+       "+" keyword.operator.arithmetic.asm
+       "," operator.separator.asm
+       "d0" constant.language.register.asm
+       "-" keyword.operator.arithmetic.asm
+       "d7" constant.language.register.asm
+       "/" keyword.operator.arithmetic.asm
+       "a0" constant.language.register.asm
+       "-" keyword.operator.arithmetic.asm
+       "a6" constant.language.register.asm
+  13 | \trts\t\t\tdone
+       "rts" keyword.operator.word.mnemonic.asm
+       "done" comment.line.asm
+  14 | * tables
+       "*" comment.line.asm punctuation.definition.comment.asm
+       " tables" comment.line.asm
+  15 | \tcnop\t0,4
+       "cnop" support.function.directive.asm
+       "0" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "4" constant.numeric.decimal.asm
+  16 | table\tdc.w\t$0100,@17,'AB'
+       "table" entity.name.constant.asm
+       "dc.w" storage.type.asm
+       "$0100" constant.numeric.hex.asm
+       "," operator.separator.asm
+       "@17" constant.numeric.octal.asm
+       "," operator.separator.asm
+       "'" string.quoted.single.asm punctuation.definition.string.begin.asm
+       "AB" string.quoted.single.asm
+       "'" string.quoted.single.asm punctuation.definition.string.end.asm
+  17 | \tds.b\t256
+       "ds.b" storage.type.asm
+       "256" constant.numeric.decimal.asm
+  18 | PUSH\tmacro
+       "PUSH" entity.name.constant.asm
+       "macro" support.function.directive.asm
+  19 | \tmove.\0\t\1,-(sp)
+       "move." keyword.operator.word.mnemonic.asm
+       "\\" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "0" variable.other.preprocessor.asm
+       "\\" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "1" variable.other.preprocessor.asm
+       "," operator.separator.asm
+       "-" keyword.operator.arithmetic.asm
+       "sp" constant.language.register.asm
+  20 | \tendm
+       "endm" support.function.directive.asm
+  21 | \tEdT\t25,<No THEN in a test>
+       "EdT" keyword.operator.word.mnemonic.asm
+       "25" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "<" string.quoted.other.asm punctuation.definition.string.begin.asm
+       "No THEN in a test" string.quoted.other.asm
+       ">" string.quoted.other.asm punctuation.definition.string.end.asm
+  22 | \teven
+       "even" support.function.directive.asm
+  23 | DONNÉES_AFFICH\tdc.w\t0
+       "DONNÉES_AFFICH" entity.name.constant.asm
+       "dc.w" storage.type.asm
+       "0" constant.numeric.decimal.asm
+  24 | \tlea\tDONNÉES_AFFICH,a6\tÉcran précédent
+       "lea" keyword.operator.word.mnemonic.asm
+       "DONNÉES_AFFICH" entity.name.constant.asm
+       "," operator.separator.asm
+       "a6" constant.language.register.asm
+       "Écran précédent" comment.line.asm
+
+## block 2
+   1 | \trsset\t$FFFF0000
+       "rsset" support.function.directive.asm
+       "$FFFF0000" constant.numeric.hex.asm
+   2 | v_buffer:\trs.b\t$200
+       "v_buffer" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "rs.b" storage.type.asm
+       "$200" constant.numeric.hex.asm
+   3 | Sonic_Move:
+       "Sonic_Move" entity.name.constant.asm
+       ":" punctuation.separator.asm
+   4 | \tmoveq\t#0,d0
+       "moveq" keyword.operator.word.mnemonic.asm
+       "#0" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "d0" constant.language.register.asm
+   5 | @loop:
+       "@loop" entity.name.constant.asm
+       ":" punctuation.separator.asm
+   6 | \tmove.b\tobRoutine(a0),d0 ; get routine
+       "move.b" keyword.operator.word.mnemonic.asm
+       "obRoutine" entity.name.constant.asm
+       "a0" constant.language.register.asm
+       "," operator.separator.asm
+       "d0" constant.language.register.asm
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " get routine" comment.line.asm
+   7 | \tbeq.s\t@loop
+       "beq.s" keyword.operator.word.mnemonic.asm
+       "@loop" entity.name.constant.asm
+   8 | \tjmp\tSonic_Index(pc,d0.w)
+       "jmp" keyword.operator.word.mnemonic.asm
+       "Sonic_Index" entity.name.constant.asm
+       "pc" constant.language.register.asm
+       "," operator.separator.asm
+       "d0.w" constant.language.register.asm
+   9 | \tif Revision=0
+       "if" support.function.directive.asm
+       "Revision" entity.name.constant.asm
+       "0" constant.numeric.decimal.asm
+  10 | \tmove.w\t($FFFFF604).w,d1
+       "move.w" keyword.operator.word.mnemonic.asm
+       "$FFFFF604" constant.numeric.hex.asm
+       ".w" storage.type.asm
+       "," operator.separator.asm
+       "d1" constant.language.register.asm
+  11 | \tendc
+       "endc" support.function.directive.asm
+
+## block 3
+   1 | \tcpu 68000
+       "cpu" support.function.directive.asm
+       "68000" constant.numeric.decimal.asm
+   2 | \tbinclude "art/sonic.bin"
+       "binclude" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "art/sonic.bin" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+   3 | \tif (FixBugs) && (Revision >= 1)
+       "if" support.function.directive.asm
+       "FixBugs" entity.name.constant.asm
+       "&&" keyword.operator.bitwise.asm
+       "Revision" entity.name.constant.asm
+       ">" keyword.operator.bitwise.asm
+       "1" constant.numeric.decimal.asm
+   4 | \tmove.w\t#make_art_tile(ArtTile_Sonic,0,0),art_tile(a0)
+       "move.w" keyword.operator.word.mnemonic.asm
+       "make_art_tile" entity.name.constant.asm
+       "ArtTile_Sonic" entity.name.constant.asm
+       "," operator.separator.asm
+       "0" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "0" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "art_tile" entity.name.constant.asm
+       "a0" constant.language.register.asm
+   5 | \tendif
+       "endif" support.function.directive.asm
+   6 | \tdc.w\tobj_end-*
+       "dc.w" storage.type.asm
+       "obj_end" entity.name.constant.asm
+       "-" keyword.operator.arithmetic.asm
+       "*" variable.language.asm
+
+## block 4
+   1 | | startup.S
+       "|" comment.line.asm punctuation.definition.comment.asm
+       " startup.S" comment.line.asm
+   2 | #include "asmdefs.h"
+       "#" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "include" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "\"" meta.preprocessor.asm string.quoted.double.asm punctuation.definition.string.begin.asm
+       "asmdefs.h" meta.preprocessor.asm string.quoted.double.asm
+       "\"" meta.preprocessor.asm string.quoted.double.asm punctuation.definition.string.end.asm
+   3 | \t.globl\t_main
+       ".globl" support.function.directive.asm
+       "_main" entity.name.constant.asm
+   4 | \t.text
+       ".text" support.function.directive.asm
+   5 | _main:
+       "_main" entity.name.constant.asm
+       ":" punctuation.separator.asm
+   6 | \tmove.l\t4(sp),a0\t\t| the basepage
+       "move.l" keyword.operator.word.mnemonic.asm
+       "4" constant.numeric.decimal.asm
+       "sp" constant.language.register.asm
+       "," operator.separator.asm
+       "a0" constant.language.register.asm
+       "|" comment.line.asm punctuation.definition.comment.asm
+       " the basepage" comment.line.asm
+   7 | \tmove.w\t#0x2700,sr
+       "move.w" keyword.operator.word.mnemonic.asm
+       "#0x2700" constant.numeric.hex.asm
+       "," operator.separator.asm
+       "sr" constant.language.register.asm
+   8 | \tjsr\t_init
+       "jsr" keyword.operator.word.mnemonic.asm
+       "_init" entity.name.constant.asm
+   9 | \tmovea.l 4(%sp), %a0\t// the first parameter
+       "movea.l" keyword.operator.word.mnemonic.asm
+       "4" constant.numeric.decimal.asm
+       "%sp" constant.language.register.asm
+       "," operator.separator.asm
+       "%a0" constant.language.register.asm
+       "//" comment.line.asm punctuation.definition.comment.asm
+       " the first parameter" comment.line.asm
+  10 | \tbeq.s\t1f
+       "beq.s" keyword.operator.word.mnemonic.asm
+       "1f" entity.name.constant.asm
+  11 | 1:
+       "1" entity.name.constant.asm
+       ":" punctuation.separator.asm
+  12 | \trts
+       "rts" keyword.operator.word.mnemonic.asm
+
+## block 5
+   1 | ENTRY(__sys_fork)
+       "ENTRY" keyword.operator.word.mnemonic.asm
+       "__sys_fork" entity.name.constant.asm
+   2 | \tSAVE_SWITCH_STACK
+       "SAVE_SWITCH_STACK" keyword.operator.word.mnemonic.asm
+   3 | \tjbsr\tsys_fork
+       "jbsr" keyword.operator.word.mnemonic.asm
+       "sys_fork" entity.name.constant.asm
+   4 | \tlea\t%sp@(24),%sp
+       "lea" keyword.operator.word.mnemonic.asm
+       "%sp" constant.language.register.asm
+       "@" keyword.operator.arithmetic.asm
+       "24" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "%sp" constant.language.register.asm
+   5 | \tmovel\t%a1,%sp@-\t| switch_stack pointer
+       "movel" keyword.operator.word.mnemonic.asm
+       "%a1" constant.language.register.asm
+       "," operator.separator.asm
+       "%sp" constant.language.register.asm
+       "@-" keyword.operator.arithmetic.asm
+       "|" comment.line.asm punctuation.definition.comment.asm
+       " switch_stack pointer" comment.line.asm
+   6 | \tmoveml\t%sp@+,%d2-%d5
+       "moveml" keyword.operator.word.mnemonic.asm
+       "%sp" constant.language.register.asm
+       "@+" keyword.operator.arithmetic.asm
+       "," operator.separator.asm
+       "%d2" constant.language.register.asm
+       "-" keyword.operator.arithmetic.asm
+       "%d5" constant.language.register.asm
+   7 | \tmovel\t%a0@(%d1:l:4),%a0
+       "movel" keyword.operator.word.mnemonic.asm
+       "%a0" constant.language.register.asm
+       "@" keyword.operator.arithmetic.asm
+       "%d1:l" constant.language.register.asm
+       ":" keyword.operator.arithmetic.asm
+       "4" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "%a0" constant.language.register.asm
+   8 | \trts
+       "rts" keyword.operator.word.mnemonic.asm
+
+## block 6
+   1 | \tORG\t$1000
+       "ORG" support.function.directive.asm
+       "$1000" constant.numeric.hex.asm
+   2 | START:\tMOVE.B\t#9,D0
+       "START" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "MOVE.B" keyword.operator.word.mnemonic.asm
+       "#9" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "D0" constant.language.register.asm
+   3 | \tTRAP\t#15
+       "TRAP" keyword.operator.word.mnemonic.asm
+       "#15" constant.numeric.decimal.asm
+   4 | MSG\tDC.B\t'HELLO',0
+       "MSG" entity.name.constant.asm
+       "DC.B" storage.type.asm
+       "'" string.quoted.single.asm punctuation.definition.string.begin.asm
+       "HELLO" string.quoted.single.asm
+       "'" string.quoted.single.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "0" constant.numeric.decimal.asm
+   5 | \tEND\tSTART
+       "END" support.function.directive.asm
+       "START" entity.name.constant.asm

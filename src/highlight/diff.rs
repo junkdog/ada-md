@@ -194,6 +194,9 @@ enum File {
     Unnamed,
     /// One in no language ada lexes (`README.md`, `notes.txt`): its text plain, on the tint.
     Plain,
+    /// A `.i`: plain until a hunk's lines are 68k's ([`Lang::for_include`]; the Amiga's and the
+    /// Atari ST's includes, not SWIG's or `gcc -E`'s), then that (X-186).
+    Include,
     /// One in a language ada lexes: an index into `langs`.
     Lang(usize),
 }
@@ -212,6 +215,9 @@ pub(super) struct Diff {
     /// The C family's language of the last such file the diff named (`.c`, `.cpp`, `.m`, `.mm`):
     /// a `.h`'s, which can't be read ahead for (X-134 reads a header's text).
     c_family: Option<Lang>,
+    /// The architecture of the last assembly file's hunk (`.s`, `.S`, `.asm`): the next file's
+    /// first, where its path doesn't say (X-180).
+    asm: Option<Lang>,
     /// The old file's lines and the new one's that the hunk has left; `None` outside a hunk.
     left: Option<(u32, u32)>,
     /// A context diff's hunk or a combined diff's, being read in place of `left`.
@@ -257,6 +263,7 @@ impl Diff {
             files: [File::Unnamed; 2],
             named: None,
             c_family: None,
+            asm: None,
             left: None,
             other: None,
             parents: Vec::new(),
@@ -382,6 +389,7 @@ impl Diff {
         }
         if let Some(hunk) = ada_parse::diff_hunk(line) {
             self.start(theme);
+            self.assembly((None, (hunk.old, hunk.new), ahead), theme);
             self.left = (hunk.old > 0 || hunk.new > 0).then_some((hunk.old, hunk.new));
             let (s, e) = hunk.section;
             return self.hunk_line(line, line, (s as u32, e as u32), theme, out);
@@ -594,6 +602,7 @@ impl Diff {
                 && !line.starts_with("+++") =>
             {
                 self.resolve(theme);
+                self.assembly((Some(line), LOOSE, ahead), theme);
                 self.left = Some(LOOSE);
                 (self.old, self.new) = (State::default(), State::default());
             }
@@ -1025,21 +1034,66 @@ impl Diff {
     }
 
     /// The language of the file at `path`: an index into `langs`, the language's rules added
-    /// when it's new; [`File::Plain`] for one in no language ada lexes.
+    /// when it's new; [`File::Plain`] for one in no language ada lexes. An assembly file's
+    /// architecture is, until its hunks' lines say ([`Diff::assembly`]), its path's directory's
+    /// (`arch/x86/`, `aarch64/`), else the last such file's, else its name's (X-180).
     fn language(&mut self, path: &str, theme: &SyntaxTheme) -> File {
-        let Some(lang) = language(path, self.c_family) else {
-            return File::Plain;
+        let name = path.rsplit('/').next().unwrap_or(path);
+        if Lang::is_include(name) {
+            return File::Include;
+        }
+        let lang = match assembly(name) {
+            Some(by_name) => Lang::assembly_by_dir(path).or(self.asm).unwrap_or(by_name),
+            None => match language(path, self.c_family) {
+                Some(lang) => lang,
+                None => return File::Plain,
+            },
         };
         if matches!(lang, Lang::C | Lang::Cpp | Lang::ObjC | Lang::ObjCpp) {
             self.c_family = Some(lang);
         }
-        File::Lang(match self.langs.iter().position(|r| r.lang == lang) {
+        File::Lang(self.rules(lang, theme))
+    }
+
+    /// `lang`'s index into `langs`, its rules added when it's new.
+    fn rules(&mut self, lang: Lang, theme: &SyntaxTheme) -> usize {
+        match self.langs.iter().position(|r| r.lang == lang) {
             Some(i) => i,
             None => {
                 self.langs.push(ParseRules::cached(lang, theme.id));
                 self.langs.len() - 1
             }
-        })
+        }
+    }
+
+    /// At a hunk's start, an assembly file's architecture by the hunk's lines, its own so far
+    /// where they don't say: each hunk starts its lexers afresh, so a hunk's registers decide
+    /// it and the hunks after it, read as far as a streamed print holds them (X-180); a `.i`'s
+    /// language, 68k's once a hunk's lines say (X-186).
+    fn assembly(&mut self, hunk: Hunk<'_>, theme: &SyntaxTheme) {
+        let mut text = None;
+        for side in 0..2 {
+            if self.files[side] == File::Include {
+                let text = text.get_or_insert_with(|| hunk_text(hunk));
+                if let Some(lang) = Lang::for_include(text.as_bytes()) {
+                    self.files[side] = File::Lang(self.rules(lang, theme));
+                }
+                continue;
+            }
+            let File::Lang(i) = self.files[side] else {
+                continue;
+            };
+            let was = self.langs[i].lang;
+            if !was.is_assembly() {
+                continue;
+            }
+            let text = text.get_or_insert_with(|| hunk_text(hunk));
+            let lang = Lang::for_assembly(text.as_bytes(), was);
+            self.asm = Some(lang);
+            if lang != was {
+                self.files[side] = File::Lang(self.rules(lang, theme));
+            }
+        }
     }
 
     /// `line`'s runs as Diff's lexer has them, into `runs`.
@@ -1187,6 +1241,45 @@ fn language(path: &str, c_family: Option<Lang>) -> Option<Lang> {
     // a search a file (X-174: three fifths of Diff's corpus's time)
     Lang::from_file_name(name)
         .or_else(|| Lang::strip_ignored_suffix(name).and_then(Lang::from_file_name))
+}
+
+/// The architecture an assembly file's name gives (`.s`, `.S`, `.asm`; bat's), a suffix bat
+/// ignores off first; `None` for any other name.
+fn assembly(name: &str) -> Option<Lang> {
+    Lang::assembly_by_text(name).or_else(|| Lang::strip_ignored_suffix(name).and_then(assembly))
+}
+
+/// A hunk, as an assembly file's architecture is read from it: its first line where that isn't
+/// an `@@` (a loose hunk's, [`LOOSE`]), its counts, and the lines after the first or the `@@`.
+type Hunk<'a> = (Option<&'a str>, (u32, u32), Ahead<'a>);
+
+/// The text of a hunk's lines, their marks off: up to the hunk's end or a file's headers, within [`BLOCK_BYTES`] and two lines
+/// short of [`BLOCK_LINES`] (a file's headers, which end it, are read past the last), so within
+/// what a streamed print holds past any line, and it reads as the whole diff does.
+fn hunk_text((mut first, (mut old, mut new), mut ahead): Hunk<'_>) -> String {
+    let loose = (old, new) == LOOSE;
+    let (mut text, mut lines, mut bytes) = (String::new(), 0, 0);
+    while (old, new) != (0, 0) {
+        let Some(line) = first.take().or_else(|| ahead.next_raw()) else {
+            break;
+        };
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        lines += 1;
+        bytes += line.len() + 1;
+        if lines > BLOCK_LINES - 2 || bytes > BLOCK_BYTES || file_follows(line, ahead, loose) {
+            break;
+        }
+        match line.as_bytes().first() {
+            Some(b'+') if new > 0 => new -= 1,
+            Some(b'-') if old > 0 => old -= 1,
+            Some(b' ') | None if old > 0 && new > 0 => (old, new) = (old - 1, new - 1),
+            Some(b'\\') => continue,
+            _ => break,
+        }
+        text.push_str(line.get(1..).unwrap_or(""));
+        text.push('\n');
+    }
+    text
 }
 
 /// The rule `runs` give byte `at`, plain past them.

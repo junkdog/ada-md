@@ -1,0 +1,403 @@
+# X86Asm: ada-parse/tests/readings.rs, x86asm
+
+## block 1
+   1 | ; hello, world
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " hello, world" comment.line.asm
+   2 | %include "x86inc.asm"
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "include" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "\"" meta.preprocessor.asm string.quoted.double.asm punctuation.definition.string.begin.asm
+       "x86inc.asm" meta.preprocessor.asm string.quoted.double.asm
+       "\"" meta.preprocessor.asm string.quoted.double.asm punctuation.definition.string.end.asm
+   3 | %define SYS_WRITE 1
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "define" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "SYS_WRITE" meta.preprocessor.asm entity.name.constant.preprocessor.asm
+       " " meta.preprocessor.asm
+       "1" meta.preprocessor.asm constant.numeric.decimal.asm
+   4 | %define F(x) ((x) << 2)
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "define" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "F" meta.preprocessor.asm entity.name.function.preprocessor.asm
+       "(" meta.preprocessor.asm
+       "x" meta.preprocessor.asm variable.parameter.preprocessor.asm
+       ") ((" meta.preprocessor.asm
+       "x" meta.preprocessor.asm entity.name.constant.asm
+       ") " meta.preprocessor.asm
+       "<<" meta.preprocessor.asm keyword.operator.bitwise.asm
+       " " meta.preprocessor.asm
+       "2" meta.preprocessor.asm constant.numeric.decimal.asm
+       ")" meta.preprocessor.asm
+   5 | %macro SAD 2 ; w, h
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "macro" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "SAD" meta.preprocessor.asm entity.name.function.preprocessor.asm
+       " " meta.preprocessor.asm
+       "2" meta.preprocessor.asm variable.parameter.preprocessor.asm
+       " " meta.preprocessor.asm
+       ";" meta.preprocessor.asm comment.line.asm punctuation.definition.comment.asm
+       " w, h" meta.preprocessor.asm comment.line.asm
+   6 | cglobal pixel_sad_%1x%2, 4, 5
+       "cglobal" meta.preprocessor.asm keyword.operator.word.mnemonic.asm
+       " " meta.preprocessor.asm
+       "pixel_sad_" meta.preprocessor.asm entity.name.constant.asm
+       "%" meta.preprocessor.asm punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "1" meta.preprocessor.asm variable.other.preprocessor.asm
+       "x" meta.preprocessor.asm entity.name.constant.asm
+       "%" meta.preprocessor.asm punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "2" meta.preprocessor.asm variable.other.preprocessor.asm
+       "," meta.preprocessor.asm operator.separator.asm
+       " " meta.preprocessor.asm
+       "4" meta.preprocessor.asm constant.numeric.decimal.asm
+       "," meta.preprocessor.asm operator.separator.asm
+       " " meta.preprocessor.asm
+       "5" meta.preprocessor.asm constant.numeric.decimal.asm
+   7 | %%loop:
+       "%%" meta.preprocessor.asm punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "loop" meta.preprocessor.asm entity.name.constant.special.asm
+       ":" meta.preprocessor.asm punctuation.separator.asm
+   8 |     movdqa  m0, [r0+r1*2]
+       "    " meta.preprocessor.asm
+       "movdqa" meta.preprocessor.asm keyword.operator.word.mnemonic.asm
+       "  " meta.preprocessor.asm
+       "m0" meta.preprocessor.asm constant.language.register.asm
+       "," meta.preprocessor.asm operator.separator.asm
+       " [" meta.preprocessor.asm
+       "r0" meta.preprocessor.asm constant.language.register.asm
+       "+" meta.preprocessor.asm keyword.operator.arithmetic.asm
+       "r1" meta.preprocessor.asm constant.language.register.asm
+       "*" meta.preprocessor.asm keyword.operator.arithmetic.asm
+       "2" meta.preprocessor.asm constant.numeric.decimal.asm
+       "]" meta.preprocessor.asm
+   9 |     dec     r4d
+       "    " meta.preprocessor.asm
+       "dec" meta.preprocessor.asm keyword.operator.word.mnemonic.asm
+       "     " meta.preprocessor.asm
+       "r4d" meta.preprocessor.asm constant.language.register.asm
+  10 |     movzx   t3d, byte [r0+t1]
+       "    " meta.preprocessor.asm
+       "movzx" meta.preprocessor.asm keyword.operator.word.mnemonic.asm
+       "   " meta.preprocessor.asm
+       "t3d" meta.preprocessor.asm constant.language.register.asm
+       "," meta.preprocessor.asm operator.separator.asm
+       " " meta.preprocessor.asm
+       "byte" meta.preprocessor.asm storage.type.asm
+       " [" meta.preprocessor.asm
+       "r0" meta.preprocessor.asm constant.language.register.asm
+       "+" meta.preprocessor.asm keyword.operator.arithmetic.asm
+       "t1" meta.preprocessor.asm constant.language.register.asm
+       "]" meta.preprocessor.asm
+  11 |     jnz     %%loop
+       "    " meta.preprocessor.asm
+       "jnz" meta.preprocessor.asm keyword.operator.word.mnemonic.asm
+       "     " meta.preprocessor.asm
+       "%%" meta.preprocessor.asm punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "loop" meta.preprocessor.asm entity.name.constant.special.asm
+  12 | %endmacro
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "endmacro" meta.preprocessor.asm keyword.control.preprocessor.asm
+  13 | SAD 16, 16
+       "SAD" keyword.operator.word.mnemonic.asm
+       "16" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "16" constant.numeric.decimal.asm
+  14 | %ifdef WIN64 ; c
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "ifdef" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "WIN64" meta.preprocessor.asm entity.name.constant.preprocessor.asm
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " c" comment.line.asm
+  15 | %if ARCH_X86_64 == 1
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "if" meta.preprocessor.asm keyword.control.preprocessor.asm
+       "ARCH_X86_64" entity.name.constant.asm
+       "1" constant.numeric.decimal.asm
+  16 | %assign i i+1
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "assign" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "i" meta.preprocessor.asm entity.name.constant.preprocessor.asm
+       "i" entity.name.constant.asm
+       "+" keyword.operator.arithmetic.asm
+       "1" constant.numeric.decimal.asm
+  17 | %endif
+       "%" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "endif" meta.preprocessor.asm keyword.control.preprocessor.asm
+  18 | section .data
+       "section" support.function.directive.asm
+       ".data" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+  19 | msg     db  'hi', 10, "x\n", `a\n`, 0
+       "msg" entity.name.constant.asm
+       "db" storage.type.asm
+       "'" string.quoted.single.asm punctuation.definition.string.begin.asm
+       "hi" string.quoted.single.asm
+       "'" string.quoted.single.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "10" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "x\\n" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "`" string.quoted.other.asm punctuation.definition.string.begin.asm
+       "a" string.quoted.other.asm
+       "\\n" string.quoted.other.asm constant.character.escape.asm
+       "`" string.quoted.other.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "0" constant.numeric.decimal.asm
+  20 | len     equ $ - msg
+       "len" entity.name.constant.asm
+       "equ" support.function.directive.asm
+       "$" variable.language.asm
+       "-" keyword.operator.arithmetic.asm
+       "msg" entity.name.constant.asm
+  21 | struc pt
+       "struc" support.function.directive.asm
+       "pt" entity.name.constant.asm
+  22 |     .x  resd 1
+       ".x" entity.name.constant.asm
+       "resd" storage.type.asm
+       "1" constant.numeric.decimal.asm
+  23 | endstruc
+       "endstruc" support.function.directive.asm
+  24 | section .text
+       "section" support.function.directive.asm
+       ".text" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+  25 | global _start
+       "global" support.function.directive.asm
+       "_start" entity.name.constant.asm
+  26 | global f:function hidden
+       "global" support.function.directive.asm
+       "f" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "function" storage.type.directive.asm
+       "hidden" storage.modifier.directive.asm variable.parameter.directive.asm
+  27 | _start:
+       "_start" entity.name.constant.asm
+       ":" punctuation.separator.asm
+  28 |     vpaddw  ymm1{k1}{z}, ymm2, [rax+rcx*8+0x10]
+       "vpaddw" keyword.operator.word.mnemonic.asm
+       "ymm1" constant.language.register.asm
+       "k1" constant.language.register.asm
+       "z" storage.modifier.asm
+       "," operator.separator.asm
+       "ymm2" constant.language.register.asm
+       "," operator.separator.asm
+       "rax" constant.language.register.asm
+       "+" keyword.operator.arithmetic.asm
+       "rcx" constant.language.register.asm
+       "*" keyword.operator.arithmetic.asm
+       "8" constant.numeric.decimal.asm
+       "+" keyword.operator.arithmetic.asm
+       "0x10" constant.numeric.hex.asm
+  29 |     mov     dword [rsp+8], 0FFh
+       "mov" keyword.operator.word.mnemonic.asm
+       "dword" storage.type.asm
+       "rsp" constant.language.register.asm
+       "+" keyword.operator.arithmetic.asm
+       "8" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "0FFh" constant.numeric.hex.asm
+  30 |     lea     rax, [rel msg]
+       "lea" keyword.operator.word.mnemonic.asm
+       "rax" constant.language.register.asm
+       "," operator.separator.asm
+       "rel" storage.modifier.asm
+       "msg" entity.name.constant.asm
+  31 |     rep movsb
+       "rep" storage.modifier.prefix.asm
+       "movsb" keyword.operator.word.mnemonic.asm
+  32 |     mov     al, 1011b
+       "mov" keyword.operator.word.mnemonic.asm
+       "al" constant.language.register.asm
+       "," operator.separator.asm
+       "1011b" constant.numeric.binary.asm
+  33 |     call    printf wrt ..plt
+       "call" keyword.operator.word.mnemonic.asm
+       "printf" entity.name.constant.asm
+       "wrt" storage.modifier.asm
+       "..plt" storage.modifier.asm
+  34 |     REPX {psrad x, 4}, m0, m1
+       "REPX" keyword.operator.word.mnemonic.asm
+       "psrad" keyword.operator.word.mnemonic.asm
+       "x" entity.name.constant.asm
+       "," operator.separator.asm
+       "4" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "m0" constant.language.register.asm
+       "," operator.separator.asm
+       "m1" constant.language.register.asm
+  35 | AVX_INSTR addpd, sse2, 1, 0, 1
+       "AVX_INSTR" keyword.operator.word.mnemonic.asm
+       "addpd" keyword.operator.word.mnemonic.asm
+       "," operator.separator.asm
+       "sse2" entity.name.constant.asm
+       "," operator.separator.asm
+       "1" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "0" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "1" constant.numeric.decimal.asm
+  36 | .done:
+       ".done" entity.name.constant.asm
+       ":" punctuation.separator.asm
+  37 |     jmp     short .done
+       "jmp" keyword.operator.word.mnemonic.asm
+       "short" storage.modifier.asm
+       ".done" entity.name.constant.asm
+
+## block 2
+   1 | /* AT&T */
+       "/*" comment.block.asm punctuation.definition.comment.asm
+       " AT&T " comment.block.asm
+       "*/" comment.block.asm punctuation.definition.comment.asm
+   2 | #include <sys/syscall.h>
+       "#" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "include" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "<" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm punctuation.definition.string.begin.asm
+       "sys/syscall.h" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm
+       ">" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm punctuation.definition.string.end.asm
+   3 | #define SAVE(r) \
+       "#" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "define" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "SAVE" meta.preprocessor.asm entity.name.function.preprocessor.asm
+       "(" meta.preprocessor.asm
+       "r" meta.preprocessor.asm variable.parameter.preprocessor.asm
+       ") " meta.preprocessor.asm
+       "\\" meta.preprocessor.asm punctuation.separator.continuation.asm
+   4 | \tpushq r; \
+       "\t" meta.preprocessor.asm
+       "pushq" meta.preprocessor.asm keyword.operator.word.mnemonic.asm
+       " " meta.preprocessor.asm
+       "r" meta.preprocessor.asm entity.name.constant.asm
+       "; " meta.preprocessor.asm
+       "\\" meta.preprocessor.asm punctuation.separator.continuation.asm
+   5 | \tpushq %rbp
+       "\t" meta.preprocessor.asm
+       "pushq" meta.preprocessor.asm keyword.operator.word.mnemonic.asm
+       " " meta.preprocessor.asm
+       "%rbp" meta.preprocessor.asm constant.language.register.asm
+   6 | \t.text
+       ".text" support.function.directive.asm
+   7 | \t.globl\tmain
+       ".globl" support.function.directive.asm
+       "main" entity.name.constant.asm
+   8 | \t.type\tmain, @function
+       ".type" support.function.directive.asm
+       "main" entity.name.constant.asm
+       "," operator.separator.asm
+       "@function" storage.type.directive.asm
+   9 | main:
+       "main" entity.name.constant.asm
+       ":" punctuation.separator.asm
+  10 | \tmovq\t%rsp, %rbp\t# frame
+       "movq" keyword.operator.word.mnemonic.asm
+       "%rsp" constant.language.register.asm
+       "," operator.separator.asm
+       "%rbp" constant.language.register.asm
+       "#" comment.line.asm punctuation.definition.comment.asm
+       " frame" comment.line.asm
+  11 | \tmovl\t$0, -4(%rbp)
+       "movl" keyword.operator.word.mnemonic.asm
+       "$0" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "-" keyword.operator.arithmetic.asm
+       "4" constant.numeric.decimal.asm
+       "%rbp" constant.language.register.asm
+  12 | \tcmpb\t$'a, %al
+       "cmpb" keyword.operator.word.mnemonic.asm
+       "$" variable.language.asm
+       "'" string.quoted.single.asm punctuation.definition.string.begin.asm
+       "a" string.quoted.single.asm
+       "," operator.separator.asm
+       "%al" constant.language.register.asm
+  13 | 1:\tdecl\t%ecx; jnz 1b
+       "1" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "decl" keyword.operator.word.mnemonic.asm
+       "%ecx" constant.language.register.asm
+       "jnz" keyword.operator.word.mnemonic.asm
+       "1b" entity.name.constant.asm
+  14 | \tcall\tputs@PLT
+       "call" keyword.operator.word.mnemonic.asm
+       "puts" entity.name.constant.asm
+       "@PLT" storage.modifier.asm
+  15 | \t.section .rodata
+       ".section" support.function.directive.asm
+       ".rodata" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+  16 | .LC0:
+       ".LC0" entity.name.constant.asm
+       ":" punctuation.separator.asm
+  17 | \t.string "hi\n"
+       ".string" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "hi" string.quoted.double.asm
+       "\\n" string.quoted.double.asm constant.character.escape.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+  18 | \t.macro\tsave reg, n=1
+       ".macro" support.function.directive.asm
+       "save" entity.name.function.preprocessor.asm
+       "reg" variable.parameter.preprocessor.asm
+       "," operator.separator.asm
+       "n" variable.parameter.preprocessor.asm
+       "1" constant.numeric.decimal.asm
+  19 | \tpushq\t\reg
+       "pushq" keyword.operator.word.mnemonic.asm
+       "\\" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "reg" variable.other.preprocessor.asm
+  20 | \t.endm
+       ".endm" support.function.directive.asm
+
+## block 3
+   1 | ; MASM
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " MASM" comment.line.asm
+   2 | .code
+       ".code" support.function.directive.asm
+   3 | include ksamd64.inc
+       "include" support.function.directive.asm
+       "ksamd64.inc" entity.name.constant.asm
+   4 | f PROC FRAME
+       "f" entity.name.constant.asm
+       "PROC" support.function.directive.asm
+       "FRAME" entity.name.constant.asm
+   5 |     mov rax, QWORD PTR [rcx+8]
+       "mov" keyword.operator.word.mnemonic.asm
+       "rax" constant.language.register.asm
+       "," operator.separator.asm
+       "QWORD" storage.type.asm
+       "PTR" storage.type.asm
+       "rcx" constant.language.register.asm
+       "+" keyword.operator.arithmetic.asm
+       "8" constant.numeric.decimal.asm
+   6 |     ret
+       "ret" keyword.operator.word.mnemonic.asm
+   7 | f ENDP
+       "f" entity.name.constant.asm
+       "ENDP" support.function.directive.asm
+   8 | x DD ?
+       "x" entity.name.constant.asm
+       "DD" storage.type.asm
+       "?" entity.name.constant.asm
+   9 | y DWORD ?
+       "y" entity.name.constant.asm
+       "DWORD" storage.type.asm
+       "?" entity.name.constant.asm
+  10 | msg BYTE "hi",0
+       "msg" entity.name.constant.asm
+       "BYTE" storage.type.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "hi" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "0" constant.numeric.decimal.asm
+  11 | END
+       "END" support.function.directive.asm

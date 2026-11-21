@@ -31,14 +31,22 @@ use libfuzzer_sys::fuzz_target;
 /// SCSS's and bash's X-075, bash's run copy apart from its span copy since X-094; Makefile's
 /// X-095, its runs from its spans from X-094 to then; C's and C++'s X-057; Swift's X-101; CMake's X-104;
 /// Ruby's X-100; Terraform's X-102; Scala's X-137; Haskell's and Literate Haskell's X-136;
-/// Groovy's X-135; Elixir's X-138; CSS's X-125; Nix's X-103; Diff's X-163).
-const RUN_SCANS: [Lang; 54] = [
+/// Groovy's X-135; Elixir's X-138; CSS's X-125; Nix's X-103; Diff's X-163; x86's and ARM's
+/// assembly X-171; RISC-V's, MIPS's, Z80's and 6502's X-181; 68k's X-183).
+const RUN_SCANS: [Lang; 61] = [
     Lang::Bash,
     Lang::Makefile,
     Lang::Scss,
     Lang::Css,
     Lang::Rust,
     Lang::Go,
+    Lang::X86Asm,
+    Lang::ArmAsm,
+    Lang::RiscvAsm,
+    Lang::MipsAsm,
+    Lang::Z80Asm,
+    Lang::Mos6502Asm,
+    Lang::M68kAsm,
     Lang::Lua,
     Lang::Swift,
     Lang::CMake,

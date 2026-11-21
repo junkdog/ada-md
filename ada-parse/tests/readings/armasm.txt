@@ -1,0 +1,238 @@
+# ArmAsm: ada-parse/tests/readings.rs, armasm
+
+## block 1
+   1 | // AArch64
+       "//" comment.line.asm punctuation.definition.comment.asm
+       " AArch64" comment.line.asm
+   2 | #include "asmdefs.h"
+       "#" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "include" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "\"" meta.preprocessor.asm string.quoted.double.asm punctuation.definition.string.begin.asm
+       "asmdefs.h" meta.preprocessor.asm string.quoted.double.asm
+       "\"" meta.preprocessor.asm string.quoted.double.asm punctuation.definition.string.end.asm
+   3 | #define N 4
+       "#" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "define" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "N" meta.preprocessor.asm entity.name.constant.preprocessor.asm
+       " " meta.preprocessor.asm
+       "4" meta.preprocessor.asm constant.numeric.decimal.asm
+   4 | \t.text
+       ".text" support.function.directive.asm
+   5 | \t.global\tf
+       ".global" support.function.directive.asm
+       "f" entity.name.constant.asm
+   6 | \t.type\tf, %function
+       ".type" support.function.directive.asm
+       "f" entity.name.constant.asm
+       "," operator.separator.asm
+       "%function" storage.type.directive.asm
+   7 | f:
+       "f" entity.name.constant.asm
+       ":" punctuation.separator.asm
+   8 | \tstp\tx29, x30, [sp, #-16]!
+       "stp" keyword.operator.word.mnemonic.asm
+       "x29" constant.language.register.asm
+       "," operator.separator.asm
+       "x30" constant.language.register.asm
+       "," operator.separator.asm
+       "sp" constant.language.register.asm
+       "," operator.separator.asm
+       "#-16" constant.numeric.decimal.asm
+       "!" keyword.operator.bitwise.asm
+   9 | \tld1\t{v0.16b, v1.16b}, [x1], #32
+       "ld1" keyword.operator.word.mnemonic.asm
+       "v0.16b" constant.language.register.asm
+       "," operator.separator.asm
+       "v1.16b" constant.language.register.asm
+       "," operator.separator.asm
+       "x1" constant.language.register.asm
+       "," operator.separator.asm
+       "#32" constant.numeric.decimal.asm
+  10 | \tadrp\tx2, table
+       "adrp" keyword.operator.word.mnemonic.asm
+       "x2" constant.language.register.asm
+       "," operator.separator.asm
+       "table" entity.name.constant.asm
+  11 | \tadd\tx2, x2, :lo12:table
+       "add" keyword.operator.word.mnemonic.asm
+       "x2" constant.language.register.asm
+       "," operator.separator.asm
+       "x2" constant.language.register.asm
+       "," operator.separator.asm
+       ":lo12:" storage.modifier.asm
+       "table" entity.name.constant.asm
+  12 | \tmsr\tsctlr_el1, x0
+       "msr" keyword.operator.word.mnemonic.asm
+       "sctlr_el1" constant.language.register.asm
+       "," operator.separator.asm
+       "x0" constant.language.register.asm
+  13 | \tcsel\tw0, w1, wzr, eq
+       "csel" keyword.operator.word.mnemonic.asm
+       "w0" constant.language.register.asm
+       "," operator.separator.asm
+       "w1" constant.language.register.asm
+       "," operator.separator.asm
+       "wzr" constant.language.register.asm
+       "," operator.separator.asm
+       "eq" storage.modifier.asm
+  14 | 1:\tsubs\tx3, x3, #1
+       "1" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "subs" keyword.operator.word.mnemonic.asm
+       "x3" constant.language.register.asm
+       "," operator.separator.asm
+       "x3" constant.language.register.asm
+       "," operator.separator.asm
+       "#1" constant.numeric.decimal.asm
+  15 | \tb.ne\t1b
+       "b.ne" keyword.operator.word.mnemonic.asm
+       "1b" entity.name.constant.asm
+  16 | \t.macro\tpush2 a, b
+       ".macro" support.function.directive.asm
+       "push2" entity.name.function.preprocessor.asm
+       "a" variable.parameter.preprocessor.asm
+       "," operator.separator.asm
+       "b" variable.parameter.preprocessor.asm
+  17 | \tstp\t\a, \b, [sp, #-16]!
+       "stp" keyword.operator.word.mnemonic.asm
+       "\\" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "a" variable.other.preprocessor.asm
+       "," operator.separator.asm
+       "\\" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "b" variable.other.preprocessor.asm
+       "," operator.separator.asm
+       "sp" constant.language.register.asm
+       "," operator.separator.asm
+       "#-16" constant.numeric.decimal.asm
+       "!" keyword.operator.bitwise.asm
+  18 | \t.endm
+       ".endm" support.function.directive.asm
+  19 | /* a
+       "/*" comment.block.asm punctuation.definition.comment.asm
+       " a" comment.block.asm
+  20 |  b */\tret
+       " b " comment.block.asm
+       "*/" comment.block.asm punctuation.definition.comment.asm
+       "ret" keyword.operator.word.mnemonic.asm
+
+## block 2
+   1 | @ ARM32
+       "@" comment.line.asm punctuation.definition.comment.asm
+       " ARM32" comment.line.asm
+   2 | \t.syntax unified
+       ".syntax" support.function.directive.asm
+       "unified" entity.name.constant.asm
+   3 | \t.thumb
+       ".thumb" support.function.directive.asm
+   4 | g:\tpush\t{r4-r7, lr}\t@ save
+       "g" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "push" keyword.operator.word.mnemonic.asm
+       "r4" constant.language.register.asm
+       "-" keyword.operator.arithmetic.asm
+       "r7" constant.language.register.asm
+       "," operator.separator.asm
+       "lr" constant.language.register.asm
+       "@" comment.line.asm punctuation.definition.comment.asm
+       " save" comment.line.asm
+   5 | \tldr\tr0, =0x12345678
+       "ldr" keyword.operator.word.mnemonic.asm
+       "r0" constant.language.register.asm
+       "," operator.separator.asm
+       "0x12345678" constant.numeric.hex.asm
+   6 | \taddeq\tr0, r0, r1, lsl #2
+       "addeq" keyword.operator.word.mnemonic.asm
+       "r0" constant.language.register.asm
+       "," operator.separator.asm
+       "r0" constant.language.register.asm
+       "," operator.separator.asm
+       "r1" constant.language.register.asm
+       "," operator.separator.asm
+       "lsl" storage.modifier.asm
+       "#2" constant.numeric.decimal.asm
+   7 | \tvld1.8\t{d0-d3}, [r1]!
+       "vld1.8" keyword.operator.word.mnemonic.asm
+       "d0" constant.language.register.asm
+       "-" keyword.operator.arithmetic.asm
+       "d3" constant.language.register.asm
+       "," operator.separator.asm
+       "r1" constant.language.register.asm
+       "!" keyword.operator.bitwise.asm
+   8 | \tbx\tlr
+       "bx" keyword.operator.word.mnemonic.asm
+       "lr" constant.language.register.asm
+
+## block 3
+   1 | ; armasm
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " armasm" comment.line.asm
+   2 |         AREA    RESET, DATA, READONLY
+       "AREA" support.function.directive.asm
+       "RESET" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+       "," operator.separator.asm
+       "DATA" entity.name.constant.asm
+       "," operator.separator.asm
+       "READONLY" entity.name.constant.asm
+   3 |         AREA    |.text|, CODE, READONLY
+       "AREA" support.function.directive.asm
+       "|.text|" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+       "," operator.separator.asm
+       "CODE" entity.name.constant.asm
+       "," operator.separator.asm
+       "READONLY" entity.name.constant.asm
+   4 |         IMPORT  |Image$$ER$$Base|
+       "IMPORT" support.function.directive.asm
+       "|Image$$ER$$Base|" entity.name.constant.asm
+   5 |         EXPORT  __Vectors
+       "EXPORT" support.function.directive.asm
+       "__Vectors" entity.name.constant.asm
+   6 | __Vectors DCD   __initial_sp
+       "__Vectors" entity.name.constant.asm
+       "DCD" storage.type.asm
+       "__initial_sp" entity.name.constant.asm
+   7 | Reset_Handler   PROC
+       "Reset_Handler" entity.name.constant.asm
+       "PROC" support.function.directive.asm
+   8 | loop    SUBS    R0, R0, #1
+       "loop" entity.name.constant.asm
+       "SUBS" keyword.operator.word.mnemonic.asm
+       "R0" constant.language.register.asm
+       "," operator.separator.asm
+       "R0" constant.language.register.asm
+       "," operator.separator.asm
+       "#1" constant.numeric.decimal.asm
+   9 |         BNE     loop
+       "BNE" keyword.operator.word.mnemonic.asm
+       "loop" entity.name.constant.asm
+  10 |         ENDP
+       "ENDP" support.function.directive.asm
+  11 |         END
+       "END" support.function.directive.asm
+
+## block 4
+   1 | \t.global _main
+       ".global" support.function.directive.asm
+       "_main" entity.name.constant.asm
+   2 | ; Apple's arm64
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " Apple's arm64" comment.line.asm
+   3 | _main:\tadrp\tx0, msg@PAGE ; the page
+       "_main" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "adrp" keyword.operator.word.mnemonic.asm
+       "x0" constant.language.register.asm
+       "," operator.separator.asm
+       "msg" entity.name.constant.asm
+       "@PAGE" storage.modifier.asm
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " the page" comment.line.asm
+   4 | \tadd\tx0, x0, msg@PAGEOFF
+       "add" keyword.operator.word.mnemonic.asm
+       "x0" constant.language.register.asm
+       "," operator.separator.asm
+       "x0" constant.language.register.asm
+       "," operator.separator.asm
+       "msg" entity.name.constant.asm
+       "@PAGEOFF" storage.modifier.asm

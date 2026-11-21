@@ -25,6 +25,27 @@ pub(crate) fn header_by_text(name: &str, text: &str) -> Option<ada_parse::Lang> 
     header_by_text(Lang::strip_ignored_suffix(name)?, text)
 }
 
+/// The language of an assembly file at `path` by its `text` (X-171): x86's or ARM's for a
+/// `.s`, `.S` or `.asm` (bat's set names `.s` ARM's, though most are GAS's x86-64), where the
+/// text doesn't say its directory's (`arch/x86/`, X-180), else its name's; a `.i` 68k's where
+/// its text says, else `None` ([`ada_parse::Lang::for_include`], X-186); `None` for any other
+/// name. As bat, a suffix it ignores comes off first where the name is neither.
+pub(crate) fn assembly_by_text(path: &Path, text: &str) -> Option<ada_parse::Lang> {
+    use ada_parse::Lang;
+    fn by_name(name: &str) -> Option<Lang> {
+        Lang::assembly_by_text(name).or_else(|| by_name(Lang::strip_ignored_suffix(name)?))
+    }
+    let file = path.file_name()?.to_str()?;
+    if Lang::is_include(file) {
+        // the Amiga's and the Atari ST's includes 68k's by their text, SWIG's and `gcc -E`'s
+        // `.i` plain (X-186)
+        return Lang::for_include(text.as_bytes());
+    }
+    let name = by_name(file)?;
+    let dir = path.to_str().and_then(Lang::assembly_by_dir);
+    Some(Lang::for_assembly(text.as_bytes(), dir.unwrap_or(name)))
+}
+
 /// Text files no syntax claims, shown plain rather than handed to the system's opener.
 const PLAIN: &[&str] = &["txt", "text", "log", "out", "conf", "cfg", "env", "list"];
 
@@ -128,7 +149,10 @@ impl FileType {
     /// [`FileType::of`] text that shows as it is.
     fn of_plain(path: &Path, text: &str) -> FileType {
         let name = path.file_name().and_then(|n| n.to_str());
-        if let Some(lang) = name.and_then(|n| header_by_text(n, text)) {
+        if let Some(lang) = name
+            .and_then(|n| header_by_text(n, text))
+            .or_else(|| assembly_by_text(path, text))
+        {
             return FileType::Text {
                 lang: Some(lang.label()),
             };
@@ -361,6 +385,36 @@ mod tests {
             tpl("config.h.in.bak", "#cmakedefine X\nnamespace a {}\n"),
             lang("CMake C++ Header").unwrap()
         );
+    }
+
+    /// An assembly file's architecture by its text (X-171), where that doesn't say its
+    /// directory's, else its name's (X-180).
+    #[test]
+    fn assembly_by_its_text_then_its_directory() {
+        let of = |path: &str, text: &str| FileType::of(Path::new(path), text);
+        let (x86, arm) = (lang("x86_64 Assembly"), lang("ARM Assembly"));
+        assert_eq!(Some(of("a.S", "\tmovq\t%rax, %rbx\n")), x86);
+        assert_eq!(Some(of("a.asm", "\tldr\tx0, [x1]\n")), arm);
+        let none = "#include <sysdep.h>\nENTRY (f)\n";
+        assert_eq!(Some(of("a.S", none)), arm);
+        assert_eq!(Some(of("sysdeps/x86_64/a.S", none)), x86);
+        assert_eq!(Some(of("src/arm/64/a.asm", none)), arm);
+        assert_eq!(Some(of("arch/x86/a.S.orig", none)), x86);
+        // the file's own name is no directory
+        assert_eq!(ada_parse::Lang::assembly_by_dir("x86"), None);
+        // a `.i` 68k's where its text says, else plain: SWIG's, `gcc -E`'s (X-186)
+        let m68k = lang("68k Assembly");
+        assert_eq!(
+            Some(of("exec/types.i", "\tSTRUCTURE\tLN,0\n\tLABEL\tLN_SIZE\n")),
+            m68k
+        );
+        assert_eq!(Some(of("exec_lib.i", "_LVOOpen\tEQU\t-30\n")), m68k);
+        let plain = Some(FileType::Text { lang: None });
+        assert_eq!(
+            Some(of("example.i", "%module example\n%include \"x.h\"\n")),
+            plain
+        );
+        assert_eq!(Some(of("a.i", "# 1 \"a.c\"\nextern int f(void);\n")), plain);
     }
 
     /// A name with a suffix bat ignores is named by the rest, as bat names it, and the rest

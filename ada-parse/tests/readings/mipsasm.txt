@@ -1,0 +1,117 @@
+# MipsAsm: ada-parse/tests/readings.rs, mipsasm
+
+## block 1
+   1 | #include <asm/regdef.h>
+       "#" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "include" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "<" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm punctuation.definition.string.begin.asm
+       "asm/regdef.h" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm
+       ">" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm punctuation.definition.string.end.asm
+   2 | \t.set\tnoreorder
+       ".set" support.function.directive.asm
+       "noreorder" storage.modifier.asm
+   3 | \t.ent\tf
+       ".ent" support.function.directive.asm
+       "f" entity.name.constant.asm
+   4 | f:\tlui\tt0, %hi(table)
+       "f" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "lui" keyword.operator.word.mnemonic.asm
+       "t0" constant.language.register.asm
+       "," operator.separator.asm
+       "%hi" storage.modifier.asm
+       "table" entity.name.constant.asm
+   5 | \tlw\tv0, %lo(table)(t0)
+       "lw" keyword.operator.word.mnemonic.asm
+       "v0" constant.language.register.asm
+       "," operator.separator.asm
+       "%lo" storage.modifier.asm
+       "table" entity.name.constant.asm
+       "t0" constant.language.register.asm
+   6 | \tjr\tra
+       "jr" keyword.operator.word.mnemonic.asm
+       "ra" constant.language.register.asm
+   7 | \t addiu\tsp, sp, 8\t# the delay slot
+       "addiu" keyword.operator.word.mnemonic.asm
+       "sp" constant.language.register.asm
+       "," operator.separator.asm
+       "sp" constant.language.register.asm
+       "," operator.separator.asm
+       "8" constant.numeric.decimal.asm
+       "#" comment.line.asm punctuation.definition.comment.asm
+       " the delay slot" comment.line.asm
+   8 | \t.end\tf
+       ".end" support.function.directive.asm
+       "f" entity.name.constant.asm
+
+## block 2
+   1 | .data
+       ".data" support.function.directive.asm
+   2 | msg:\t.asciiz "hello"
+       "msg" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       ".asciiz" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "hello" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+   3 | .text
+       ".text" support.function.directive.asm
+   4 | main:\tli $v0, 4
+       "main" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "li" keyword.operator.word.mnemonic.asm
+       "$v0" constant.language.register.asm
+       "," operator.separator.asm
+       "4" constant.numeric.decimal.asm
+   5 | \tla $a0, msg
+       "la" keyword.operator.word.mnemonic.asm
+       "$a0" constant.language.register.asm
+       "," operator.separator.asm
+       "msg" entity.name.constant.asm
+   6 | \tsyscall
+       "syscall" keyword.operator.word.mnemonic.asm
+   7 | \tmtc1 $t1, $f2
+       "mtc1" keyword.operator.word.mnemonic.asm
+       "$t1" constant.language.register.asm
+       "," operator.separator.asm
+       "$f2" constant.language.register.asm
+   8 | \tjr $31
+       "jr" keyword.operator.word.mnemonic.asm
+       "$31" constant.language.register.asm
+   9 | .macro push (%r)
+       ".macro" support.function.directive.asm
+       "push" entity.name.function.preprocessor.asm
+       "%" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "r" variable.other.preprocessor.asm
+  10 | \tsw %r, ($sp)
+       "sw" keyword.operator.word.mnemonic.asm
+       "%" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "r" variable.other.preprocessor.asm
+       "," operator.separator.asm
+       "$sp" constant.language.register.asm
+  11 | .end_macro
+       ".end_macro" support.function.directive.asm
+
+## block 3
+   1 | ; armips
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " armips" comment.line.asm
+   2 | .psx
+       ".psx" support.function.directive.asm
+   3 | .create "x.bin", 0x80010000
+       ".create" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "x.bin" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "0x80010000" constant.numeric.hex.asm
+   4 | \tli t0, 0xA0<<24 ; a comment
+       "li" keyword.operator.word.mnemonic.asm
+       "t0" constant.language.register.asm
+       "," operator.separator.asm
+       "0xA0" constant.numeric.hex.asm
+       "<<" keyword.operator.bitwise.asm
+       "24" constant.numeric.decimal.asm
+       ";" comment.line.asm punctuation.definition.comment.asm
+       " a comment" comment.line.asm

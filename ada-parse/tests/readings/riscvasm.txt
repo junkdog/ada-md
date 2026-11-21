@@ -1,0 +1,142 @@
+# RiscvAsm: ada-parse/tests/readings.rs, riscvasm
+
+## block 1
+   1 | #include <asm/asm.h>
+       "#" meta.preprocessor.asm keyword.control.preprocessor.asm punctuation.definition.keyword.preprocessor.asm
+       "include" meta.preprocessor.asm keyword.control.preprocessor.asm
+       " " meta.preprocessor.asm
+       "<" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm punctuation.definition.string.begin.asm
+       "asm/asm.h" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm
+       ">" meta.preprocessor.asm string.quoted.other.lt-gt.include.asm punctuation.definition.string.end.asm
+   2 | # a comment
+       "#" comment.line.asm punctuation.definition.comment.asm
+       " a comment" comment.line.asm
+   3 | \t.option\tnorelax
+       ".option" support.function.directive.asm
+       "norelax" storage.modifier.asm
+   4 | \t.section .text.init, "ax", @progbits
+       ".section" support.function.directive.asm
+       ".text.init" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+       "," operator.separator.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "ax" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "@progbits" storage.type.directive.asm
+   5 | \t.globl\t_start
+       ".globl" support.function.directive.asm
+       "_start" entity.name.constant.asm
+   6 | _start:\taddi\tsp, sp, -16\t# a frame
+       "_start" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "addi" keyword.operator.word.mnemonic.asm
+       "sp" constant.language.register.asm
+       "," operator.separator.asm
+       "sp" constant.language.register.asm
+       "," operator.separator.asm
+       "-" keyword.operator.arithmetic.asm
+       "16" constant.numeric.decimal.asm
+       "#" comment.line.asm punctuation.definition.comment.asm
+       " a frame" comment.line.asm
+   7 | \tsd\tra, 8(sp); sd s0, 0(sp)
+       "sd" keyword.operator.word.mnemonic.asm
+       "ra" constant.language.register.asm
+       "," operator.separator.asm
+       "8" constant.numeric.decimal.asm
+       "sp" constant.language.register.asm
+       "sd" keyword.operator.word.mnemonic.asm
+       "s0" constant.language.register.asm
+       "," operator.separator.asm
+       "0" constant.numeric.decimal.asm
+       "sp" constant.language.register.asm
+   8 | 1:\tauipc\ta0, %pcrel_hi(msg)
+       "1" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "auipc" keyword.operator.word.mnemonic.asm
+       "a0" constant.language.register.asm
+       "," operator.separator.asm
+       "%pcrel_hi" storage.modifier.asm
+       "msg" entity.name.constant.asm
+   9 | \taddi\ta0, a0, %pcrel_lo(1b)
+       "addi" keyword.operator.word.mnemonic.asm
+       "a0" constant.language.register.asm
+       "," operator.separator.asm
+       "a0" constant.language.register.asm
+       "," operator.separator.asm
+       "%pcrel_lo" storage.modifier.asm
+       "1b" entity.name.constant.asm
+  10 | \tcsrrw\tt0, mscratch, t0
+       "csrrw" keyword.operator.word.mnemonic.asm
+       "t0" constant.language.register.asm
+       "," operator.separator.asm
+       "mscratch" constant.language.register.asm
+       "," operator.separator.asm
+       "t0" constant.language.register.asm
+  11 | \tvsetvli\tt1, a2, e32, m2, ta, ma
+       "vsetvli" keyword.operator.word.mnemonic.asm
+       "t1" constant.language.register.asm
+       "," operator.separator.asm
+       "a2" constant.language.register.asm
+       "," operator.separator.asm
+       "e32" storage.modifier.asm
+       "," operator.separator.asm
+       "m2" storage.modifier.asm
+       "," operator.separator.asm
+       "ta" storage.modifier.asm
+       "," operator.separator.asm
+       "ma" storage.modifier.asm
+  12 | \tvle32.v\tv8, (a1), v0.t
+       "vle32.v" keyword.operator.word.mnemonic.asm
+       "v8" constant.language.register.asm
+       "," operator.separator.asm
+       "a1" constant.language.register.asm
+       "," operator.separator.asm
+       "v0.t" constant.language.register.asm
+  13 | \tfcvt.w.d\ta0, fa1, rtz
+       "fcvt.w.d" keyword.operator.word.mnemonic.asm
+       "a0" constant.language.register.asm
+       "," operator.separator.asm
+       "fa1" constant.language.register.asm
+       "," operator.separator.asm
+       "rtz" storage.modifier.asm
+  14 | \tbeqz\tx5, 1b
+       "beqz" keyword.operator.word.mnemonic.asm
+       "x5" constant.language.register.asm
+       "," operator.separator.asm
+       "1b" entity.name.constant.asm
+  15 | \tecall
+       "ecall" keyword.operator.word.mnemonic.asm
+
+## block 2
+   1 | .macro print_int (%x)
+       ".macro" support.function.directive.asm
+       "print_int" entity.name.function.preprocessor.asm
+       "%" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "x" variable.other.preprocessor.asm
+   2 | \tli a7, 1
+       "li" keyword.operator.word.mnemonic.asm
+       "a7" constant.language.register.asm
+       "," operator.separator.asm
+       "1" constant.numeric.decimal.asm
+   3 | \tadd a0, zero, %x
+       "add" keyword.operator.word.mnemonic.asm
+       "a0" constant.language.register.asm
+       "," operator.separator.asm
+       "zero" constant.language.register.asm
+       "," operator.separator.asm
+       "%" punctuation.definition.variable.preprocessor.asm keyword.control.preprocessor.asm
+       "x" variable.other.preprocessor.asm
+   4 | \tecall
+       "ecall" keyword.operator.word.mnemonic.asm
+   5 | .end_macro
+       ".end_macro" support.function.directive.asm
+   6 | .data
+       ".data" support.function.directive.asm
+   7 | msg:\t.asciz "hi\n"
+       "msg" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       ".asciz" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "hi" string.quoted.double.asm
+       "\\n" string.quoted.double.asm constant.character.escape.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm

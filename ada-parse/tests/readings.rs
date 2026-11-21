@@ -1765,6 +1765,466 @@ fn gitconfig() {
     readings("gitconfig", Lang::GitConfig, text);
 }
 
+/// x86's assembly's readings (X-171), a block a dialect, each read from the text: NASM's (labels
+/// with and without `:`, data, `equ`, sections, its preprocessor's lines and a macro's body,
+/// x86inc's registers, AVX-512's decorators, its strings and numbers; X-180's symbol types,
+/// `REPX`'s and `AVX_INSTR`'s mnemonics), GAS's AT&T (directives, `%` registers, `$`
+/// immediates, numeric labels and their `1b`, `;` separating statements, `#` comments, cpp's
+/// lines and a `\`-continued `#define`, a `.macro`'s parameters), MASM's (X-180: data typed by
+/// a size word).
+#[test]
+fn x86asm() {
+    let nasm = concat!(
+        "; hello, world\n",
+        "%include \"x86inc.asm\"\n",
+        "%define SYS_WRITE 1\n",
+        "%define F(x) ((x) << 2)\n",
+        "%macro SAD 2 ; w, h\n",
+        "cglobal pixel_sad_%1x%2, 4, 5\n",
+        "%%loop:\n",
+        "    movdqa  m0, [r0+r1*2]\n",
+        "    dec     r4d\n",
+        "    movzx   t3d, byte [r0+t1]\n",
+        "    jnz     %%loop\n",
+        "%endmacro\n",
+        "SAD 16, 16\n",
+        "%ifdef WIN64 ; c\n",
+        "%if ARCH_X86_64 == 1\n",
+        "%assign i i+1\n",
+        "%endif\n",
+        "section .data\n",
+        "msg     db  'hi', 10, \"x\\n\", `a\\n`, 0\n",
+        "len     equ $ - msg\n",
+        "struc pt\n",
+        "    .x  resd 1\n",
+        "endstruc\n",
+        "section .text\n",
+        "global _start\n",
+        "global f:function hidden\n",
+        "_start:\n",
+        "    vpaddw  ymm1{k1}{z}, ymm2, [rax+rcx*8+0x10]\n",
+        "    mov     dword [rsp+8], 0FFh\n",
+        "    lea     rax, [rel msg]\n",
+        "    rep movsb\n",
+        "    mov     al, 1011b\n",
+        "    call    printf wrt ..plt\n",
+        "    REPX {psrad x, 4}, m0, m1\n",
+        "AVX_INSTR addpd, sse2, 1, 0, 1\n",
+        ".done:\n",
+        "    jmp     short .done\n",
+    );
+    let gas = concat!(
+        "/* AT&T */\n",
+        "#include <sys/syscall.h>\n",
+        "#define SAVE(r) \\\n",
+        "\tpushq r; \\\n",
+        "\tpushq %rbp\n",
+        "\t.text\n",
+        "\t.globl\tmain\n",
+        "\t.type\tmain, @function\n",
+        "main:\n",
+        "\tmovq\t%rsp, %rbp\t# frame\n",
+        "\tmovl\t$0, -4(%rbp)\n",
+        "\tcmpb\t$'a, %al\n",
+        "1:\tdecl\t%ecx; jnz 1b\n",
+        "\tcall\tputs@PLT\n",
+        "\t.section .rodata\n",
+        ".LC0:\n",
+        "\t.string \"hi\\n\"\n",
+        "\t.macro\tsave reg, n=1\n",
+        "\tpushq\t\\reg\n",
+        "\t.endm\n",
+    );
+    let masm = concat!(
+        "; MASM\n",
+        ".code\n",
+        "include ksamd64.inc\n",
+        "f PROC FRAME\n",
+        "    mov rax, QWORD PTR [rcx+8]\n",
+        "    ret\n",
+        "f ENDP\n",
+        "x DD ?\n",
+        "y DWORD ?\n",
+        "msg BYTE \"hi\",0\n",
+        "END\n",
+    );
+    readings_of("x86asm", Lang::X86Asm, &[nasm, gas, masm]);
+}
+
+/// ARM's assembly's readings (X-171), a block a dialect: AArch64's GAS (registers and their
+/// arrangements, `#` immediates, `:lo12:`, system registers, conditions, numeric labels,
+/// `.macro`'s `\` parameters, cpp's lines, `//` and `/* */`), ARM32's (`@` comments, register
+/// lists, shifts, `=` literals, Thumb's directives), armasm's (labels in the first column,
+/// `AREA`, `DCD`, `;` comments, X-180's `|…|` symbols) and Apple's arm64 (`;` comments, `@PAGE`).
+#[test]
+fn armasm() {
+    let a64 = concat!(
+        "// AArch64\n",
+        "#include \"asmdefs.h\"\n",
+        "#define N 4\n",
+        "\t.text\n",
+        "\t.global\tf\n",
+        "\t.type\tf, %function\n",
+        "f:\n",
+        "\tstp\tx29, x30, [sp, #-16]!\n",
+        "\tld1\t{v0.16b, v1.16b}, [x1], #32\n",
+        "\tadrp\tx2, table\n",
+        "\tadd\tx2, x2, :lo12:table\n",
+        "\tmsr\tsctlr_el1, x0\n",
+        "\tcsel\tw0, w1, wzr, eq\n",
+        "1:\tsubs\tx3, x3, #1\n",
+        "\tb.ne\t1b\n",
+        "\t.macro\tpush2 a, b\n",
+        "\tstp\t\\a, \\b, [sp, #-16]!\n",
+        "\t.endm\n",
+        "/* a\n",
+        " b */\tret\n",
+    );
+    let a32 = concat!(
+        "@ ARM32\n",
+        "\t.syntax unified\n",
+        "\t.thumb\n",
+        "g:\tpush\t{r4-r7, lr}\t@ save\n",
+        "\tldr\tr0, =0x12345678\n",
+        "\taddeq\tr0, r0, r1, lsl #2\n",
+        "\tvld1.8\t{d0-d3}, [r1]!\n",
+        "\tbx\tlr\n",
+    );
+    let armasm = concat!(
+        "; armasm\n",
+        "        AREA    RESET, DATA, READONLY\n",
+        "        AREA    |.text|, CODE, READONLY\n",
+        "        IMPORT  |Image$$ER$$Base|\n",
+        "        EXPORT  __Vectors\n",
+        "__Vectors DCD   __initial_sp\n",
+        "Reset_Handler   PROC\n",
+        "loop    SUBS    R0, R0, #1\n",
+        "        BNE     loop\n",
+        "        ENDP\n",
+        "        END\n",
+    );
+    let apple = concat!(
+        "\t.global _main\n",
+        "; Apple's arm64\n",
+        "_main:\tadrp\tx0, msg@PAGE ; the page\n",
+        "\tadd\tx0, x0, msg@PAGEOFF\n",
+    );
+    readings_of("armasm", Lang::ArmAsm, &[a64, a32, armasm, apple]);
+}
+
+/// RISC-V's assembly's readings (X-181): GAS's from the start (`;` a separator, numeric labels,
+/// `#` comments, cpp's lines), ABI registers, `x5`, CSRs, `%hi`/`%pcrel_lo`, vector types, a
+/// mask's `v0.t`, rounding modes, `.option`; RARS's `%` macro parameters.
+#[test]
+fn riscvasm() {
+    let gas = concat!(
+        "#include <asm/asm.h>\n",
+        "# a comment\n",
+        "\t.option\tnorelax\n",
+        "\t.section .text.init, \"ax\", @progbits\n",
+        "\t.globl\t_start\n",
+        "_start:\taddi\tsp, sp, -16\t# a frame\n",
+        "\tsd\tra, 8(sp); sd s0, 0(sp)\n",
+        "1:\tauipc\ta0, %pcrel_hi(msg)\n",
+        "\taddi\ta0, a0, %pcrel_lo(1b)\n",
+        "\tcsrrw\tt0, mscratch, t0\n",
+        "\tvsetvli\tt1, a2, e32, m2, ta, ma\n",
+        "\tvle32.v\tv8, (a1), v0.t\n",
+        "\tfcvt.w.d\ta0, fa1, rtz\n",
+        "\tbeqz\tx5, 1b\n",
+        "\tecall\n",
+    );
+    let rars = concat!(
+        ".macro print_int (%x)\n",
+        "\tli a7, 1\n",
+        "\tadd a0, zero, %x\n",
+        "\tecall\n",
+        ".end_macro\n",
+        ".data\n",
+        "msg:\t.asciz \"hi\\n\"\n",
+    );
+    readings_of("riscvasm", Lang::RiscvAsm, &[gas, rars]);
+}
+
+/// MIPS's assembly's readings (X-181): GAS's (`.set noreorder`, `.ent`, linux's regdef.h names,
+/// `%hi`/`%lo`, cpp's lines), MARS's (`$` registers, `$0`-`$31`, `.asciiz`, `syscall`, macros with
+/// `%` parameters), armips' (`;` comments).
+#[test]
+fn mipsasm() {
+    let gas = concat!(
+        "#include <asm/regdef.h>\n",
+        "\t.set\tnoreorder\n",
+        "\t.ent\tf\n",
+        "f:\tlui\tt0, %hi(table)\n",
+        "\tlw\tv0, %lo(table)(t0)\n",
+        "\tjr\tra\n",
+        "\t addiu\tsp, sp, 8\t# the delay slot\n",
+        "\t.end\tf\n",
+    );
+    let mars = concat!(
+        ".data\n",
+        "msg:\t.asciiz \"hello\"\n",
+        ".text\n",
+        "main:\tli $v0, 4\n",
+        "\tla $a0, msg\n",
+        "\tsyscall\n",
+        "\tmtc1 $t1, $f2\n",
+        "\tjr $31\n",
+        ".macro push (%r)\n",
+        "\tsw %r, ($sp)\n",
+        ".end_macro\n",
+    );
+    let armips = concat!(
+        "; armips\n",
+        ".psx\n",
+        ".create \"x.bin\", 0x80010000\n",
+        "\tli t0, 0xA0<<24 ; a comment\n",
+    );
+    readings_of("mipsasm", Lang::MipsAsm, &[gas, mars, armips]);
+}
+
+/// Z80's assembly's readings (X-181): rgbds' (SM83's: `SECTION`, `::` labels, `.local` labels,
+/// `[hl+]`, `ldh`, `\1`, graphics' numbers, `MACRO`), sjasmplus' and TASM's (labels without `:` in
+/// the first column, `equ`, `defb`, `af'`, `(ix+5)`, `#` hex), z80asm's, sdas' `.area`; 8080's
+/// (X-182: `m`, `psw`, CP/M's labels).
+#[test]
+fn z80asm() {
+    let rgbds = concat!(
+        "INCLUDE \"hardware.inc\"\n",
+        "SECTION \"Main\", ROM0[$150]\n",
+        "Main::\n",
+        "\tldh a, [rLY]\n",
+        "\tcp 144\n",
+        "\tjr c, Main\n",
+        ".loop\n",
+        "\tld [hl+], a ; next\n",
+        "\tdec b\n",
+        "\tjr nz, .loop\n",
+        "\tret z\n",
+        "MACRO lb\n",
+        "\tld \\1, (\\2 << 8) | \\3\n",
+        "ENDM\n",
+        "\tdw `01233210\n",
+        "DEF COUNT EQU 4\n",
+    );
+    let sjasm = concat!(
+        "\tDEVICE ZXSPECTRUM48\n",
+        "\torg $8000\n",
+        "start\tld hl, msg\n",
+        "\tex af, af'\n",
+        "\tld (ix+5), %10100101\n",
+        "loop\tdjnz loop\n",
+        "\tjp po, start\n",
+        "msg\tdefb \"hi\", 0\n",
+        "count\tequ 5\n",
+        "\tld a, #FF\n",
+    );
+    let sdas = concat!(
+        "\t.area _CODE\n",
+        "\t.globl _main\n",
+        "_main:\n",
+        "\tld a, #0x10\n",
+        "\tret\n",
+    );
+    let i8080 = concat!(
+        "BDOS\tEQU\t5\n",
+        "START:\tLXI\tH,BUF\t; the buffer\n",
+        "\tMVI\tC,2\n",
+        "\tMOV\tA,M\n",
+        "\tPUSH\tPSW\n",
+        "\tDAD\tD\n",
+        "\tJNZ\tSTART\n",
+        "\tCALL\tBDOS\n",
+    );
+    readings_of("z80asm", Lang::Z80Asm, &[rgbds, sjasm, sdas, i8080]);
+}
+
+/// 6502's assembly's readings (X-181): ca65's (`.segment`, `.proc`, `@` labels, `:` and `:+`,
+/// `#<`, `:=`; X-182: `::` scopes), DASM's (`processor`, labels in the first column, `seg.u`,
+/// `dc.b`, `'A`, `*=`), ACME's (`!byte`, `+`/`-` labels); X-182: Kick Assembler's (`!` labels, a
+/// macro's call, `.for`, `{ }`, `//`), 64tass' (`.block`, `` #` ``); X-184: Merlin 32's.
+#[test]
+fn asm6502() {
+    let ca65 = concat!(
+        "\t.setcpu \"65C02\"\n",
+        "\t.segment \"CODE\"\n",
+        ".proc main\n",
+        "\tlda #<msg\n",
+        "\tldx #>msg\n",
+        "@loop:\tsta $2000,x\n",
+        "\tdey\n",
+        "\tbne @loop\n",
+        ":\tinx\n",
+        "\tbne :-\n",
+        "\trts\n",
+        ".endproc\n",
+        "_color := return0\n",
+        "\t.tag MGTK::Rect\n",
+        "\tjsr ::init\n",
+        "\tleft := rect + MGTK::Rect::x1\n",
+    );
+    let dasm = concat!(
+        "\tprocessor 6502\n",
+        "\tseg.u Variables\n",
+        "\torg $80\n",
+        "Temp\tds 1\n",
+        "\tseg Code\n",
+        "\torg $f000\n",
+        "Start\tsei\n",
+        "\tcld\n",
+        "\tldx #$FF\n",
+        "\tlda #'A\n",
+        "\tdc.b %10101010\n",
+        "\t*= $1000\n",
+        "\tjmp *\n",
+    );
+    let acme = concat!(
+        "\t!to \"out.prg\", cbm\n",
+        "-\tdex\n",
+        "\tbne -\n",
+        "\tbcc +\n",
+        "\t!byte 1, 2, 3\n",
+        "+\n",
+    );
+    let kick = concat!(
+        ".label SCREEN = $0400\n",
+        "BasicUpstart2(start)\n",
+        "start:\n",
+        "\tldx #0\n",
+        "!loop:\tlda #$20 // a blank\n",
+        "\tsta SCREEN,x\n",
+        "\tinx\n",
+        "\tbne !loop-\n",
+        "\t!:\n",
+        "\tbcc !-\n",
+        ".for (var i = 0; i < 8; i++) {\n",
+        "\t.byte i * 2\n",
+        "}\n",
+    );
+    let tass = concat!(
+        "*\t= $0801\n",
+        "plot\t.proc\n",
+        "\tlda #`table\n",
+        "\tldx #<table\n",
+        "\t.pend\n",
+        "\t.block\n",
+        "loop\tdex\n",
+        "\tbne loop\n",
+        "\t.bend\n",
+    );
+    // X-184: Merlin 32's (SourceGen's tests): `*` comment lines, `:` locals, `]` variables, `'…'`
+    // strings, undotted data words
+    let merlin = concat!(
+        "* a comment\n",
+        "]PTR     equ   $02\n",
+        "         org   $1000\n",
+        ":L1000   lda   #$01\n",
+        "         sta   ]PTR\n",
+        "         bne   :L1000\n",
+        "         asc   'low ASCII str',00\n",
+        "         asc   \"high\"\n",
+        "         dfb   $80\n",
+        "         lda   #'A'\n",
+    );
+    readings_of(
+        "asm6502",
+        Lang::Mos6502Asm,
+        &[ca65, dasm, acme, kick, tass, merlin],
+    );
+}
+
+/// 68k's assembly's readings (X-183): vasm's and Devpac's (labels in the first column, `.loop`,
+/// `1$`, `section`, `xdef`, `dc.w`, `movem` lists, an index's size, `$FF`, `%0101`, `*` and `;`
+/// comments, the comment field without a mark, `<…>` macro arguments, `\1`), asm68k's (`@` labels,
+/// `rsset`, `rs.b`), AS' (`binclude`, `if`, `phase`), GAS's in Motorola's operands (EmuTOS's, SGDK's:
+/// `.text`, `#include`, `|` comments) and MIT's (linux's `%sp@-`, `jbsr`), Easy68K's (`ORG`, `END`).
+#[test]
+fn m68kasm() {
+    let vasm = concat!(
+        "; startup\n",
+        "\tsection\tcode,code_c\n",
+        "\txdef\t_start\n",
+        "_start\tmove.l\t4.w,a6\t\texec base\n",
+        "\tlea\t$dff000,a5\n",
+        "\tmove.w\t#$7fff,$9a(a5)\n",
+        "\tmovem.l\td0-d7/a0-a6,-(sp)\n",
+        ".loop\tmove.w\t(a0,d1.w*2),d2\n",
+        "\tdbra\td0,.loop\n",
+        "1$\tbtst\t#%0110,$bfe001\n",
+        "\tbne.s\t1$\n",
+        "\tmovem.l\t(sp)+,d0-d7/a0-a6\n",
+        "\trts\t\t\tdone\n",
+        "* tables\n",
+        "\tcnop\t0,4\n",
+        "table\tdc.w\t$0100,@17,'AB'\n",
+        "\tds.b\t256\n",
+        "PUSH\tmacro\n",
+        "\tmove.\\0\t\\1,-(sp)\n",
+        "\tendm\n",
+        "\tEdT\t25,<No THEN in a test>\n",
+        "\teven\n",
+        "DONNÉES_AFFICH\tdc.w\t0\n",
+        "\tlea\tDONNÉES_AFFICH,a6\tÉcran précédent\n",
+    );
+    let asm68k = concat!(
+        "\trsset\t$FFFF0000\n",
+        "v_buffer:\trs.b\t$200\n",
+        "Sonic_Move:\n",
+        "\tmoveq\t#0,d0\n",
+        "@loop:\n",
+        "\tmove.b\tobRoutine(a0),d0 ; get routine\n",
+        "\tbeq.s\t@loop\n",
+        "\tjmp\tSonic_Index(pc,d0.w)\n",
+        "\tif Revision=0\n",
+        "\tmove.w\t($FFFFF604).w,d1\n",
+        "\tendc\n",
+    );
+    let as_ = concat!(
+        "\tcpu 68000\n",
+        "\tbinclude \"art/sonic.bin\"\n",
+        "\tif (FixBugs) && (Revision >= 1)\n",
+        "\tmove.w\t#make_art_tile(ArtTile_Sonic,0,0),art_tile(a0)\n",
+        "\tendif\n",
+        "\tdc.w\tobj_end-*\n",
+    );
+    let gas = concat!(
+        "| startup.S\n",
+        "#include \"asmdefs.h\"\n",
+        "\t.globl\t_main\n",
+        "\t.text\n",
+        "_main:\n",
+        "\tmove.l\t4(sp),a0\t\t| the basepage\n",
+        "\tmove.w\t#0x2700,sr\n",
+        "\tjsr\t_init\n",
+        "\tmovea.l 4(%sp), %a0\t// the first parameter\n",
+        "\tbeq.s\t1f\n",
+        "1:\n",
+        "\trts\n",
+    );
+    let mit = concat!(
+        "ENTRY(__sys_fork)\n",
+        "\tSAVE_SWITCH_STACK\n",
+        "\tjbsr\tsys_fork\n",
+        "\tlea\t%sp@(24),%sp\n",
+        "\tmovel\t%a1,%sp@-\t| switch_stack pointer\n",
+        "\tmoveml\t%sp@+,%d2-%d5\n",
+        "\tmovel\t%a0@(%d1:l:4),%a0\n",
+        "\trts\n",
+    );
+    let easy68k = concat!(
+        "\tORG\t$1000\n",
+        "START:\tMOVE.B\t#9,D0\n",
+        "\tTRAP\t#15\n",
+        "MSG\tDC.B\t'HELLO',0\n",
+        "\tEND\tSTART\n",
+    );
+    readings_of(
+        "m68kasm",
+        Lang::M68kAsm,
+        &[vasm, asm68k, as_, gas, mit, easy68k],
+    );
+}
+
 /// `known_hosts`' readings (ADR-40): markers, host patterns, hashed hosts, key types and keys,
 /// comments.
 #[test]

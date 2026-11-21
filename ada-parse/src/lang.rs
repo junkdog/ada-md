@@ -88,6 +88,28 @@ pub enum Lang {
     CSharp,
     /// bat's `Go`.
     Go,
+    /// bat's `x86_64 Assembly`: NASM's, YASM's, MASM's and GAS's x86 and x86-64 (X-171). A `.s`
+    /// or `.S` file, which bat's set names ARM's, is told by its text ([`Lang::for_assembly`]).
+    X86Asm,
+    /// bat's `ARM Assembly`: ARM32's and AArch64's, GAS's and armasm's (X-171).
+    ArmAsm,
+    /// RISC-V's assembly, GAS's and RARS's (X-181): ada's own, bat's set has no syntax for it.
+    /// Its files are `.s` and `.S`, told by their text ([`Lang::for_assembly`]).
+    RiscvAsm,
+    /// MIPS's assembly, GAS's, MARS's and SPIM's (X-181): ada's own, as RISC-V's.
+    MipsAsm,
+    /// Z80's assembly, the Game Boy's SM83's with it: rgbds', sjasmplus', z80asm's, sdas', TASM's
+    /// (X-181). ada's own, as RISC-V's; `.z80` and `.zmac` files, `.asm`, `.s` and `.inc` by their
+    /// text.
+    Z80Asm,
+    /// 6502's assembly, 65C02's and 65816's with it: ca65's, DASM's, ACME's, 64tass', NESASM's
+    /// (X-181). ada's own, as RISC-V's; `.a65`, `.ca65`, `.dasm` and `.acme` files, `.s`, `.asm`
+    /// and `.inc` by their text.
+    Mos6502Asm,
+    /// 68k's assembly, 68000's to 68060's and ColdFire's: Motorola's syntax (vasm's, Devpac's,
+    /// ASM-One's, asm68k's, AS', Easy68K's) and GAS's, MIT's too (X-183). ada's own, as RISC-V's;
+    /// `.x68` and `.68k` files, `.s`, `.S`, `.asm` and `.inc` by their text.
+    M68kAsm,
     /// bat's `Python`.
     Python,
     /// bat's `Lua`.
@@ -178,6 +200,33 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("csharp", "cs"),
     ("pwsh", "powershell"),
     ("posh", "powershell"),
+    // highlight.js's names for x86's and ARM's assembly (X-171); GitHub's `assembly`
+    ("x86asm", "nasm"),
+    ("armasm", "s"),
+    ("assembly", "asm"),
+    // the other architectures' names (X-181): highlight.js' `mipsasm`, Prism's `asm6502`,
+    // rgbds' and the Game Boy's
+    ("riscv", "RISC-V Assembly"),
+    ("riscv32", "RISC-V Assembly"),
+    ("riscv64", "RISC-V Assembly"),
+    ("mips", "MIPS Assembly"),
+    ("mipsasm", "MIPS Assembly"),
+    ("mips64", "MIPS Assembly"),
+    ("gbz80", "z80"),
+    ("sm83", "z80"),
+    ("rgbasm", "z80"),
+    ("rgbds", "z80"),
+    ("6502", "a65"),
+    ("asm6502", "a65"),
+    ("65c02", "a65"),
+    // highlight.js' `m68k`, GitHub's `motorola-68k-assembly` (X-183)
+    ("m68k", "x68"),
+    ("68k", "x68"),
+    ("68000", "x68"),
+    ("m68000", "x68"),
+    ("mc68000", "x68"),
+    ("asm68k", "x68"),
+    ("motorola-68k-assembly", "x68"),
     // GitHub's names for Objective-C and Objective-C++ (X-134)
     ("objc", "m"),
     ("obj-c", "m"),
@@ -396,6 +445,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     ),
     (Lang::CSharp, &["cs", "csx"]),
     (Lang::Go, &["go"]),
+    (Lang::X86Asm, &["yasm", "nasm", "asm", "inc", "mac"]),
+    (Lang::ArmAsm, &["s"]),
+    (Lang::Z80Asm, &["z80", "zmac"]),
+    (Lang::Mos6502Asm, &["a65", "ca65", "dasm", "acme"]),
+    (Lang::M68kAsm, &["x68", "68k"]),
     (
         Lang::JavaScript,
         &["js", "mjs", "jsx", "babel", "es6", "cjs"],
@@ -536,6 +590,13 @@ impl Lang {
         Lang::CMakeCppHeader,
         Lang::CSharp,
         Lang::Go,
+        Lang::X86Asm,
+        Lang::ArmAsm,
+        Lang::RiscvAsm,
+        Lang::MipsAsm,
+        Lang::Z80Asm,
+        Lang::Mos6502Asm,
+        Lang::M68kAsm,
         Lang::Python,
         Lang::Lua,
         Lang::Php,
@@ -604,6 +665,13 @@ impl Lang {
             Lang::CMakeCppHeader => "CMake C++ Header",
             Lang::CSharp => "C#",
             Lang::Go => "Go",
+            Lang::X86Asm => "x86_64 Assembly",
+            Lang::ArmAsm => "ARM Assembly",
+            Lang::RiscvAsm => "RISC-V Assembly",
+            Lang::MipsAsm => "MIPS Assembly",
+            Lang::Z80Asm => "Z80 Assembly",
+            Lang::Mos6502Asm => "6502 Assembly",
+            Lang::M68kAsm => "68k Assembly",
             Lang::Python => "Python",
             Lang::Lua => "Lua",
             Lang::Php => "PHP",
@@ -682,6 +750,13 @@ impl Lang {
             Lang::CMakeCppHeader => "source.cmake.config.c++",
             Lang::CSharp => "source.cs",
             Lang::Go => "source.go",
+            Lang::X86Asm => "source.asm.x86_64",
+            Lang::ArmAsm => "source.arm",
+            Lang::RiscvAsm => "source.asm.riscv",
+            Lang::MipsAsm => "source.asm.mips",
+            Lang::Z80Asm => "source.asm.z80",
+            Lang::Mos6502Asm => "source.asm.6502",
+            Lang::M68kAsm => "source.asm.m68k",
             Lang::Python => "source.python",
             Lang::Lua => "source.lua",
             Lang::Php => "embedding.php",
@@ -746,6 +821,13 @@ impl Lang {
             Lang::CMakeCppHeader => crate::cc::scopes_cmake_cpp(kind),
             Lang::CSharp => crate::cs::scopes(kind),
             Lang::Go => crate::go::scopes(kind),
+            Lang::X86Asm
+            | Lang::ArmAsm
+            | Lang::RiscvAsm
+            | Lang::MipsAsm
+            | Lang::Z80Asm
+            | Lang::Mos6502Asm
+            | Lang::M68kAsm => crate::asm::scopes(kind),
             Lang::Python => crate::python::scopes(kind),
             Lang::Lua => crate::lua::scopes(kind),
             Lang::Php => crate::php::scopes(kind),
@@ -880,6 +962,96 @@ impl Lang {
     #[doc(hidden)]
     pub fn for_header(text: &[u8]) -> Lang {
         crate::header::language(text)
+    }
+
+    /// The language of an assembly file whose text starts with `text` (X-171, X-181, X-183):
+    /// x86's, ARM's, RISC-V's, MIPS's, Z80's, 6502's or 68k's by the registers, mnemonics and
+    /// directives it names, `default` (its name's, [`Lang::assembly_by_text`]) where the text
+    /// doesn't say.
+    pub fn for_assembly(text: &[u8], default: Lang) -> Lang {
+        crate::asm::sniff::language(text, default)
+    }
+
+    /// The language of a `.i` file whose text starts with `text` (X-186): 68k's where its text
+    /// votes for 68k as much as for any architecture, else `None` (plain). The Amiga's and the
+    /// Atari ST's assembly includes take the name (the NDK's `exec/types.i`), but so do SWIG's
+    /// interfaces and `gcc -E`'s output, whose `%include` and `extern` would read as x86's.
+    pub fn for_include(text: &[u8]) -> Option<Lang> {
+        crate::asm::sniff::include(text)
+    }
+
+    /// Whether `name` is a `.i` file's ([`Lang::for_include`]).
+    pub fn is_include(name: &str) -> bool {
+        name.rsplit_once('.')
+            .is_some_and(|(stem, ext)| !stem.is_empty() && ext.eq_ignore_ascii_case("i"))
+    }
+
+    /// [`Lang::for_assembly`]'s votes for `text`, by architecture (x86, ARM, RISC-V, MIPS, Z80,
+    /// 6502, 68k); `None` where NASM's preprocessor decides x86's: for checks of the sniff (X-181).
+    #[doc(hidden)]
+    pub fn assembly_votes(text: &[u8]) -> Option<[u32; 7]> {
+        crate::asm::sniff::votes(text)
+    }
+
+    /// The architecture the last of `path`'s directories names, its file's name aside, as
+    /// projects keep each architecture's assembly apart (`arch/x86/`, `sysdeps/aarch64/`,
+    /// `src/arm/64/`): an assembly file's where its text doesn't say ([`Lang::for_assembly`]'s
+    /// `default`, before its name's; X-180).
+    pub fn assembly_by_dir(path: &str) -> Option<Lang> {
+        path.rsplit(['/', '\\']).skip(1).find_map(|dir| {
+            let d = dir.to_ascii_lowercase();
+            match d.as_str() {
+                "x86" | "x86_64" | "x86-64" | "x64" | "amd64" | "i386" | "i486" | "i586"
+                | "i686" | "ia32" => Some(Lang::X86Asm),
+                "arm" | "arm32" | "arm64" | "aarch64" | "aarch32" | "armv7" | "armv8" | "thumb"
+                | "thumb2" => Some(Lang::ArmAsm),
+                "riscv" | "riscv32" | "riscv64" | "risc-v" => Some(Lang::RiscvAsm),
+                "mips" | "mips32" | "mips64" => Some(Lang::MipsAsm),
+                "z80" | "gbz80" | "sm83" => Some(Lang::Z80Asm),
+                "6502" | "65c02" | "65816" | "mos6502" => Some(Lang::Mos6502Asm),
+                "m68k" | "68k" | "m68000" | "68000" | "mc68000" | "m68knommu" | "coldfire" => {
+                    Some(Lang::M68kAsm)
+                }
+                // riscv-tests' and the architecture tests' `rv64ui/`, `rv32i_m/`
+                _ if (d.starts_with("rv32") || d.starts_with("rv64"))
+                    && d[4..].bytes().all(|c| c.is_ascii_alphabetic() || c == b'_') =>
+                {
+                    Some(Lang::RiscvAsm)
+                }
+                _ => None,
+            }
+        })
+    }
+
+    /// Where a file's name is one whose architecture [`Lang::for_assembly`] decides from its text
+    /// (`.s` and `.S`, which bat's set names ARM's, `.asm` and `.inc` x86's), the language the
+    /// name gives; `None` for any other name.
+    pub fn assembly_by_text(name: &str) -> Option<Lang> {
+        let (stem, ext) = name.rsplit_once('.')?;
+        if stem.is_empty() {
+            return None;
+        }
+        if ext.eq_ignore_ascii_case("s") {
+            Some(Lang::ArmAsm)
+        } else if ext.eq_ignore_ascii_case("asm") || ext.eq_ignore_ascii_case("inc") {
+            Some(Lang::X86Asm)
+        } else {
+            None
+        }
+    }
+
+    /// Whether it's one of the architectures' assembly [`Lang::for_assembly`] chooses among.
+    pub fn is_assembly(self) -> bool {
+        matches!(
+            self,
+            Lang::X86Asm
+                | Lang::ArmAsm
+                | Lang::RiscvAsm
+                | Lang::MipsAsm
+                | Lang::Z80Asm
+                | Lang::Mos6502Asm
+                | Lang::M68kAsm
+        )
     }
 
     /// Whether a file's name is a header's that [`Lang::for_header`] decides: `.h`.

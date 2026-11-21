@@ -1,0 +1,257 @@
+# Mos6502Asm: ada-parse/tests/readings.rs, asm6502
+
+## block 1
+   1 | \t.setcpu "65C02"
+       ".setcpu" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "65C02" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+   2 | \t.segment "CODE"
+       ".segment" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "CODE" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+   3 | .proc main
+       ".proc" support.function.directive.asm
+       "main" entity.name.constant.asm
+   4 | \tlda #<msg
+       "lda" keyword.operator.word.mnemonic.asm
+       "<" keyword.operator.bitwise.asm
+       "msg" entity.name.constant.asm
+   5 | \tldx #>msg
+       "ldx" keyword.operator.word.mnemonic.asm
+       ">" keyword.operator.bitwise.asm
+       "msg" entity.name.constant.asm
+   6 | @loop:\tsta $2000,x
+       "@loop" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "sta" keyword.operator.word.mnemonic.asm
+       "$2000" constant.numeric.hex.asm
+       "," operator.separator.asm
+       "x" constant.language.register.asm
+   7 | \tdey
+       "dey" keyword.operator.word.mnemonic.asm
+   8 | \tbne @loop
+       "bne" keyword.operator.word.mnemonic.asm
+       "@loop" entity.name.constant.asm
+   9 | :\tinx
+       ":" punctuation.separator.asm
+       "inx" keyword.operator.word.mnemonic.asm
+  10 | \tbne :-
+       "bne" keyword.operator.word.mnemonic.asm
+       ":-" entity.name.constant.asm
+  11 | \trts
+       "rts" keyword.operator.word.mnemonic.asm
+  12 | .endproc
+       ".endproc" support.function.directive.asm
+  13 | _color := return0
+       "_color" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "return0" entity.name.constant.asm
+  14 | \t.tag MGTK::Rect
+       ".tag" support.function.directive.asm
+       "MGTK::Rect" entity.name.constant.asm
+  15 | \tjsr ::init
+       "jsr" keyword.operator.word.mnemonic.asm
+       "::init" entity.name.constant.asm
+  16 | \tleft := rect + MGTK::Rect::x1
+       "left" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "rect" entity.name.constant.asm
+       "+" keyword.operator.arithmetic.asm
+       "MGTK::Rect::x1" entity.name.constant.asm
+
+## block 2
+   1 | \tprocessor 6502
+       "processor" support.function.directive.asm
+       "6502" constant.numeric.decimal.asm
+   2 | \tseg.u Variables
+       "seg.u" support.function.directive.asm
+       "Variables" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+   3 | \torg $80
+       "org" support.function.directive.asm
+       "$80" constant.numeric.hex.asm
+   4 | Temp\tds 1
+       "Temp" entity.name.constant.asm
+       "ds" storage.type.asm
+       "1" constant.numeric.decimal.asm
+   5 | \tseg Code
+       "seg" support.function.directive.asm
+       "Code" entity.name.section.asm string.unquoted.asm support.constant.section.asm
+   6 | \torg $f000
+       "org" support.function.directive.asm
+       "$f000" constant.numeric.hex.asm
+   7 | Start\tsei
+       "Start" entity.name.constant.asm
+       "sei" keyword.operator.word.mnemonic.asm
+   8 | \tcld
+       "cld" keyword.operator.word.mnemonic.asm
+   9 | \tldx #$FF
+       "ldx" keyword.operator.word.mnemonic.asm
+       "#$FF" constant.numeric.hex.asm
+  10 | \tlda #'A
+       "lda" keyword.operator.word.mnemonic.asm
+       "'" string.quoted.single.asm punctuation.definition.string.begin.asm
+       "A" string.quoted.single.asm
+  11 | \tdc.b %10101010
+       "dc.b" storage.type.asm
+       "%10101010" constant.numeric.binary.asm
+  12 | \t*= $1000
+       "*" variable.language.asm
+       "$1000" constant.numeric.hex.asm
+  13 | \tjmp *
+       "jmp" keyword.operator.word.mnemonic.asm
+       "*" variable.language.asm
+
+## block 3
+   1 | \t!to "out.prg", cbm
+       "!to" support.function.directive.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "out.prg" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "cbm" entity.name.constant.asm
+   2 | -\tdex
+       "-" entity.name.constant.asm
+       "dex" keyword.operator.word.mnemonic.asm
+   3 | \tbne -
+       "bne" keyword.operator.word.mnemonic.asm
+       "-" entity.name.constant.asm
+   4 | \tbcc +
+       "bcc" keyword.operator.word.mnemonic.asm
+       "+" entity.name.constant.asm
+   5 | \t!byte 1, 2, 3
+       "!byte" support.function.directive.asm
+       "1" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "2" constant.numeric.decimal.asm
+       "," operator.separator.asm
+       "3" constant.numeric.decimal.asm
+   6 | +
+       "+" entity.name.constant.asm
+
+## block 4
+   1 | .label SCREEN = $0400
+       ".label" support.function.directive.asm
+       "SCREEN" entity.name.constant.asm
+       "$0400" constant.numeric.hex.asm
+   2 | BasicUpstart2(start)
+       "BasicUpstart2" keyword.operator.word.mnemonic.asm
+       "start" entity.name.constant.asm
+   3 | start:
+       "start" entity.name.constant.asm
+       ":" punctuation.separator.asm
+   4 | \tldx #0
+       "ldx" keyword.operator.word.mnemonic.asm
+       "#0" constant.numeric.decimal.asm
+   5 | !loop:\tlda #$20 // a blank
+       "!loop" entity.name.constant.asm
+       ":" punctuation.separator.asm
+       "lda" keyword.operator.word.mnemonic.asm
+       "#$20" constant.numeric.hex.asm
+       "//" comment.line.asm punctuation.definition.comment.asm
+       " a blank" comment.line.asm
+   6 | \tsta SCREEN,x
+       "sta" keyword.operator.word.mnemonic.asm
+       "SCREEN" entity.name.constant.asm
+       "," operator.separator.asm
+       "x" constant.language.register.asm
+   7 | \tinx
+       "inx" keyword.operator.word.mnemonic.asm
+   8 | \tbne !loop-
+       "bne" keyword.operator.word.mnemonic.asm
+       "!loop-" entity.name.constant.asm
+   9 | \t!:
+       "!" entity.name.constant.asm
+       ":" punctuation.separator.asm
+  10 | \tbcc !-
+       "bcc" keyword.operator.word.mnemonic.asm
+       "!-" entity.name.constant.asm
+  11 | .for (var i = 0; i < 8; i++) {
+       ".for" support.function.directive.asm
+       "var" entity.name.constant.asm
+       "i" entity.name.constant.asm
+       "0" constant.numeric.decimal.asm
+       ";" operator.separator.asm
+       "i" entity.name.constant.asm
+       "<" keyword.operator.bitwise.asm
+       "8" constant.numeric.decimal.asm
+       ";" operator.separator.asm
+       "i" entity.name.constant.asm
+       "++" keyword.operator.arithmetic.asm
+  12 | \t.byte i * 2
+       ".byte" support.function.directive.asm
+       "i" entity.name.constant.asm
+       "*" keyword.operator.arithmetic.asm
+       "2" constant.numeric.decimal.asm
+  13 | }
+
+## block 5
+   1 | *\t= $0801
+       "*" variable.language.asm
+       "$0801" constant.numeric.hex.asm
+   2 | plot\t.proc
+       "plot" entity.name.constant.asm
+       ".proc" support.function.directive.asm
+   3 | \tlda #`table
+       "lda" keyword.operator.word.mnemonic.asm
+       "`" keyword.operator.bitwise.asm
+       "table" entity.name.constant.asm
+   4 | \tldx #<table
+       "ldx" keyword.operator.word.mnemonic.asm
+       "<" keyword.operator.bitwise.asm
+       "table" entity.name.constant.asm
+   5 | \t.pend
+       ".pend" support.function.directive.asm
+   6 | \t.block
+       ".block" support.function.directive.asm
+   7 | loop\tdex
+       "loop" entity.name.constant.asm
+       "dex" keyword.operator.word.mnemonic.asm
+   8 | \tbne loop
+       "bne" keyword.operator.word.mnemonic.asm
+       "loop" entity.name.constant.asm
+   9 | \t.bend
+       ".bend" support.function.directive.asm
+
+## block 6
+   1 | * a comment
+       "*" comment.line.asm punctuation.definition.comment.asm
+       " a comment" comment.line.asm
+   2 | ]PTR     equ   $02
+       "]PTR" entity.name.constant.asm
+       "equ" support.function.directive.asm
+       "$02" constant.numeric.hex.asm
+   3 |          org   $1000
+       "org" support.function.directive.asm
+       "$1000" constant.numeric.hex.asm
+   4 | :L1000   lda   #$01
+       ":L1000" entity.name.constant.asm
+       "lda" keyword.operator.word.mnemonic.asm
+       "#$01" constant.numeric.hex.asm
+   5 |          sta   ]PTR
+       "sta" keyword.operator.word.mnemonic.asm
+       "]PTR" entity.name.constant.asm
+   6 |          bne   :L1000
+       "bne" keyword.operator.word.mnemonic.asm
+       ":L1000" entity.name.constant.asm
+   7 |          asc   'low ASCII str',00
+       "asc" storage.type.asm
+       "'" string.quoted.single.asm punctuation.definition.string.begin.asm
+       "low ASCII str" string.quoted.single.asm
+       "'" string.quoted.single.asm punctuation.definition.string.end.asm
+       "," operator.separator.asm
+       "00" constant.numeric.decimal.asm
+   8 |          asc   "high"
+       "asc" storage.type.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.begin.asm
+       "high" string.quoted.double.asm
+       "\"" string.quoted.double.asm punctuation.definition.string.end.asm
+   9 |          dfb   $80
+       "dfb" storage.type.asm
+       "$80" constant.numeric.hex.asm
+  10 |          lda   #'A'
+       "lda" keyword.operator.word.mnemonic.asm
+       "'" string.quoted.single.asm punctuation.definition.string.begin.asm
+       "A" string.quoted.single.asm
+       "'" string.quoted.single.asm punctuation.definition.string.end.asm
