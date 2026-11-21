@@ -4,11 +4,12 @@
 
 _Named after Ada, regal matriarch, at her behest._
 
-The fastest terminal markdown viewer, for one note or a whole vault.
+The fastest terminal markdown viewer, for one note or a whole vault, and a pager for everything
+else.
 
 Sortable tables, mermaid diagrams drawn as text, inline images, a git gutter, and `[[wiki links]]`
-that find their note anywhere in the vault. It opens code, logs, JSON and images too, so it also
-pages your pipes and fills fzf's preview pane.
+that find their note anywhere in the vault. Beyond markdown, it highlights code, logs, JSON and
+diffs, and pages git and your pipes in place of less, bat and delta, or fills fzf's preview pane.
 
 ![ada jumping to a heading from the outline, searching, following a link from the link list, picking a theme in the settings, sorting the second of two tables by how long things take, going back, and following a link to a mermaid sequence diagram whose cast stays on top as it scrolls](site/media/hero.webp)
 
@@ -34,6 +35,8 @@ More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-m
 - **Wiki links that survive moves:** a `[[link]]` is found by name anywhere in the vault, as in
   Obsidian.
 - **Search that sees through markup:** a regex `foo bar` finds `**foo** _bar_`.
+- **A git pager:** diffs and `git blame` in their files' languages, changed words picked out, and
+  `n` `N` and `o` between files and commits.
 - **One previewer for fzf:** notes, code, logs, JSON and images, in place of both `bat` and
   `kitten icat`.
 
@@ -86,25 +89,50 @@ apps, and the editor falls back to `notepad`. Windows Terminal 1.22 and later dr
 
 ## Usage
 
+Press `?` in ada for the keys, and see `ada --help` for every option.
+
+### Notes and vaults
+
 ```zsh
 ada notes/today.md
 ada --line 120 notes/today.md        # start at line 120
 ada -n all notes/today.md            # line numbers: off, code or all
-
-# from a pipe: markdown, code, JSON, YAML, diffs and logs are told apart by content
-git show HEAD~3:README.md | ada
-journalctl -b -u sshd | ada
-curl -s https://example.com/api | ada -l json   # name the language when the guess is wrong
-
-# code, config files and images
-ada src/main.rs
-ada plot.png
-
-# print instead of paging, as happens anyway when stdout isn't a terminal
-ada --print --width 100 notes/today.md | less -R
 ```
 
-As an fzf preview, ada prints at the pane's size, images included:
+`Tab` and `Enter` follow links, `[[wiki links]]` anywhere in the vault
+([Links in a vault](#links-in-a-vault)), and `BS` comes back.
+
+### In place of less, bat and cat
+
+```zsh
+ada src/main.rs                      # code and config files, highlighted, with the git gutter
+ada plot.png                         # images too
+ada -p Cargo.toml                    # print to the terminal instead of paging
+
+# from a pipe: markdown, code, JSON, YAML, diffs and logs are told apart by content
+journalctl -b -u sshd | ada
+curl -s https://example.com/api | ada -l json   # name the language when the guess is wrong
+ls -l --color=always | ada           # text in its own colors keeps them
+
+export PAGER='ada -F' MANPAGER='ada -F'
+```
+
+ada prints when stdout isn't a terminal, and `-F` prints when the text fits on the screen, as
+`less -F` does.
+
+### As git's pager
+
+```zsh
+git config --global core.pager 'ada -F'
+git config --global interactive.diffFilter 'ada --color-only'
+```
+
+Diffs and `git blame` are highlighted in their files' languages, changed words stand out, `n` `N`
+step between files and commits, and `o` lists them.
+
+### As an fzf previewer
+
+ada prints at the pane's size, images included:
 
 ```zsh
 fzf --preview 'ada --print {}'
@@ -117,11 +145,8 @@ fzf --disabled --ansi -d : --bind 'change:reload:rg -n --color=always --smart-ca
 git ls-files -m | fzf --preview 'ada --print --gutter {}'
 ```
 
-`--line` marks its line as a jump in the viewer does, and `--match` marks matches as `/` does. A
-preview stops 2,000 rows past its line and reads no further, so a huge file previews as fast as a
-small one. `--code-wrap off` cuts long lines of code at the pane's edge instead of wrapping them.
-
-Press `?` in ada for the keys, and see `ada --help` for every option.
+A preview reads no more than 2,000 rows past its line, so a huge file previews as fast as a small
+one. `--code-wrap off` cuts long lines at the pane's edge.
 
 ### Keys
 
@@ -136,8 +161,8 @@ Press `?` in ada for the keys, and see `ada --help` for every option.
 | `Tab` `S-Tab` | focus the next, previous link |
 | `Enter` | follow the focused link |
 | `BS` `H` `C-o`, `L` | back, forward |
-| `/`, `n` `N` | search with a regex, next and previous match |
-| `o` | the outline: type to filter, `Enter` to jump |
+| `/`, `n` `N` | search with a regex; the next and previous match, or a diff's file |
+| `o` | the outline, or a diff's commits and files: type to filter, `Enter` to jump |
 | `l` | the links: type to filter, `Enter` to focus one |
 | `t` | tables: auto, grid, records |
 | `s` | sort a table by a column; `C-←` `C-→` pick another table |
@@ -275,9 +300,11 @@ cover 70 languages, plus SQL and regexes inside other languages' strings; the ot
 knows open plain, as does other text. Binary files aren't shown. The lexers are a library on
 crates.io, [ada-parse](https://crates.io/crates/ada-parse), versioned with ada.
 
-Stdin and files with no extension are judged by their first 8 KB: a diff, a mermaid diagram, JSON,
-YAML, TOML, HTML, a log, a config file, code, or markdown. Other piped text is shown line for line,
-and a file with no extension falls back to markdown, as a `README` should. A piped png, jpeg or
+Stdin and files with no extension are judged by their first 8 KB: a diff, `git blame`, a mermaid
+diagram, JSON, YAML, TOML, HTML, a log, a config file, code, or markdown. Other piped text is shown
+line for line, and a file with no extension falls back to markdown, as a `README` should. Piped
+text in its own colors keeps them, except a diff, which ada highlights itself; `-l ansi` keeps any
+input's. A piped png, jpeg or
 gif is shown as an image. Logs and JSON highlight at any line length; themes style log levels with
 `markup.error`, `markup.warning`, `markup.info` and `markup.debug`. `-l NAME` overrides the guess.
 
