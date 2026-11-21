@@ -54,13 +54,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
-      # as the local rounds build them: no sanitizer, debug assertions on. The target is named, as
-      # the prebuilt cargo-fuzz is a musl build and defaults to its own triple
+      # as the local rounds build them (`ci.zsh build`): no sanitizer, debug assertions on, and
+      # `tokens` without trace-compares (F-019). The target triple is named, as the prebuilt
+      # cargo-fuzz is a musl build and defaults to its own
       - name: 🔨 Build the targets
         working-directory: fuzz
         run: |
-          cargo fuzz build -s none -a --target x86_64-unknown-linux-gnu
-          tar -C target/x86_64-unknown-linux-gnu/release -cf - $(jq -r '.[]' <<< "$TARGETS") | zstd -3 -T0 > fuzzers.tar.zst
+          zsh ci.zsh build
+          zsh ci.zsh fuzzers $(jq -r '.[]' <<< "$TARGETS")
           if jq -e 'index("tokens")' <<< "$TARGETS" > /dev/null; then zsh ci.zsh langs; fi
         env:
           TARGETS: ${{ steps.plan.outputs.targets }}

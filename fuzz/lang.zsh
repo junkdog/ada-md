@@ -26,7 +26,8 @@
 #                                           round's inputs brought home are in no other corpus
 #   lang.zsh names TARGET                   the languages TARGET takes
 #
-# Each builds the target first, as `cargo fuzz run -s none -a` does. A language new to the target starts
+# Each builds the target first, as CI does (`ci.zsh build`: `tokens` without trace-compares, F-019, into
+# target/notc). A language new to the target starts
 # empty, so `corpus` with its seeds (census files, a dir each) comes first.
 #
 # Timers (X-125, after a merge ran 43 minutes on a lexer that hung on 78 inputs: libFuzzer's merge restarts
@@ -56,11 +57,11 @@ setup() {
     tokens) args=(-dict=tokens.dict -max_len=65536) ;;
     *) die "no target $1 (tokens)" ;;
   esac
-  bin=target/x86_64-unknown-linux-gnu/release/$1
+  bin=$(zsh $F/ci.zsh binary $1)
 }
 
 build() {
-  (cd $F/.. && cargo +nightly fuzz build -s none -a $1 --target x86_64-unknown-linux-gnu) || die "build"
+  zsh $F/ci.zsh build $1 || die "build"
 }
 
 # The target's own list (`ADA_FUZZ_LANGS=list`), from one input that reaches the filter in either.

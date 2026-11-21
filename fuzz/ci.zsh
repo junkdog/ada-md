@@ -22,6 +22,11 @@
 #   ci.zsh langs [BIN]                 fails unless `tokens`' languages (BIN's list) are LANGS's
 #   ci.zsh flags TARGET                the target's libFuzzer flags a line each, `--`, then its
 #                                      corpus dirs beyond its own (cover.zsh runs with them)
+#   ci.zsh build [TARGET]              the target, else every target, as CI and the local rounds
+#                                      build them (no sanitizer, debug assertions on); NOTC's
+#                                      without trace-compares, into target/notc
+#   ci.zsh binary TARGET               the path of the target's binary as `build` leaves it
+#   ci.zsh fuzzers TARGET…             the targets' binaries as fuzzers.tar.zst, for CI's workers
 #
 # The corpus's store between rounds is the `corpus-TARGET` artifact (kept 90 days), so nothing
 # is written to the repo or its releases. Inputs are named by their hash, so a union is a copy.
@@ -36,40 +41,86 @@ summary() { print -r -- "$*" >> ${GITHUB_STEP_SUMMARY:-/dev/null} }
 
 # `tokens`' languages (F-017): the edges a language's corpus reaches, its weight (its share of a
 # worker's time, so a lexer of more code is fuzzed longer), and the seconds of one core its
-# corpus's seed pass takes, both from its set-cover cmin on the desk machine: the edges are
-# the cmin's "new coverage edges", the seconds its replay's inputs over exec/s
-# (`lang.zsh cmin tokens all`, out/lang/cmin-tokens-LANG.log; last 2026-11-14, before round
-# 14). A new language goes here first: the build checks the list against the binary's (`langs`).
+# corpus's seed pass takes. The edges are its set-cover cmin's "new coverage edges" on the desk
+# machine (`lang.zsh cmin tokens all`, out/lang/cmin-tokens-LANG.log; last 2026-11-14, before
+# round 14, and the dated rows below); the seconds, every row's, a -runs=0 replay of its corpus
+# by the binary CI runs, without trace-compares (2026-11-21, F-019; 3,187 s of one core with
+# them, 814 without), rounded up. A new language goes here first: the build checks the list
+# against the binary's (`langs`).
 LANGS=(
-  nix 16545 204              php 13767 228              elixir 12137 202           ruby 11224 231
-  objcpp 10805 38            scala 10142 57             objc 9482 23               java 9431 76
-  bash 7518 108              typescriptreact 6897 97    cpp 6804 89                cmakecppheader 6671 31
-  typescript 6229 120        haskell 6121 33            rust 6022 119              scss 5920 83
-  csharp 5127 122            cmake 5086 13              c 5079 40                  dockerfile 4828 27
-  kotlin 4690 52             groovy 4489 64             cmakecheader 4453 16       css 4162 39
-  python 3838 119            literatehaskell 3782 1     html 3740 121              crontab 3516 36
-  sshdconfig 3426 31         sshconfig 3341 34          makefile 3257 112          go 2867 112
-  lua 2557 12                racket 2556 46             scheme 2492 47             javascript 2384 54
-  emacslisp 2310 31          lisp 2272 36               powershell 2256 24         nginx 1940 18
-  swift 1783 24              sql 1448 12                terraform 1409 13          gitattributes 1329 7
-  xml 1319 28                clojure 1246 25            yaml 1067 3                toml 913 9
-  log 877 7                  pkgconfig 824 1            json 726 1                 knownhosts 688 4
-  gitignore 683 1            fstab 639 1                dotenv 612 7               gitlink 607 1
+  nix 16545 58               php 13767 65               elixir 12137 42            ruby 11224 39
+  objcpp 10805 24            scala 10142 19             objc 9482 16               java 9431 25
+  bash 7518 25               typescriptreact 6897 24    cpp 6804 21                cmakecppheader 6671 19
+  typescript 6229 24         haskell 6121 11            rust 6022 16               scss 5920 15
+  csharp 5127 17             cmake 5086 7               c 5079 15                  dockerfile 4828 21
+  kotlin 4690 12             groovy 4489 16             cmakecheader 4453 14       css 4162 10
+  python 3838 15             literatehaskell 3782 17    html 3740 20               crontab 3516 16
+  sshdconfig 3426 14         sshconfig 3341 13          makefile 3257 21           go 2867 12
+  lua 2557 5                 racket 2556 6              scheme 2492 6              javascript 2384 14
+  emacslisp 2310 5           lisp 2272 4                powershell 2256 6          nginx 1940 5
+  swift 1783 8               sql 1448 4                 terraform 1409 4           gitattributes 1329 2
+  xml 1319 4                 clojure 1246 3             yaml 1067 2                toml 913 2
+  log 877 2                  pkgconfig 824 1            json 726 1                 knownhosts 688 1
+  gitignore 683 1            fstab 639 1                dotenv 612 1               gitlink 607 1
   cmakecache 568 1           gitmailmap 447 1           ini 435 1                  properties 342 1
   diff 339 1
   # X-178: from its first corpus's cmin (2026-11-19, the git pager's smokes)
-  gitconfig 2945 21
+  gitconfig 2945 5
   # the assembly languages (X-171, X-181, X-183): from their cmin after X-186's 300 s smokes
   # (2026-11-21; 68k's first, X-183's, had counted a third of its edges)
-  x86asm 3645 10             armasm 3141 6              riscvasm 2681 5            mipsasm 2476 5
-  z80asm 3357 7              mos6502asm 3720 8          m68kasm 3999 9
+  x86asm 3645 5              armasm 3141 3              riscvasm 2681 3            mipsasm 2476 2
+  z80asm 3357 3              mos6502asm 3720 4          m68kasm 3999 4
   # X-169: Dart, from its cmin after the 300 s smoke and 900 s follow-up (2026-11-21)
-  dart 2255 12
+  dart 2255 7
   # X-188: from its first corpus's cmin (2026-11-21, after its 300 s smoke)
-  manpage 5124 9
+  manpage 5124 1
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done
+
+# The targets built without trace-compares (F-019): libFuzzer's compare hooks are 51–72% of `tokens`'
+# time (F-018); without them a CI lane runs 2.6–3.5× the inputs and adds 2.4× the edges in 30 minutes
+# (C#, TOML), and the edges only compare-guided runs reached were no more than one more run reaches.
+# They build into target/notc, so neither build's flags rebuild the other's dependencies.
+NOTC=(tokens)
+
+binary() {
+  if (( ${NOTC[(Ie)$1]} )); then
+    print -r -- target/notc/x86_64-unknown-linux-gnu/release/$1
+  else
+    print -r -- target/x86_64-unknown-linux-gnu/release/$1
+  fi
+}
+
+build() {
+  local -a fz=(cargo +nightly fuzz build -s none -a --target x86_64-unknown-linux-gnu)
+  if [[ -n ${1:-} ]]; then
+    if (( ${NOTC[(Ie)$1]} )); then
+      CARGO_TARGET_DIR=$F/target/notc $fz --no-trace-compares $1
+    else
+      $fz $1
+    fi
+    return
+  fi
+  # every target (NOTC's too, unused: `cargo fuzz build` builds them all), and NOTC's beside it
+  local -a pids
+  local t p rc=0
+  $fz & pids+=($!)
+  for t in $NOTC; do CARGO_TARGET_DIR=$F/target/notc $fz --no-trace-compares $t & pids+=($!); done
+  for p in $pids; do wait $p || rc=$?; done
+  return $rc
+}
+
+fuzzers() {
+  local t b
+  local -a parts
+  for t in $@; do
+    b=$(binary $t)
+    [[ -x $b ]] || die "no binary $b"
+    parts+=(-C $F/${b:h} ${b:t})
+  done
+  tar -cf - $parts | zstd -3 -T0 -q > fuzzers.tar.zst
+}
 
 # The target's dictionary, input size and corpus dirs beyond its own, as round 12 ran them
 # (and the differential targets as their docs do).
@@ -156,7 +207,7 @@ run() {
   local t=$1 secs=$2 bin rc=0
   [[ $secs == <1-> ]] || die "seconds: $secs"
   flags $t
-  bin=target/x86_64-unknown-linux-gnu/release/$t
+  bin=$(binary $t)
   if [[ -f target/ci/fuzzers.tar.zst ]]; then
     tar -C target/ci -I zstd -xf target/ci/fuzzers.tar.zst $t
     bin=target/ci/$t
@@ -317,7 +368,7 @@ pack() {
 }
 
 langs() {
-  local bin=${1:-target/x86_64-unknown-linux-gnu/release/tokens}
+  local bin=${1:-$F/$(binary tokens)}
   [[ $bin == /* ]] || bin=$CALLER/$bin
   [[ -x $bin ]] || die "no binary $bin"
   print -n '\0x' > out-lang-probe
@@ -338,5 +389,8 @@ case ${1:-} in
   pack) pack ;;
   langs) langs "${2:-}" ;;
   flags) flags "${2:?target}"; print -rl -- $args -- $dirs ;;
-  *) die "usage: ci.zsh plan|fetch|run|union|pack|langs|flags …" ;;
+  build) build "${2:-}" ;;
+  binary) binary "${2:?target}" ;;
+  fuzzers) shift; (( $# )) || die "fuzzers: no targets"; fuzzers $@ ;;
+  *) die "usage: ci.zsh plan|fetch|run|union|pack|langs|flags|build|binary|fuzzers …" ;;
 esac

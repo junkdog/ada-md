@@ -36,10 +36,10 @@
 # SPEC is a target (`session`: corpus/session) or `tokens:LANG` (corpus/tokens-LANG, run as
 # ADA_FUZZ_LANGS=LANG, as lang.zsh's). A run's lists, logs, picks and replay findings are in target/cover/NAME/
 # until the next (its control files are removed at the end: print's are 5 GB); an input that failed in a
-# replay is a finding (`failed:` in its cover log). Each command builds the target first, as `cargo fuzz run
-# -s none -a` does (COVER_BUILD=0 skips it). Timers: an input times out after COVER_INPUT_TIMEOUT seconds (30,
-# as the rounds' -timeout), and runs over 3072 MB of RSS (COVER_RSS_MB) as an OOM; bench/work.zsh caps the
-# whole job (WORK_FUZZ_MAX).
+# replay is a finding (`failed:` in its cover log). Each command builds the target first, as CI does
+# (`ci.zsh build`: `tokens` without trace-compares, F-019; COVER_BUILD=0 skips it). Timers: an input times
+# out after COVER_INPUT_TIMEOUT seconds (30, as the rounds' -timeout), and runs over 3072 MB of RSS
+# (COVER_RSS_MB) as an OOM; bench/work.zsh caps the whole job (WORK_FUZZ_MAX).
 # e.g. bench/work.zsh fuzz "session cmin" /home/junkdog/opt/dev/rust/ada-md/fuzz/cover.zsh cmin session
 #      bench/work.zsh fuzz "print smoke" /home/junkdog/opt/dev/rust/ada-md/fuzz/cover.zsh smoke print 600 SEEDS
 setopt err_exit pipe_fail no_unset extended_glob
@@ -77,14 +77,14 @@ setup() {
     unset ADA_FUZZ_LANGS
   fi
   corpus=corpus/$name
-  bin=target/x86_64-unknown-linux-gnu/release/$t
+  bin=$(zsh $F/ci.zsh binary $t)
   W=target/cover/$name
   mkdir -p $corpus
 }
 
 build() {
   [[ ${COVER_BUILD:-1} == 0 ]] && return
-  (cd $F/.. && cargo +nightly fuzz build -s none -a $t --target x86_64-unknown-linux-gnu) || die "build"
+  zsh $F/ci.zsh build $t || die "build"
   (cd $F/.. && cargo build -q -p xtask) || die "xtask"
 }
 
