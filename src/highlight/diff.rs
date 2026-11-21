@@ -748,9 +748,9 @@ impl Diff {
         if !minus {
             new -= 1;
         }
-        for i in 0..n {
+        for (i, count) in self.parents.iter_mut().enumerate().take(n) {
             if parents(i) {
-                self.parents[i] -= 1;
+                *count -= 1;
             }
         }
         let done = new == 0 && self.parents.iter().all(|&n| n == 0);
