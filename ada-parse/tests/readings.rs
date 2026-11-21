@@ -493,6 +493,71 @@ fn groovy() {
     readings("groovy", Lang::Groovy, text);
 }
 
+/// Dart's readings (X-169, a scanner of ada's own): a hashbang, `library`, `import` with `as`,
+/// `show`, `hide` and a condition, `part of`, `///` dartdoc with references, code and a fence,
+/// `/** … */` with its own, nested block comments, annotations, Dart 3's class modifiers,
+/// `extension type`, `mixin … on`, `late`, `required`, `static` before a record's type,
+/// getters and setters, `operator`, factories, a generic call against a comparison, cascades
+/// and null-aware operators, a switch expression's arms and a guard's `when` (mockito's
+/// `when(` a call), `async*` and `yield*`, strings of every quote with escapes, `$name` and
+/// `${…}` (braces and strings in it, a triple-quoted one across lines), raw strings, a `'…'`
+/// string left open at its line's end, symbols, numbers with `_`, built-in identifiers as
+/// names, SQL in sqflite's and drift's calls (adjacent strings, an interpolation), regexes in
+/// `RegExp(`. The departures from bat's grammar are pinned in ada-parse's `dart` tests.
+#[test]
+fn dart() {
+    let text = concat!(
+        "#!/usr/bin/env dart\n",
+        "library app;\n",
+        "import 'package:sqflite/sqflite.dart' as sql show Database hide Batch;\n",
+        "import 'stub.dart' if (dart.library.io) 'io.dart';\n",
+        "part of 'main.dart';\n",
+        "/// A shape, see [Circle.area] and `area()`:\n",
+        "/// ```dart\n",
+        "/// final s = Square(2);\n",
+        "/// ```\n",
+        "/* outer /* nested */ still */\n",
+        "/**\n",
+        " * Old style [ref] and `code`.\n",
+        " *     indented code\n",
+        " */\n",
+        "@immutable\n",
+        "sealed class Shape { const Shape(); double get area; }\n",
+        "final class Square extends Shape with Named implements Comparable<Square> {\n",
+        "  Square(this.side, {required this.name, super.key});\n",
+        "  late final double side;\n",
+        "  static (int, int) pair() => (1, 2);\n",
+        "  @override double get area => side * side;\n",
+        "  set scale(double f) { side *= f; }\n",
+        "  bool operator ==(Object o) => o is Square && o.side == side;\n",
+        "  factory Square.unit() => Square(1);\n",
+        "}\n",
+        "extension type Id(int v) {}\n",
+        "mixin Named on Object { String get name; }\n",
+        "Stream<int> count(int n) async* { for (var i = 0; i < n; i++) yield i; }\n",
+        "Future<void> main() async {\n",
+        "  final xs = <int>[1_000, 0xFF, .5e-3]..add(1)..sort();\n",
+        "  final first = xs.cast<num>().first, ok = a<b && c>d;\n",
+        "  var label = switch (shape) { Square s when s.side > 1 => 'big', _ => 'small' };\n",
+        "  when(mock.fetch()).thenReturn(null);\n",
+        "  print('Hi $name, ${xs.map((e) { return '<$e>'; }).join(\", \")} \\u{1F600}\\x41');\n",
+        "  final raw = r'C:\\path\\$notInterpolated';\n",
+        "  final open = 'left open\n",
+        "  final multi = '''\n",
+        "    ${user?.name ?? 'anon'} wrote\n",
+        "  ''';\n",
+        "  final sym = #foo.bar; final set = {1}; x.set(1); f(type: t, sync: true);\n",
+        "  await db.rawQuery(\n",
+        "    'SELECT * FROM $table '\n",
+        "    'WHERE id = ?', [id]);\n",
+        "  await customStatement('''DELETE FROM ${t.name} -- all''');\n",
+        "  final re = RegExp(r'^(\\d+)\\.(?<frac>\\d*)$', caseSensitive: false);\n",
+        "  try { await io(); } on FormatException catch (e) { rethrow; }\n",
+        "}\n",
+    );
+    readings("dart", Lang::Dart, text);
+}
+
 /// Elixir's readings (X-138, a scanner of ada's own): a hashbang, a module's head, `@moduledoc`
 /// and `@doc` (a heredoc, a `~S` one, a string, `false`), attributes, `use`/`import`/`alias`,
 /// function heads with guards, defaults and `do:`, a head across lines, a protocol's head without

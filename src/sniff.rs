@@ -123,6 +123,7 @@ fn shebang(first: &str) -> Option<Lang> {
     let prog = prog.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
     Some(match prog {
         "groovy" => Lang::Groovy,
+        "dart" => Lang::Dart,
         "kotlin" | "kotlinc" | "kscript" => Lang::Kotlin,
         "scala" | "amm" | "scala-cli" => Lang::Scala,
         "elixir" => Lang::Elixir,

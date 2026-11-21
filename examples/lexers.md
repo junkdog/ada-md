@@ -641,6 +641,32 @@ node('linux') {
 }
 ```
 
+## Dart
+
+```dart
+import 'package:sqflite/sqflite.dart';
+
+/// Greets users, stored and searched; see [Database.rawQuery] and `greet()`.
+sealed class Greeter {
+  const Greeter(this.name, {required this.times});
+  final String name;
+  final int times;
+
+  String get greeting => 'Hello, ${name.toUpperCase()}! ' * times + '($name)';
+
+  Future<List<String>> findUsers(Database db, int age) async {
+    final rows = await db.rawQuery(
+      'SELECT name FROM users '
+      'WHERE age > ? ORDER BY name', [age]);
+    return [for (final r in rows) r['name'] as String];
+  }
+}
+
+final emails = RegExp(r'(\w+)@(\w+)\.com');
+final ok = emails.hasMatch('ada@example.com') ? 'valid' : 'invalid';
+final label = switch (1_000) { int n when n > 999 => 'big', _ => 'small' };
+```
+
 ## Elixir
 
 ```elixir

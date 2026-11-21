@@ -61,6 +61,8 @@ LANGS=(
   # (2026-11-21; 68k's first, X-183's, had counted a third of its edges)
   x86asm 3645 10             armasm 3141 6              riscvasm 2681 5            mipsasm 2476 5
   z80asm 3357 7              mos6502asm 3720 8          m68kasm 3999 9
+  # X-169: Dart, from its cmin after the 300 s smoke and 900 s follow-up (2026-11-21)
+  dart 2255 12
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done

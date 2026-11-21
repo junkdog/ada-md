@@ -271,7 +271,7 @@ are reported with the file, line and column.
 
 Code and config files (`main.rs`, `Cargo.lock`, `Makefile`, `.zshrc`, or a `#!` first line) are
 highlighted, with the git gutter, search, `e` and `--line` working on their lines. ada's own lexers
-cover 69 languages, plus SQL and regexes inside other languages' strings; the other languages bat
+cover 70 languages, plus SQL and regexes inside other languages' strings; the other languages bat
 knows open plain, as does other text. Binary files aren't shown. The lexers are a library on
 crates.io, [ada-parse](https://crates.io/crates/ada-parse), versioned with ada.
 

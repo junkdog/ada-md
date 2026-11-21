@@ -130,6 +130,8 @@ pub enum Lang {
     Scala,
     /// bat's `Groovy`: Groovy's files, Gradle's build scripts, Jenkinsfiles.
     Groovy,
+    /// bat's `Dart` (X-169).
+    Dart,
     /// bat's `Haskell`.
     Haskell,
     /// bat's `Literate Haskell`: prose around Haskell's code (Bird tracks, `\begin{code}`,
@@ -496,6 +498,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::Nix, &["nix"]),
     (Lang::Scala, &["scala", "sbt", "sc"]),
     (Lang::Groovy, &["groovy", "gvy", "gradle", "jenkinsfile"]),
+    (Lang::Dart, &["dart"]),
     (Lang::Haskell, &["hs"]),
     (Lang::LiterateHaskell, &["lhs"]),
     (Lang::Elixir, &["ex", "exs"]),
@@ -607,6 +610,7 @@ impl Lang {
         Lang::Nix,
         Lang::Scala,
         Lang::Groovy,
+        Lang::Dart,
         Lang::Haskell,
         Lang::LiterateHaskell,
         Lang::Elixir,
@@ -682,6 +686,7 @@ impl Lang {
             Lang::Nix => "Nix",
             Lang::Scala => "Scala",
             Lang::Groovy => "Groovy",
+            Lang::Dart => "Dart",
             Lang::Haskell => "Haskell",
             Lang::LiterateHaskell => "Literate Haskell",
             Lang::Elixir => "Elixir",
@@ -767,6 +772,7 @@ impl Lang {
             Lang::Nix => "source.nix",
             Lang::Scala => "source.scala",
             Lang::Groovy => "source.groovy",
+            Lang::Dart => "source.dart",
             Lang::Haskell => "source.haskell",
             Lang::LiterateHaskell => "text.tex.latex.haskell",
             Lang::Elixir => "source.elixir",
@@ -837,6 +843,7 @@ impl Lang {
             Lang::Nix => crate::nix::scopes(kind),
             Lang::Scala => crate::scala::scopes(kind),
             Lang::Groovy => crate::groovy::scopes(kind),
+            Lang::Dart => crate::dart::scopes(kind),
             Lang::Haskell | Lang::LiterateHaskell => crate::haskell::scopes(kind),
             Lang::Elixir => crate::elixir::scopes(kind),
             Lang::Ruby => crate::ruby::scopes(kind),

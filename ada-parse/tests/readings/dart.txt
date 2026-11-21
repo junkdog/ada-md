@@ -1,0 +1,382 @@
+# Dart: ada-parse/tests/readings.rs, dart
+   1 | #!/usr/bin/env dart
+       "#!/usr/bin/env dart" meta.preprocessor.script.dart
+   2 | library app;
+       "library" keyword.other.import.dart
+       ";" punctuation.terminator.dart
+   3 | import 'package:sqflite/sqflite.dart' as sql show Database hide Batch;
+       "import" keyword.other.import.dart
+       "'package:sqflite/sqflite.dart'" string.interpolated.single.dart
+       "as" keyword.other.import.dart
+       "show" keyword.other.import.dart
+       "Database" support.class.dart
+       "hide" keyword.other.import.dart
+       "Batch" support.class.dart
+       ";" punctuation.terminator.dart
+   4 | import 'stub.dart' if (dart.library.io) 'io.dart';
+       "import" keyword.other.import.dart
+       "'stub.dart'" string.interpolated.single.dart
+       "if" keyword.control.dart
+       "." punctuation.dot.dart
+       "." punctuation.dot.dart
+       "'io.dart'" string.interpolated.single.dart
+       ";" punctuation.terminator.dart
+   5 | part of 'main.dart';
+       "part" keyword.other.import.dart
+       "of" keyword.other.import.dart
+       "'main.dart'" string.interpolated.single.dart
+       ";" punctuation.terminator.dart
+   6 | /// A shape, see [Circle.area] and `area()`:
+       "/// A shape, see " comment.block.documentation.dart
+       "[Circle.area]" comment.block.documentation.dart variable.name.source.dart
+       " and " comment.block.documentation.dart
+       "`area()`" comment.block.documentation.dart variable.other.source.dart
+       ":" comment.block.documentation.dart
+   7 | /// ```dart
+       "/// ```dart" comment.block.documentation.dart
+   8 | /// final s = Square(2);
+       "///" comment.block.documentation.dart
+       " final s = Square(2);" comment.block.documentation.dart variable.other.source.dart
+   9 | /// ```
+       "/// ```" comment.block.documentation.dart
+  10 | /* outer /* nested */ still */
+       "/* outer /* nested */ still */" comment.block.dart
+  11 | /**
+       "/**" comment.block.documentation.dart
+  12 |  * Old style [ref] and `code`.
+       " * Old style " comment.block.documentation.dart
+       "[ref]" comment.block.documentation.dart variable.name.source.dart
+       " and " comment.block.documentation.dart
+       "`code`" comment.block.documentation.dart variable.other.source.dart
+       "." comment.block.documentation.dart
+  13 |  *     indented code
+       " * " comment.block.documentation.dart
+       "    indented code" comment.block.documentation.dart variable.other.source.dart
+  14 |  */
+       " */" comment.block.documentation.dart
+  15 | @immutable
+       "@immutable" storage.type.annotation.dart
+  16 | sealed class Shape { const Shape(); double get area; }
+       "sealed" keyword.declaration.dart
+       "class" keyword.declaration.dart
+       "Shape" support.class.dart
+       "const" storage.modifier.dart
+       "Shape" support.class.dart
+       ";" punctuation.terminator.dart
+       "double" support.class.dart
+       "get" keyword.declaration.dart
+       "area" entity.name.function.dart
+       ";" punctuation.terminator.dart
+  17 | final class Square extends Shape with Named implements Comparable<Square> {
+       "final" storage.modifier.dart
+       "class" keyword.declaration.dart
+       "Square" support.class.dart
+       "extends" keyword.declaration.dart
+       "Shape" support.class.dart
+       "with" keyword.declaration.dart
+       "Named" support.class.dart
+       "implements" keyword.declaration.dart
+       "Comparable" support.class.dart
+       "<" keyword.operator.comparison.dart
+       "Square" support.class.dart
+       ">" keyword.operator.comparison.dart
+  18 |   Square(this.side, {required this.name, super.key});
+       "Square" support.class.dart
+       "this" variable.language.dart
+       "." punctuation.dot.dart
+       "," punctuation.comma.dart
+       "required" storage.modifier.dart
+       "this" variable.language.dart
+       "." punctuation.dot.dart
+       "," punctuation.comma.dart
+       "super" variable.language.dart
+       "." punctuation.dot.dart
+       ";" punctuation.terminator.dart
+  19 |   late final double side;
+       "late" storage.modifier.dart
+       "final" storage.modifier.dart
+       "double" support.class.dart
+       ";" punctuation.terminator.dart
+  20 |   static (int, int) pair() => (1, 2);
+       "static" storage.modifier.dart
+       "int" support.class.dart
+       "," punctuation.comma.dart
+       "int" support.class.dart
+       "pair" entity.name.function.dart
+       "=>" keyword.operator.closure.dart
+       "1" constant.numeric.dart
+       "," punctuation.comma.dart
+       "2" constant.numeric.dart
+       ";" punctuation.terminator.dart
+  21 |   @override double get area => side * side;
+       "@override" storage.type.annotation.dart
+       "double" support.class.dart
+       "get" keyword.declaration.dart
+       "area" entity.name.function.dart
+       "=>" keyword.operator.closure.dart
+       "*" keyword.operator.arithmetic.dart
+       ";" punctuation.terminator.dart
+  22 |   set scale(double f) { side *= f; }
+       "set" keyword.declaration.dart
+       "scale" entity.name.function.dart
+       "double" support.class.dart
+       "*=" keyword.operator.assignment.arithmetic.dart
+       ";" punctuation.terminator.dart
+  23 |   bool operator ==(Object o) => o is Square && o.side == side;
+       "bool" support.class.dart
+       "operator" keyword.declaration.dart
+       "==" keyword.operator.comparison.dart
+       "Object" support.class.dart
+       "=>" keyword.operator.closure.dart
+       "is" keyword.operator.dart
+       "Square" support.class.dart
+       "&&" keyword.operator.logical.dart
+       "." punctuation.dot.dart
+       "==" keyword.operator.comparison.dart
+       ";" punctuation.terminator.dart
+  24 |   factory Square.unit() => Square(1);
+       "factory" keyword.declaration.dart
+       "Square" support.class.dart
+       "." punctuation.dot.dart
+       "unit" entity.name.function.dart
+       "=>" keyword.operator.closure.dart
+       "Square" support.class.dart
+       "1" constant.numeric.dart
+       ";" punctuation.terminator.dart
+  25 | }
+  26 | extension type Id(int v) {}
+       "extension" keyword.declaration.dart
+       "type" keyword.declaration.dart
+       "Id" support.class.dart
+       "int" support.class.dart
+  27 | mixin Named on Object { String get name; }
+       "mixin" keyword.declaration.dart
+       "Named" support.class.dart
+       "on" keyword.control.catch-exception.dart
+       "Object" support.class.dart
+       "String" support.class.dart
+       "get" keyword.declaration.dart
+       "name" entity.name.function.dart
+       ";" punctuation.terminator.dart
+  28 | Stream<int> count(int n) async* { for (var i = 0; i < n; i++) yield i; }
+       "Stream" support.class.dart
+       "<" keyword.operator.comparison.dart
+       "int" support.class.dart
+       ">" keyword.operator.comparison.dart
+       "count" entity.name.function.dart
+       "int" support.class.dart
+       "async" keyword.control.dart
+       "*" keyword.operator.arithmetic.dart
+       "for" keyword.control.dart
+       "var" storage.type.primitive.dart
+       "=" keyword.operator.assignment.dart
+       "0" constant.numeric.dart
+       ";" punctuation.terminator.dart
+       "<" keyword.operator.comparison.dart
+       ";" punctuation.terminator.dart
+       "++" keyword.operator.increment-decrement.dart
+       "yield" keyword.control.dart
+       ";" punctuation.terminator.dart
+  29 | Future<void> main() async {
+       "Future" support.class.dart
+       "<" keyword.operator.comparison.dart
+       "void" storage.type.primitive.dart
+       ">" keyword.operator.comparison.dart
+       "main" entity.name.function.dart
+       "async" keyword.control.dart
+  30 |   final xs = <int>[1_000, 0xFF, .5e-3]..add(1)..sort();
+       "final" storage.modifier.dart
+       "=" keyword.operator.assignment.dart
+       "<" keyword.operator.comparison.dart
+       "int" support.class.dart
+       ">" keyword.operator.comparison.dart
+       "1_000" constant.numeric.dart
+       "," punctuation.comma.dart
+       "0xFF" constant.numeric.dart
+       "," punctuation.comma.dart
+       ".5e-3" constant.numeric.dart
+       ".." punctuation.dot.dart
+       "add" entity.name.function.dart
+       "1" constant.numeric.dart
+       ".." punctuation.dot.dart
+       "sort" entity.name.function.dart
+       ";" punctuation.terminator.dart
+  31 |   final first = xs.cast<num>().first, ok = a<b && c>d;
+       "final" storage.modifier.dart
+       "=" keyword.operator.assignment.dart
+       "." punctuation.dot.dart
+       "cast" entity.name.function.dart
+       "<" keyword.operator.comparison.dart
+       "num" support.class.dart
+       ">" keyword.operator.comparison.dart
+       "." punctuation.dot.dart
+       "," punctuation.comma.dart
+       "=" keyword.operator.assignment.dart
+       "<" keyword.operator.comparison.dart
+       "&&" keyword.operator.logical.dart
+       ">" keyword.operator.comparison.dart
+       ";" punctuation.terminator.dart
+  32 |   var label = switch (shape) { Square s when s.side > 1 => 'big', _ => 'small' };
+       "var" storage.type.primitive.dart
+       "=" keyword.operator.assignment.dart
+       "switch" keyword.control.dart
+       "Square" support.class.dart
+       "when" keyword.control.dart
+       "." punctuation.dot.dart
+       ">" keyword.operator.comparison.dart
+       "1" constant.numeric.dart
+       "=>" keyword.operator.closure.dart
+       "'big'" string.interpolated.single.dart
+       "," punctuation.comma.dart
+       "=>" keyword.operator.closure.dart
+       "'small'" string.interpolated.single.dart
+       ";" punctuation.terminator.dart
+  33 |   when(mock.fetch()).thenReturn(null);
+       "when" entity.name.function.dart
+       "." punctuation.dot.dart
+       "fetch" entity.name.function.dart
+       "." punctuation.dot.dart
+       "thenReturn" entity.name.function.dart
+       "null" constant.language.dart
+       ";" punctuation.terminator.dart
+  34 |   print('Hi $name, ${xs.map((e) { return '<$e>'; }).join(", ")} \u{1F600}\x41');
+       "print" entity.name.function.dart
+       "'Hi $" string.interpolated.single.dart
+       "name" string.interpolated.single.dart variable.parameter.dart
+       ", ${" string.interpolated.single.dart
+       "xs" string.interpolated.single.dart variable.parameter.dart
+       "." punctuation.dot.dart
+       "map" entity.name.function.dart
+       "e" string.interpolated.single.dart variable.parameter.dart
+       "return" keyword.control.dart
+       "'<$" string.interpolated.single.dart
+       "e" string.interpolated.single.dart variable.parameter.dart
+       ">'" string.interpolated.single.dart
+       ";" punctuation.terminator.dart
+       "." punctuation.dot.dart
+       "join" entity.name.function.dart
+       "\", \"" string.interpolated.double.dart
+       "} " string.interpolated.single.dart
+       "\\u{1F600}\\x41" string.interpolated.single.dart constant.character.escape.dart
+       "'" string.interpolated.single.dart
+       ";" punctuation.terminator.dart
+  35 |   final raw = r'C:\path\$notInterpolated';
+       "final" storage.modifier.dart
+       "=" keyword.operator.assignment.dart
+       "r'C:\\path\\$notInterpolated'" string.quoted.single.dart
+       ";" punctuation.terminator.dart
+  36 |   final open = 'left open
+       "final" storage.modifier.dart
+       "=" keyword.operator.assignment.dart
+       "'left open" string.interpolated.single.dart
+  37 |   final multi = '''
+       "final" storage.modifier.dart
+       "=" keyword.operator.assignment.dart
+       "'''" string.interpolated.triple.single.dart
+  38 |     ${user?.name ?? 'anon'} wrote
+       "    ${" string.interpolated.triple.single.dart
+       "user" string.interpolated.triple.single.dart variable.parameter.dart
+       "?" keyword.operator.ternary.dart
+       "." punctuation.dot.dart
+       "name" string.interpolated.triple.single.dart variable.parameter.dart
+       "??" keyword.operator.ternary.dart
+       "'anon'" string.interpolated.single.dart
+       "} wrote" string.interpolated.triple.single.dart
+  39 |   ''';
+       "  '''" string.interpolated.triple.single.dart
+       ";" punctuation.terminator.dart
+  40 |   final sym = #foo.bar; final set = {1}; x.set(1); f(type: t, sync: true);
+       "final" storage.modifier.dart
+       "=" keyword.operator.assignment.dart
+       "#foo.bar" constant.other.symbol.dart
+       ";" punctuation.terminator.dart
+       "final" storage.modifier.dart
+       "=" keyword.operator.assignment.dart
+       "1" constant.numeric.dart
+       ";" punctuation.terminator.dart
+       "." punctuation.dot.dart
+       "set" entity.name.function.dart
+       "1" constant.numeric.dart
+       ";" punctuation.terminator.dart
+       "f" entity.name.function.dart
+       ":" keyword.operator.ternary.dart
+       "," punctuation.comma.dart
+       ":" keyword.operator.ternary.dart
+       "true" constant.language.dart
+       ";" punctuation.terminator.dart
+  41 |   await db.rawQuery(
+       "await" keyword.control.dart
+       "." punctuation.dot.dart
+       "rawQuery" entity.name.function.dart
+  42 |     'SELECT * FROM $table '
+       "'" string.interpolated.single.dart
+       "SELECT" string.interpolated.single.dart keyword.other.DML.sql
+       " " string.interpolated.single.dart
+       "*" string.interpolated.single.dart variable.language.star.sql
+       " " string.interpolated.single.dart
+       "FROM" string.interpolated.single.dart keyword.other.DML.sql
+       " $" string.interpolated.single.dart
+       "table" string.interpolated.single.dart variable.parameter.dart
+       " '" string.interpolated.single.dart
+  43 |     'WHERE id = ?', [id]);
+       "'" string.interpolated.single.dart
+       "WHERE" string.interpolated.single.dart keyword.other.DML.sql
+       " id " string.interpolated.single.dart
+       "=" string.interpolated.single.dart keyword.operator.comparison.sql
+       " " string.interpolated.single.dart
+       "?" string.interpolated.single.dart constant.other.placeholder.sql
+       "'" string.interpolated.single.dart
+       "," punctuation.comma.dart
+       ";" punctuation.terminator.dart
+  44 |   await customStatement('''DELETE FROM ${t.name} -- all''');
+       "await" keyword.control.dart
+       "customStatement" entity.name.function.dart
+       "'''" string.interpolated.triple.single.dart
+       "DELETE" string.interpolated.triple.single.dart keyword.other.DML.sql
+       " " string.interpolated.triple.single.dart
+       "FROM" string.interpolated.triple.single.dart keyword.other.DML.sql
+       " ${" string.interpolated.triple.single.dart
+       "t" string.interpolated.triple.single.dart variable.parameter.dart
+       "." punctuation.dot.dart
+       "name" string.interpolated.triple.single.dart variable.parameter.dart
+       "} " string.interpolated.triple.single.dart
+       "--" string.interpolated.triple.single.dart comment.line.double-dash.sql punctuation.definition.comment.sql
+       " all" string.interpolated.triple.single.dart comment.line.double-dash.sql
+       "'''" string.interpolated.triple.single.dart
+       ";" punctuation.terminator.dart
+  45 |   final re = RegExp(r'^(\d+)\.(?<frac>\d*)$', caseSensitive: false);
+       "final" storage.modifier.dart
+       "=" keyword.operator.assignment.dart
+       "RegExp" support.class.dart
+       "r'" string.quoted.single.dart
+       "^" string.quoted.single.dart keyword.control.anchor.regexp
+       "(" string.quoted.single.dart punctuation.definition.group.begin.regexp
+       "\\d" string.quoted.single.dart constant.other.character-class.escape.backslash.regexp
+       "+" string.quoted.single.dart keyword.operator.quantifier.regexp
+       ")" string.quoted.single.dart punctuation.definition.group.end.regexp
+       "\\." string.quoted.single.dart constant.character.escape.backslash.regexp
+       "(" string.quoted.single.dart punctuation.definition.group.begin.regexp
+       "?" string.quoted.single.dart punctuation.definition.group.begin.regexp
+       "<" string.quoted.single.dart punctuation.definition.group.named.begin.regexp
+       "frac" string.quoted.single.dart entity.name.other.group.regexp
+       ">" string.quoted.single.dart punctuation.definition.group.named.end.regexp
+       "\\d" string.quoted.single.dart constant.other.character-class.escape.backslash.regexp
+       "*" string.quoted.single.dart keyword.operator.quantifier.regexp
+       ")" string.quoted.single.dart punctuation.definition.group.end.regexp
+       "$" string.quoted.single.dart keyword.control.anchor.regexp
+       "'" string.quoted.single.dart
+       "," punctuation.comma.dart
+       ":" keyword.operator.ternary.dart
+       "false" constant.language.dart
+       ";" punctuation.terminator.dart
+  46 |   try { await io(); } on FormatException catch (e) { rethrow; }
+       "try" keyword.control.catch-exception.dart
+       "await" keyword.control.dart
+       "io" entity.name.function.dart
+       ";" punctuation.terminator.dart
+       "on" keyword.control.catch-exception.dart
+       "FormatException" support.class.dart
+       "catch" keyword.control.catch-exception.dart
+       "rethrow" keyword.control.catch-exception.dart
+       ";" punctuation.terminator.dart
+  47 | }

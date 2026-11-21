@@ -81,6 +81,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("scala", Lang::Scala),
     // X-135's corpus: 33 Groovy repositories' files (Gradle, Jenkins, Grails, Spock…)
     ("groovy", Lang::Groovy),
+    // X-169's corpus: 42 Dart repositories' files (the SDK, Flutter, dart-lang's packages, apps)
+    ("dart", Lang::Dart),
     // X-138's corpus: 49 Elixir repositories' files (Elixir, Phoenix, Ecto, Livebook, Plausible…)
     ("elixir", Lang::Elixir),
     // X-136's corpus: 42 Haskell repositories' files

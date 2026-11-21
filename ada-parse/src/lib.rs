@@ -34,6 +34,7 @@ mod clike;
 mod crontab;
 mod cs;
 mod css;
+mod dart;
 mod diff;
 mod dockerfile;
 mod dotenv;
@@ -585,6 +586,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Nix => (nix::block_runs, nix::line_runs),
         Lang::Scala => (scala::block_runs, scala::line_runs),
         Lang::Groovy => (groovy::block_runs, groovy::line_runs),
+        Lang::Dart => (dart::block_runs, dart::line_runs),
         Lang::Haskell => (haskell::block_runs, haskell::line_runs),
         Lang::LiterateHaskell => (haskell::lhs::block_runs, haskell::lhs::line_runs),
         Lang::Elixir => (elixir::block_runs, elixir::line_runs),
@@ -637,6 +639,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Nix if SPANS => nix::block,
         Lang::Scala if SPANS => scala::block,
         Lang::Groovy if SPANS => groovy::block,
+        Lang::Dart if SPANS => dart::block,
         Lang::Haskell if SPANS => haskell::block,
         Lang::LiterateHaskell if SPANS => haskell::lhs::block,
         Lang::Elixir if SPANS => elixir::block,
@@ -921,6 +924,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Scala => out!(scala::line),
         Lang::Groovy if !SPANS => |_, _, _| unreachable!("Groovy's runs come from its own scan"),
         Lang::Groovy => out!(groovy::line),
+        Lang::Dart if !SPANS => |_, _, _| unreachable!("Dart's runs come from its own scan"),
+        Lang::Dart => out!(dart::line),
         Lang::Haskell if !SPANS => |_, _, _| unreachable!("Haskell's runs come from its own scan"),
         Lang::Haskell => out!(haskell::line),
         Lang::LiterateHaskell if !SPANS => {
