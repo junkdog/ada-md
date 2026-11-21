@@ -716,7 +716,7 @@ mod tests {
             (
                 "git blame -s -f",
                 "34ff1b5 README.md  1) # ada\n675afe5 README.md  2) ## heading\n",
-                blamed(None),
+                blamed(Some(Lang::Markdown)),
             ),
             (
                 "git blame -s, numbers of one digit",

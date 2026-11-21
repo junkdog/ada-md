@@ -109,7 +109,12 @@ impl FileType {
         }
         let named = highlight::named_language(path);
         if let Some(Some(lang)) = named {
-            return Some(FileType::Text { lang: Some(lang) });
+            // markdown that only its language's table names (`README.md.orig`, X-189) still renders
+            return Some(if lang == "Markdown" {
+                FileType::Markdown
+            } else {
+                FileType::Text { lang: Some(lang) }
+            });
         }
         let plain = ext.is_some_and(|e| PLAIN.iter().any(|p| e.eq_ignore_ascii_case(p)));
         if plain {

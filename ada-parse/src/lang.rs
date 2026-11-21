@@ -25,6 +25,8 @@ pub enum Lang {
     Diff,
     /// bat's `Manpage`: a man page as `man` shows it (X-188).
     Manpage,
+    /// bat's `Markdown`: markdown as source, a fence's code in its language (X-189).
+    Markdown,
     /// bat's `INI`.
     Ini,
     /// bat's `TOML`.
@@ -332,6 +334,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     ),
     (Lang::Diff, &["diff", "patch"]),
     (Lang::Manpage, &["man"]),
+    (Lang::Markdown, &["md", "mdown", "markdown", "markdn"]),
     (
         Lang::Ini,
         &[
@@ -567,6 +570,7 @@ impl Lang {
         Lang::Bash,
         Lang::Diff,
         Lang::Manpage,
+        Lang::Markdown,
         Lang::Ini,
         Lang::Toml,
         Lang::Xml,
@@ -644,6 +648,7 @@ impl Lang {
             Lang::Bash => "Bourne Again Shell (bash)",
             Lang::Diff => "Diff",
             Lang::Manpage => "Manpage",
+            Lang::Markdown => "Markdown",
             Lang::Ini => "INI",
             Lang::Toml => "TOML",
             Lang::Xml => "XML",
@@ -731,6 +736,7 @@ impl Lang {
             Lang::Bash => "source.shell.bash",
             Lang::Diff => "source.diff",
             Lang::Manpage => "source.man",
+            Lang::Markdown => "text.html.markdown",
             Lang::Ini => "source.ini",
             Lang::Toml => "source.toml",
             Lang::Xml => "text.xml",
@@ -877,6 +883,7 @@ impl Lang {
             Lang::GitConfig => crate::git_config::scopes(kind),
             Lang::Nginx => crate::nginx::scopes(kind),
             Lang::Manpage => crate::man::scopes(kind),
+            Lang::Markdown => crate::markdown::scopes(kind),
             _ => self
                 .kinds()
                 .get(usize::from(kind))

@@ -772,6 +772,9 @@ pub struct ParseRules {
     /// The theme, and whether `rules` has rules [`RESOLVED`] lacks.
     theme: u64,
     fresh: bool,
+    /// Other languages' rules for their text in this one's (X-189: a markdown fence's code,
+    /// `ada_parse::Rules::guest`), each from [`RESOLVED`] and kept there with this one's.
+    guests: Vec<ParseRules>,
 }
 
 impl ParseRules {
@@ -792,6 +795,7 @@ impl ParseRules {
             start: Arc::new([]),
             theme,
             fresh: false,
+            guests: Vec::new(),
         }
     }
 
@@ -807,13 +811,18 @@ impl ParseRules {
                 start: Arc::clone(r),
                 theme,
                 fresh: false,
+                guests: Vec::new(),
             },
             None => Self::lazy(lang, theme),
         }
     }
 
-    /// Hand the rules this block resolved to the blocks after it ([`RESOLVED`]).
+    /// Hand the rules this block resolved to the blocks after it ([`RESOLVED`]), its guests'
+    /// too.
     fn keep(&mut self) {
+        for g in &mut self.guests {
+            g.keep();
+        }
         if !std::mem::take(&mut self.fresh) {
             return;
         }
@@ -1025,6 +1034,22 @@ impl ada_parse::Rules for Resolving<'_> {
 
     fn resolve(&mut self, kind: u16) -> Rule {
         self.rules.resolve_into(kind, self.theme)
+    }
+
+    fn guest(&mut self, lang: Lang, f: &mut dyn FnMut(&mut dyn ada_parse::Rules)) -> bool {
+        let guests = &mut self.rules.guests;
+        let i = match guests.iter().position(|g| g.lang == lang) {
+            Some(i) => i,
+            None => {
+                guests.push(ParseRules::cached(lang, self.theme.id));
+                guests.len() - 1
+            }
+        };
+        f(&mut Resolving {
+            rules: &mut guests[i],
+            theme: self.theme,
+        });
+        true
     }
 }
 
@@ -3031,7 +3056,7 @@ mod tests {
 
     /// PGR-006: a rename to another extension reads each side in its own file's language,
     /// a context line in the new one's; a file of no language ada lexes is tinted, its text
-    /// plain.
+    /// plain; a markdown file's lines are markdown's (X-189).
     #[test]
     fn a_renames_sides_read_in_their_own_languages() {
         let st = SyntaxTheme::new(&Theme::builtin().syntax);
@@ -3047,7 +3072,7 @@ mod tests {
         assert_eq!(spans.tint(7), Some(Tint::Deleted));
         streams_as_whole(text, &st);
 
-        let text = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+        let text = "diff --git a/README.adoc b/README.adoc\n--- a/README.adoc\n+++ b/README.adoc\n\
                     @@ -1 +1 @@\n-# Old\n+# New\n";
         let spans = highlight(1, "diff", text, &st);
         let mark = |line: &str| highlight(1, "diff", line, &st).line(0)[0];
@@ -3058,6 +3083,13 @@ mod tests {
         assert_eq!(spans.line(4), [mark("-x")]);
         assert_eq!(spans.line(5), [mark("+x")]);
         assert_eq!(changed(spans.words(5)), [(3, 6)]);
+
+        let text = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n\
+                    @@ -1,3 +1,3 @@\n # Title\n-**old**\n+*new*\n";
+        let spans = highlight(1, "diff", text, &st);
+        assert_eq!(past_mark(spans.line(4)), lang("markdown", "# Title"));
+        assert_eq!(past_mark(spans.line(6)), lang("markdown", "*new*"));
+        assert!(lang("markdown", "*new*").len() > 1, "markdown's colors");
     }
 
     /// PGR-006: a hunk that counts more lines than it has (a patch edited by hand) ends at the

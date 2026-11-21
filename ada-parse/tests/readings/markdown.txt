@@ -1,0 +1,199 @@
+# Markdown: ada-parse/tests/readings.rs, markdown
+   1 | ---
+       "---" punctuation.section.block.begin.frontmatter.markdown
+   2 | title: Notes
+   3 | ---
+       "---" punctuation.section.block.end.frontmatter.markdown
+   4 | # Title #
+       "#" markup.heading.1.markdown punctuation.definition.heading.begin.markdown
+       " " markup.heading.1.markdown
+       "Title" markup.heading.1.markdown entity.name.section.markdown
+       " " markup.heading.1.markdown
+       "#" markup.heading.1.markdown punctuation.definition.heading.end.markdown
+   5 | Setext
+   6 | ======
+       "======" markup.heading.1.setext.markdown punctuation.definition.heading.setext.markdown
+   7 | ####### not a heading
+   8 | 
+   9 | - item **bold** and _it_ ~~gone~~
+       "-" markup.list.unnumbered.bullet.markdown punctuation.definition.list_item.markdown
+       "**" markup.bold.markdown punctuation.definition.bold.begin.markdown
+       "bold" markup.bold.markdown
+       "**" markup.bold.markdown punctuation.definition.bold.end.markdown
+       "_" markup.italic.markdown punctuation.definition.italic.begin.markdown
+       "it" markup.italic.markdown
+       "_" markup.italic.markdown punctuation.definition.italic.end.markdown
+       "~~" markup.strikethrough.markdown-gfm punctuation.definition.strikethrough.begin.markdown
+       "gone" markup.strikethrough.markdown-gfm
+       "~~" markup.strikethrough.markdown-gfm punctuation.definition.strikethrough.end.markdown
+  10 |   - nested `code`
+       "-" markup.list.unnumbered.bullet.markdown punctuation.definition.list_item.markdown
+       "`" markup.raw.inline.markdown punctuation.definition.raw.begin.markdown
+       "code" markup.raw.inline.markdown
+       "`" markup.raw.inline.markdown punctuation.definition.raw.end.markdown
+  11 | 1. one
+       "1" markup.list.numbered.bullet.markdown
+       "." markup.list.numbered.bullet.markdown punctuation.definition.list_item.markdown
+  12 | 2) two
+       "2" markup.list.numbered.bullet.markdown
+       ")" markup.list.numbered.bullet.markdown punctuation.definition.list_item.markdown
+  13 | * [ ] task
+       "*" markup.list.unnumbered.bullet.markdown punctuation.definition.list_item.markdown
+  14 | 
+  15 | > quote *em
+       ">" markup.quote.markdown punctuation.definition.blockquote.markdown
+       "*" markup.italic.markdown punctuation.definition.italic.begin.markdown
+       "em" markup.italic.markdown
+  16 | > across* lines
+       ">" markup.quote.markdown punctuation.definition.blockquote.markdown
+       " across" markup.italic.markdown
+       "*" markup.italic.markdown punctuation.definition.italic.end.markdown
+  17 | 
+  18 | ***
+       "***" meta.separator.thematic-break.markdown punctuation.definition.thematic-break.markdown
+  19 | 
+  20 |     indented code
+       "    indented code" markup.raw.block.markdown
+  21 | 
+  22 | snake_case_name, 2*3*4, IR_*LOAD, ***both*** and *.md files
+       "*" markup.italic.markdown punctuation.definition.italic.begin.markdown
+       "3" markup.italic.markdown
+       "*" markup.italic.markdown punctuation.definition.italic.end.markdown
+       "*" markup.italic.markdown punctuation.definition.italic.begin.markdown
+       "**" markup.italic.markdown markup.bold.markdown punctuation.definition.bold.begin.markdown
+       "both" markup.italic.markdown markup.bold.markdown
+       "**" markup.italic.markdown markup.bold.markdown punctuation.definition.bold.end.markdown
+       "*" markup.italic.markdown punctuation.definition.italic.end.markdown
+  23 | [link](https://x.y "Title") [ref][r] [![badge](b.svg)](https://c.d) [^1]
+       "[" punctuation.definition.link.begin.markdown
+       "]" punctuation.definition.link.end.markdown
+       "(" punctuation.definition.metadata.begin.markdown
+       "https://x.y" markup.underline.link.markdown
+       "\"" string.other.link.description.title.markdown punctuation.definition.string.begin.markdown
+       "Title" string.other.link.description.title.markdown
+       "\"" string.other.link.description.title.markdown punctuation.definition.string.end.markdown
+       ")" punctuation.definition.metadata.end.markdown
+       "[" punctuation.definition.link.begin.markdown
+       "]" punctuation.definition.link.end.markdown
+       "[" punctuation.definition.constant.begin.markdown
+       "r" constant.other.reference.link.markdown
+       "]" punctuation.definition.constant.end.markdown
+       "[" punctuation.definition.link.begin.markdown
+       "![" punctuation.definition.image.begin.markdown
+       "]" punctuation.definition.image.end.markdown
+       "(" punctuation.definition.metadata.begin.markdown
+       "b.svg" markup.underline.link.image.markdown
+       ")" punctuation.definition.metadata.end.markdown
+       "]" punctuation.definition.link.end.markdown
+       "(" punctuation.definition.metadata.begin.markdown
+       "https://c.d" markup.underline.link.markdown
+       ")" punctuation.definition.metadata.end.markdown
+       "[" punctuation.definition.link.begin.markdown
+       "]" punctuation.definition.link.end.markdown
+  24 | <https://auto.link> https://bare.link/x. www.example.com me@example.com
+       "<" punctuation.definition.link.begin.markdown
+       "https://auto.link" markup.underline.link.markdown
+       ">" punctuation.definition.link.end.markdown
+       "https://bare.link/x" markup.underline.link.markdown
+       "www.example.com" markup.underline.link.markdown
+       "me@example.com" markup.underline.link.markdown
+  25 | &amp; &#123; &#x1F; \* hard  
+       "&" constant.character.entity.named.html punctuation.definition.entity.html
+       "amp" constant.character.entity.named.html
+       ";" constant.character.entity.named.html punctuation.terminator.entity.html
+       "&#" constant.character.entity.decimal.html punctuation.definition.entity.html
+       "123" constant.character.entity.decimal.html
+       ";" constant.character.entity.decimal.html punctuation.terminator.entity.html
+       "&#x" constant.character.entity.hexadecimal.html punctuation.definition.entity.html
+       "1F" constant.character.entity.hexadecimal.html
+       ";" constant.character.entity.hexadecimal.html punctuation.terminator.entity.html
+       "\\*" constant.character.escape.markdown
+       "  " punctuation.definition.hard-line-break.markdown
+  26 | break
+  27 | 
+  28 | a | b
+  29 | --|:-:
+       "--" punctuation.section.table-header.markdown
+       "|" punctuation.separator.table-cell.markdown
+       ":" punctuation.definition.table-cell-alignment.markdown
+       "-" punctuation.section.table-header.markdown
+       ":" punctuation.definition.table-cell-alignment.markdown
+  30 | 1 | 2
+       "|" punctuation.separator.table-cell.markdown
+  31 | 
+  32 | <div align="center">
+       "<" text.html.basic punctuation.definition.tag.begin.html
+       "div" text.html.basic entity.name.tag.block.any.html
+       "align" text.html.basic entity.other.attribute-name.html
+       "=" text.html.basic punctuation.separator.key-value.html
+       "\"" text.html.basic string.quoted.double.html punctuation.definition.string.begin.html
+       "center" text.html.basic string.quoted.double.html
+       "\"" text.html.basic string.quoted.double.html punctuation.definition.string.end.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+  33 |   <img src="x.png">
+       "<" text.html.basic punctuation.definition.tag.begin.html
+       "img" text.html.basic entity.name.tag.inline.any.html
+       "src" text.html.basic entity.other.attribute-name.html
+       "=" text.html.basic punctuation.separator.key-value.html
+       "\"" text.html.basic string.quoted.double.html punctuation.definition.string.begin.html
+       "x.png" text.html.basic string.quoted.double.html
+       "\"" text.html.basic string.quoted.double.html punctuation.definition.string.end.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+  34 | </div>
+       "</" text.html.basic punctuation.definition.tag.begin.html
+       "div" text.html.basic entity.name.tag.block.any.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+  35 | 
+  36 | text <kbd>Ctrl</kbd> <!-- a comment
+       "<" text.html.basic punctuation.definition.tag.begin.html
+       "kbd" text.html.basic entity.name.tag.inline.any.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+       "</" text.html.basic punctuation.definition.tag.begin.html
+       "kbd" text.html.basic entity.name.tag.inline.any.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+       "<!--" comment.block.html punctuation.definition.comment.begin.html
+       " a comment" comment.block.html
+  37 | over lines --> after
+       "over lines " comment.block.html
+       "-->" comment.block.html punctuation.definition.comment.end.html
+  38 | 
+  39 | [r]: https://r.example "R"
+       "[" punctuation.definition.constant.begin.markdown
+       "r" entity.name.reference.link.markdown
+       "]" punctuation.definition.constant.end.markdown
+       ":" punctuation.separator.key-value.markdown
+       "https://r.example" markup.underline.link.markdown
+       "\"" string.other.link.description.title.markdown punctuation.definition.string.begin.markdown
+       "R" string.other.link.description.title.markdown
+       "\"" string.other.link.description.title.markdown punctuation.definition.string.end.markdown
+  40 | [^1]: A footnote.
+       "[" punctuation.definition.constant.begin.markdown
+       "^1" entity.name.reference.link.markdown
+       "]" punctuation.definition.constant.end.markdown
+       ":" punctuation.separator.key-value.markdown
+  41 | 
+  42 | ```rust
+       "```" punctuation.definition.raw.code-fence.begin.markdown
+       "rust" constant.other.language-name.markdown
+  43 | let s = "a
+       "let s = \"a" markup.raw.code-fence.markdown-gfm
+  44 | b";
+       "b\";" markup.raw.code-fence.markdown-gfm
+  45 | ```
+       "```" punctuation.definition.raw.code-fence.end.markdown
+  46 | ~~~
+       "~~~" punctuation.definition.raw.code-fence.begin.markdown
+  47 | raw
+       "raw" markup.raw.code-fence.markdown-gfm
+  48 | ~~~
+       "~~~" punctuation.definition.raw.code-fence.end.markdown
+  49 | > ```sh
+       ">" markup.quote.markdown punctuation.definition.blockquote.markdown
+       "```" punctuation.definition.raw.code-fence.begin.markdown
+       "sh" constant.other.language-name.markdown
+  50 | > ls -l
+       ">" markup.quote.markdown punctuation.definition.blockquote.markdown
+       "ls -l" markup.raw.code-fence.markdown-gfm
+  51 | > ```
+       ">" markup.quote.markdown punctuation.definition.blockquote.markdown
+       "```" punctuation.definition.raw.code-fence.end.markdown

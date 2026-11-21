@@ -33,8 +33,8 @@ use libfuzzer_sys::fuzz_target;
 /// Ruby's X-100; Terraform's X-102; Scala's X-137; Haskell's and Literate Haskell's X-136;
 /// Groovy's X-135; Elixir's X-138; CSS's X-125; Nix's X-103; Diff's X-163; x86's and ARM's
 /// assembly X-171; RISC-V's, MIPS's, Z80's and 6502's X-181; 68k's X-183; Dart's X-169; man pages'
-/// X-188).
-const RUN_SCANS: [Lang; 63] = [
+/// X-188; markdown's X-189, its fences' code on rules that keep guests checked too: [`Guests`]).
+const RUN_SCANS: [Lang; 64] = [
     Lang::Bash,
     Lang::Makefile,
     Lang::Scss,
@@ -98,6 +98,7 @@ const RUN_SCANS: [Lang; 63] = [
     Lang::ObjCpp,
     Lang::Diff,
     Lang::Manpage,
+    Lang::Markdown,
 ];
 
 /// A theme of a few rules over the kinds, plain for some, each resolved as it's met into a table
@@ -126,6 +127,32 @@ impl Rules for Lazy {
         }
         self.0[k] = Lazy::rule(kind);
         self.0[k]
+    }
+}
+
+/// [`Lazy`] with every guest language's kinds on a table of its own (X-189: a markdown fence's
+/// code on its language's scanner, written on the host's runs).
+struct Guests(Lazy, Vec<(Lang, Lazy)>);
+
+impl Rules for Guests {
+    fn table(&self) -> &[Rule] {
+        self.0.table()
+    }
+
+    fn resolve(&mut self, kind: u16) -> Rule {
+        self.0.resolve(kind)
+    }
+
+    fn guest(&mut self, lang: Lang, f: &mut dyn FnMut(&mut dyn Rules)) -> bool {
+        let i = match self.1.iter().position(|(l, _)| *l == lang) {
+            Some(i) => i,
+            None => {
+                self.1.push((lang, Lazy(Vec::new())));
+                self.1.len() - 1
+            }
+        };
+        f(&mut self.1[i].1);
+        true
     }
 }
 
@@ -196,6 +223,18 @@ fuzz_target!(|data: &[u8]| {
         .filter(|l| RUN_SCANS.contains(l))
         .map(|l| (l, ada_parse::State::default(), Lazy(Vec::new())))
         .collect();
+    let mut guested: Vec<_> = on
+        .iter()
+        .copied()
+        .filter(|&l| l == Lang::Markdown)
+        .map(|l| {
+            (
+                l,
+                ada_parse::State::default(),
+                Guests(Lazy(Vec::new()), Vec::new()),
+            )
+        })
+        .collect();
     let (mut ps, mut scratch, mut runs) = (Vec::new(), Vec::new(), Vec::new());
     for line in text.split('\n') {
         for (lang, state, rules) in &mut ran {
@@ -205,6 +244,28 @@ fuzz_target!(|data: &[u8]| {
             ada_parse::lex_runs(*lang, line, state, &mut scratch, rules, &mut runs);
             assert_eq!(runs, runs_of(line.len(), &ps), "{lang:?} runs: {line:?}");
             assert_eq!(*state, spans_state, "{lang:?} state after runs: {line:?}");
+        }
+        for (lang, state, rules) in &mut guested {
+            let mut spans_state = *state;
+            ada_parse::lex(*lang, line, &mut spans_state, &mut ps);
+            runs.clear();
+            ada_parse::lex_runs(*lang, line, state, &mut scratch, rules, &mut runs);
+            check(
+                "guest runs",
+                line,
+                runs.iter().scan(0, |at, r| {
+                    let s = std::mem::replace(at, r.end);
+                    Some((s, r.end))
+                }),
+            );
+            assert!(
+                runs.is_empty() || runs.last().unwrap().end as usize == line.len(),
+                "{lang:?} guest runs end at the line's: {runs:?} {line:?}"
+            );
+            assert_eq!(
+                *state, spans_state,
+                "{lang:?} state after guest runs: {line:?}"
+            );
         }
         for (lang, state) in &mut parsed {
             ada_parse::lex(*lang, line, state, &mut ps);

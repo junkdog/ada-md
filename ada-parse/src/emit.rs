@@ -36,6 +36,14 @@ pub trait Rules {
     fn table(&self) -> &[Rule];
     /// `kind`'s rule, resolved into [`Rules::table`] (which may move).
     fn resolve(&mut self, kind: u16) -> Rule;
+    /// Another language's own rules, for its text in this one's (X-189: a markdown fence's
+    /// code): `f` called with the rules of `lang`'s kinds, resolved under its base as for a
+    /// block in it and kept apart from these, and `true`; `false` where none are kept, `f`
+    /// not called, and the host shows the text its own way.
+    fn guest(&mut self, lang: crate::Lang, f: &mut dyn FnMut(&mut dyn Rules)) -> bool {
+        let _ = (lang, f);
+        false
+    }
 }
 
 /// Where a scanner writes a line's lexemes. A scanner hands over `out`, the spans' vector, on
@@ -93,6 +101,19 @@ pub(crate) trait Sink: Copy {
         _lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>),
     ) {
         unreachable!("a guest's runs on a sink of spans");
+    }
+
+    /// The run sink's [`Sink::host`] for a language whose kinds don't fit in the host's
+    /// (X-189: a markdown fence's code): `lex` handed `lang`'s own rules ([`Rules::guest`])
+    /// and the runs' vector, its runs from `at` written as for a line of its own, and `true`;
+    /// `false`, `lex` not called, where the rules keep none for it, or on a span sink.
+    fn guest(
+        &mut self,
+        _at: usize,
+        _lang: crate::Lang,
+        _lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>),
+    ) -> bool {
+        false
     }
 
     /// An embedded language written in place (HTML's CSS and JavaScript, X-161): on the run
@@ -242,6 +263,11 @@ impl Rules for Shifted<'_, '_> {
         t[i] = r;
         r
     }
+
+    fn guest(&mut self, lang: crate::Lang, f: &mut dyn FnMut(&mut dyn Rules)) -> bool {
+        // SAFETY: as above
+        unsafe { (*self.host).guest(lang, f) }
+    }
 }
 
 /// A host's rules for a guest's kinds, `base` below the host's ([`Sink::host`]): its table from
@@ -262,6 +288,10 @@ impl Rules for Guest<'_> {
 
     fn resolve(&mut self, kind: u16) -> Rule {
         self.rules.resolve(kind + self.base)
+    }
+
+    fn guest(&mut self, lang: crate::Lang, f: &mut dyn FnMut(&mut dyn Rules)) -> bool {
+        self.rules.guest(lang, f)
     }
 }
 
@@ -638,6 +668,42 @@ pub(crate) struct Runs<'r> {
 }
 
 impl<'r> Runs<'r> {
+    /// [`Sink::host`]'s and [`Sink::guest`]'s writing: `lex` handed this sink's rules and the
+    /// runs' vector at its cursor, its runs' ends from `at`.
+    #[inline(never)]
+    fn guest_runs(&mut self, at: usize, lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>)) {
+        debug_assert!(self.end <= at);
+        if self.end < at {
+            self.put(at, Rule(Rule::NONE));
+            self.end = at;
+        }
+        // SAFETY: the cursors are in the vector's allocation, every run below `w` written; the
+        // vector and the rules outlive the sink, and nothing else holds them while the guest
+        // writes
+        unsafe {
+            let line = self.line.offset_from(self.base) as usize;
+            let n0 = self.w.offset_from(self.base) as usize;
+            let v = &mut *self.runs;
+            v.set_len(n0);
+            lex(&mut *self.t.rules, v);
+            let n1 = v.len();
+            for r in &mut v[n0..n1] {
+                r.end += at as u32;
+            }
+            if n1 > n0 && n0 > line && v[n0 - 1].rule == v[n0].rule {
+                v[n0 - 1].end = v[n0].end;
+                v.remove(n0);
+            }
+            self.t.reload();
+            self.open_runs(0);
+            self.line = self.base.add(line);
+            if self.w > self.line {
+                let last = *self.w.sub(1);
+                (self.last, self.end) = (last.rule, last.end as usize);
+            }
+        }
+    }
+
     /// Runs written at `runs`' end, by `rules`; a line started.
     #[inline(always)]
     pub(crate) fn new(rules: &'r mut dyn Rules, runs: &'r mut Vec<Run>) -> Self {
@@ -805,42 +871,20 @@ impl Sink for Runs<'_> {
     /// line's last rule and end read again from the vector.
     #[inline(never)]
     fn host(&mut self, at: usize, base: u16, lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>)) {
-        debug_assert!(self.end <= at);
-        if self.end < at {
-            self.put(at, Rule(Rule::NONE));
-            self.end = at;
-        }
-        // SAFETY: the cursors are in the vector's allocation, every run below `w` written; the
-        // vector and the rules outlive the sink, and nothing else holds them while the guest
-        // writes
-        unsafe {
-            let line = self.line.offset_from(self.base) as usize;
-            let n0 = self.w.offset_from(self.base) as usize;
-            let v = &mut *self.runs;
-            v.set_len(n0);
-            lex(
-                &mut Guest {
-                    rules: &mut *self.t.rules,
-                    base,
-                },
-                v,
-            );
-            let n1 = v.len();
-            for r in &mut v[n0..n1] {
-                r.end += at as u32;
-            }
-            if n1 > n0 && n0 > line && v[n0 - 1].rule == v[n0].rule {
-                v[n0 - 1].end = v[n0].end;
-                v.remove(n0);
-            }
-            self.t.reload();
-            self.open_runs(0);
-            self.line = self.base.add(line);
-            if self.w > self.line {
-                let last = *self.w.sub(1);
-                (self.last, self.end) = (last.rule, last.end as usize);
-            }
-        }
+        self.guest_runs(at, &mut |rules, runs| lex(&mut Guest { rules, base }, runs));
+    }
+
+    fn guest(
+        &mut self,
+        at: usize,
+        lang: crate::Lang,
+        lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>),
+    ) -> bool {
+        let mut kept = false;
+        self.guest_runs(at, &mut |rules, runs| {
+            kept = rules.guest(lang, &mut |own| lex(own, runs));
+        });
+        kept
     }
 
     #[inline(always)]

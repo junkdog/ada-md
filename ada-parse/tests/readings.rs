@@ -3287,3 +3287,69 @@ fn manpage() {
     );
     readings_of("manpage", Lang::Manpage, &[text, c]);
 }
+
+/// Markdown as source (X-189): front matter, headings (ATX with a closer, setext, seven `#`s not),
+/// lists (bullets, `1.` and `2)`, a task's box plain), quotes, a thematic break, indented code and a
+/// list item's continuation, emphasis (nested, across a paragraph's lines, `_` in a word not, an
+/// opener without a closer on its line), code spans, strikethrough, links (inline with a title, by
+/// reference, an image in a link, a footnote), autolinks and bare links, entities, escapes, a hard
+/// break, a table (from its delimiter row), HTML (a block, an inline tag, a comment across lines),
+/// a definition, and fences (a language's, one without, a tilde one, one in a quote). The span
+/// path shows a fence's code as one raw kind; its language is the run path's.
+#[test]
+fn markdown() {
+    let text = concat!(
+        "---\n",
+        "title: Notes\n",
+        "---\n",
+        "# Title #\n",
+        "Setext\n",
+        "======\n",
+        "####### not a heading\n",
+        "\n",
+        "- item **bold** and _it_ ~~gone~~\n",
+        "  - nested `code`\n",
+        "1. one\n",
+        "2) two\n",
+        "* [ ] task\n",
+        "\n",
+        "> quote *em\n",
+        "> across* lines\n",
+        "\n",
+        "***\n",
+        "\n",
+        "    indented code\n",
+        "\n",
+        "snake_case_name, 2*3*4, IR_*LOAD, ***both*** and *.md files\n",
+        "[link](https://x.y \"Title\") [ref][r] [![badge](b.svg)](https://c.d) [^1]\n",
+        "<https://auto.link> https://bare.link/x. www.example.com me@example.com\n",
+        "&amp; &#123; &#x1F; \\* hard  \n",
+        "break\n",
+        "\n",
+        "a | b\n",
+        "--|:-:\n",
+        "1 | 2\n",
+        "\n",
+        "<div align=\"center\">\n",
+        "  <img src=\"x.png\">\n",
+        "</div>\n",
+        "\n",
+        "text <kbd>Ctrl</kbd> <!-- a comment\n",
+        "over lines --> after\n",
+        "\n",
+        "[r]: https://r.example \"R\"\n",
+        "[^1]: A footnote.\n",
+        "\n",
+        "```rust\n",
+        "let s = \"a\n",
+        "b\";\n",
+        "```\n",
+        "~~~\n",
+        "raw\n",
+        "~~~\n",
+        "> ```sh\n",
+        "> ls -l\n",
+        "> ```\n",
+    );
+    readings_of("markdown", Lang::Markdown, &[text]);
+}

@@ -1055,6 +1055,29 @@ clean:
 	-rm -rf target/$(PROFILE) $(patsubst %.o,%.d,$(OBJS))
 ```
 
+## Markdown
+
+````markdown
+---
+title: Notes
+---
+# Heading *one*
+
+- a list with **bold**, _italic_, ~~struck~~ and `code`
+1. [a link](https://example.com "title"), ![an image](cat.png), <https://auto.link>
+> a quote, &amp; an entity, \* an escape <!-- a comment -->
+
+| a | b |
+|---|:-:|
+| 1 | 2 |
+
+```rust
+let s = "a fence's code, in its language";
+```
+
+[ref]: https://example.com
+````
+
 ## MIPS Assembly
 
 ```mips

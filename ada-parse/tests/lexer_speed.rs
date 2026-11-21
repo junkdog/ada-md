@@ -20,6 +20,9 @@ const LANGS: &[(&str, Lang)] = &[
     ("diff", Lang::Diff),
     // X-188's corpus: this machine's man pages as `man` shows them at 80 columns, `col -bx`'d
     ("man", Lang::Manpage),
+    // X-189's corpus: the bench clones' `.md` files, one a repository (fences' code lexed for its
+    // state alone on this span path)
+    ("md", Lang::Markdown),
     // token-cost's `log.txt`, log-corpus/'s snapshot
     ("log", Lang::Log),
     ("ini", Lang::Ini),

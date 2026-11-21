@@ -57,14 +57,18 @@ cargo run -p ada-parse --example incremental
   Dockerfile, `.env`, fstab, Git's own files (config, ignore, attributes, mailmap, link), INI, Java
   properties, JSON, logs, Makefile, nginx, OpenSSH's `ssh_config`, `sshd_config` and
   `known_hosts`, pkg-config, Terraform, TOML, XML, YAML.
-- **Text:** man pages as `man` shows them (`col -bx`'d, bat's `Manpage`), C in their synopses.
+- **Text:** man pages as `man` shows them (`col -bx`'d, bat's `Manpage`), C in their synopses;
+  markdown as source (CommonMark and GitHub's tables, strikethrough and links), a fence's code in its
+  language.
 
 `Lang::ALL` lists them. Languages arrive in most releases.
 
 Code inside code is lexed in its own language, its scopes inside the host's: SQL and regexes in
 other languages' strings (each regex in its engine's dialect, `keyword.other.DML.sql` inside a
 Python string's scopes), HTML's styles and scripts, PHP's HTML, a Dockerfile's `RUN` and Nix's
-build phases as shell, nginx's Lua blocks.
+build phases as shell, nginx's Lua blocks. A markdown fence's code (and front matter) is lexed by its
+language's own lexer, its kinds that language's: on the run path through `Rules::guest`, which a
+theme's table answers with that language's rules; on the span path it is one raw kind.
 
 ## Performance
 

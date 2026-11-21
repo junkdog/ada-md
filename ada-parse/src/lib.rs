@@ -65,6 +65,7 @@ mod lisp;
 mod logs;
 mod lua;
 mod man;
+mod markdown;
 mod matcher;
 mod nginx;
 mod nix;
@@ -171,6 +172,41 @@ impl State {
 
     fn set_flags(&mut self, flags: u16) {
         self.arg = flags;
+    }
+
+    /// The byte at `i` of the state's [`State::BYTES`]: `levels`' from 0, `withs`' from 14,
+    /// `depth` at 28, `arg`'s low and high bytes at 29 and 30. Markdown keeps its own fields in
+    /// a few of them over a fence's language's state (X-189).
+    #[inline(always)]
+    fn byte(&self, i: usize) -> u8 {
+        match i {
+            0..14 => self.levels[i],
+            14..28 => self.withs[i - 14],
+            28 => self.depth,
+            29 => self.arg as u8,
+            _ => (self.arg >> 8) as u8,
+        }
+    }
+
+    #[inline(always)]
+    fn set_byte(&mut self, i: usize, v: u8) {
+        match i {
+            0..14 => self.levels[i] = v,
+            14..28 => self.withs[i - 14] = v,
+            28 => self.depth = v,
+            29 => self.arg = self.arg & 0xff00 | u16::from(v),
+            _ => self.arg = self.arg & 0x00ff | u16::from(v) << 8,
+        }
+    }
+
+    /// How many bytes [`State::byte`] numbers.
+    const BYTES: usize = 31;
+
+    /// The state's bytes, as [`State::byte`] numbers them: for a survey of which of them a
+    /// language's lines leave set (X-189).
+    #[doc(hidden)]
+    pub fn bytes(&self) -> [u8; State::BYTES] {
+        std::array::from_fn(|i| self.byte(i))
     }
 }
 
@@ -430,6 +466,7 @@ fn run_lines(lang: Lang) -> Option<RunLinesOf> {
         Lang::Makefile => lines_run::<bash::MakeRunLine>,
         Lang::Diff => lines_run::<diff::RunLine>,
         Lang::Manpage => lines_run::<man::RunLine>,
+        Lang::Markdown => lines_run::<markdown::RunLine>,
         _ => return None,
     })
 }
@@ -873,6 +910,10 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
             |_, _, _| unreachable!("a man page's runs come from its own scan")
         }
         Lang::Manpage => out!(man::line),
+        Lang::Markdown if !SPANS => {
+            |_, _, _| unreachable!("markdown's runs come from its own scan")
+        }
+        Lang::Markdown => out!(markdown::line),
         Lang::Ini => out!(ini::line),
         Lang::Toml if !SPANS => |_, _, _| unreachable!("TOML's runs come from its own scan"),
         Lang::Toml => out!(toml_scan::line),

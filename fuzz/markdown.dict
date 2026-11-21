@@ -144,6 +144,7 @@
 "```lisp\x0a"
 "```lua\x0a"
 "```make\x0a"
+"```md\x0a"
 "```mm\x0a"
 "```m\x0a"
 "```php\x0a"
