@@ -994,6 +994,37 @@ setmetatable(M, { __index = function(t, k) return rawget(t, k) end })
 return M
 ```
 
+## Manpage
+
+```man
+LS(1)                            User Commands                            LS(1)
+
+NAME
+     ls - list directory contents
+
+SYNOPSIS
+     ls [OPTION]... [FILE]...
+
+DESCRIPTION
+     List information about the FILEs (the current directory by default).  Sort
+     entries alphabetically if none of -cftuvSUX nor --sort is specified.
+
+     -a, --all
+            do not ignore entries starting with .
+
+     --color[=WHEN]
+            color the output WHEN; more info below
+
+   Exit status:
+     0      if OK,
+
+ENVIRONMENT
+     LS_COLORS
+            the colors, read by dircolors(1) from $HOME/.dir_colors
+
+GNU coreutils 9.12                October 2026                            LS(1)
+```
+
 ## Makefile
 
 ```makefile

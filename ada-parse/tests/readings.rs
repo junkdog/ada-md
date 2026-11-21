@@ -3213,3 +3213,77 @@ fn properties_examples() {
     ];
     readings_of("properties_examples", Lang::Properties, &blocks);
 }
+
+/// A man page's readings as `man` shows it (X-188): its title and footer, headings at the margin
+/// and a subsection's three columns in, a synopsis's command, brackets (one open across lines),
+/// bars, placeholders and options with their values; an option list's tags (one compact after
+/// another's text, one whose text follows after one blank), options and references in prose
+/// (a plural's parentheses not), `$VARIABLE`s, an ENVIRONMENT section's variables, a COMMANDS
+/// section's commands; C in a synopsis from its `#include` to the next sentence, a comment open
+/// across lines; and groff 1.22's seven-column indent.
+#[test]
+fn manpage() {
+    let text = concat!(
+        "LS(1)                            User Commands                            LS(1)\n",
+        "\n",
+        "NAME\n",
+        "     ls - list directory contents\n",
+        "\n",
+        "SYNOPSIS\n",
+        "     ls [OPTION]... [FILE]...\n",
+        "     ssh [-46] [-B bind_interface] [-b bind_address | -c cipher_spec\n",
+        "         [-D port]] destination [command [argument ...]]\n",
+        "     git log [<options>] [<revision-range>] [[--] <path>...]\n",
+        "\n",
+        "DESCRIPTION\n",
+        "     List information about the FILEs (the current directory by default).  Sort\n",
+        "     entries alphabetically if none of -cftuvSUX nor --sort is specified, see\n",
+        "     dircolors(1), systemd.unit(5) and Archive::Tar(3perl); file(s), g++(1).\n",
+        "\n",
+        "     -a, --all\n",
+        "            do not ignore entries starting with .\n",
+        "\n",
+        "     --color[=WHEN]\n",
+        "            color the output WHEN; more info below\n",
+        "\n",
+        "     -I, --ignore=PATTERN\n",
+        "            do not list implied entries matching shell PATTERN\n",
+        "     -o file\n",
+        "            write to file.\n",
+        "     --help display this help and exit\n",
+        "\n",
+        "   Exit status:\n",
+        "     0      if OK,\n",
+        "\n",
+        "ENVIRONMENT\n",
+        "     LS_COLORS\n",
+        "            the colors, from $HOME/.dir_colors\n",
+        "\n",
+        "COMMANDS\n",
+        "     add [-f] <file>\n",
+        "            adds a file\n",
+        "\n",
+        "GNU coreutils 9.12                October 2026                            LS(1)\n",
+    );
+    let c = concat!(
+        "PRINTF(3)                Library Functions Manual                PRINTF(3)\n",
+        "\n",
+        "SYNOPSIS\n",
+        "       #include <stdio.h>\n",
+        "\n",
+        "       int printf(const char *restrict format, ...);\n",
+        "       /* a comment\n",
+        "          across lines */\n",
+        "\n",
+        "   Feature Test Macro Requirements for glibc (see feature_test_macros(7)):\n",
+        "\n",
+        "       snprintf():\n",
+        "           _XOPEN_SOURCE >= 500\n",
+        "\n",
+        "DESCRIPTION\n",
+        "       The functions in the printf() family produce output.\n",
+        "\n",
+        "Linux man-pages 6.9.1            2024-06-15                       PRINTF(3)\n",
+    );
+    readings_of("manpage", Lang::Manpage, &[text, c]);
+}

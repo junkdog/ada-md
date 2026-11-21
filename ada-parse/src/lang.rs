@@ -23,6 +23,8 @@ pub enum Lang {
     Bash,
     /// bat's `Diff`.
     Diff,
+    /// bat's `Manpage`: a man page as `man` shows it (X-188).
+    Manpage,
     /// bat's `INI`.
     Ini,
     /// bat's `TOML`.
@@ -329,6 +331,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
         ],
     ),
     (Lang::Diff, &["diff", "patch"]),
+    (Lang::Manpage, &["man"]),
     (
         Lang::Ini,
         &[
@@ -563,6 +566,7 @@ impl Lang {
         Lang::Makefile,
         Lang::Bash,
         Lang::Diff,
+        Lang::Manpage,
         Lang::Ini,
         Lang::Toml,
         Lang::Xml,
@@ -639,6 +643,7 @@ impl Lang {
             Lang::Makefile => "Makefile",
             Lang::Bash => "Bourne Again Shell (bash)",
             Lang::Diff => "Diff",
+            Lang::Manpage => "Manpage",
             Lang::Ini => "INI",
             Lang::Toml => "TOML",
             Lang::Xml => "XML",
@@ -725,6 +730,7 @@ impl Lang {
             Lang::Makefile => "source.makefile",
             Lang::Bash => "source.shell.bash",
             Lang::Diff => "source.diff",
+            Lang::Manpage => "source.man",
             Lang::Ini => "source.ini",
             Lang::Toml => "source.toml",
             Lang::Xml => "text.xml",
@@ -870,6 +876,7 @@ impl Lang {
             Lang::Crontab => crate::crontab::scopes(kind),
             Lang::GitConfig => crate::git_config::scopes(kind),
             Lang::Nginx => crate::nginx::scopes(kind),
+            Lang::Manpage => crate::man::scopes(kind),
             _ => self
                 .kinds()
                 .get(usize::from(kind))

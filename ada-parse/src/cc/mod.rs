@@ -510,6 +510,33 @@ pub fn line_runs(
     k.end_line(b.len());
 }
 
+/// A line of C in a man page (X-188: a synopsis's `#include` and prototypes, an example's
+/// program) on the page's run sink, its kinds seen with the page's C bit
+/// ([`crate::emit::Sink::shifted`]).
+pub(crate) fn embedded_runs<'r>(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    k: Runs<'r>,
+) -> Runs<'r> {
+    line_on(b, state, out, L_C, k)
+}
+
+/// The state a man page's C line starts from (X-188): a fresh one, but inside a `/* … */`
+/// comment where the line before left one open, all the page keeps of C between lines.
+pub(crate) fn embedded_state(comment: bool) -> State {
+    let mut s = State::default();
+    if comment {
+        s.arg = u16::from(M_BLOCK_COMMENT);
+    }
+    s
+}
+
+/// Whether a man page's C line left a `/* … */` comment open ([`embedded_state`]).
+pub(crate) fn embedded_comment(state: &State) -> bool {
+    state.arg & A_MODE == u16::from(M_BLOCK_COMMENT)
+}
+
 /// [`line_c`]'s runs by theme rule pushed to `runs`.
 #[inline(never)]
 pub fn line_runs_c(

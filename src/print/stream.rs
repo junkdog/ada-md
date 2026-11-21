@@ -124,7 +124,8 @@ pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
     let FileType::Text { lang } = filetype else {
         return whole(first);
     };
-    if filetype == FileType::ANSI {
+    // so does a man page (X-188): its characters struck over each other go as a whole page's do
+    if filetype == FileType::ANSI || stdin && filetype == FileType::MANPAGE {
         return whole(first);
     }
     // any other piped text without its escapes, wherever the reads cut them

@@ -10,6 +10,7 @@ mod imaging;
 mod input;
 mod keymap;
 mod load;
+mod manpage;
 mod nav;
 mod run;
 mod save;
@@ -526,6 +527,8 @@ pub struct Document {
     pub changed: bool,
     /// A diff's files and commits, read on the first `n` or `o`.
     diff_files: std::sync::OnceLock<Vec<diffs::DiffFile>>,
+    /// A man page's sections and subsections, read on the first `o` (X-188).
+    chapters: std::sync::OnceLock<Vec<manpage::Chapter>>,
 }
 
 impl Document {
@@ -561,6 +564,7 @@ impl Document {
             images,
             changed: false,
             diff_files: std::sync::OnceLock::new(),
+            chapters: std::sync::OnceLock::new(),
         }
     }
 
@@ -587,6 +591,20 @@ impl Document {
                 .get_or_init(|| diffs::files(&crate::stdin::strip(&self.text))),
             _ => &[],
         }
+    }
+
+    /// Whether it is a man page, whose sections `o` lists (X-188).
+    pub fn is_man_page(&self) -> bool {
+        self.filetype == FileType::MANPAGE
+    }
+
+    /// A man page's sections and subsections; none for any other document.
+    pub(super) fn chapters(&self) -> &[manpage::Chapter] {
+        if !self.is_man_page() {
+            return &[];
+        }
+        self.chapters
+            .get_or_init(|| manpage::chapters(&self.filetype.shown_text(&self.path, &self.text)))
     }
 
     pub fn search_map(&mut self, theme: &Theme) -> &SearchMap {
@@ -3143,6 +3161,52 @@ mod tests {
         update(&mut state, Msg::OutlinePick);
         assert_eq!(state.scroll, b.min(state.max_scroll()));
         assert!(state.outline.is_none());
+    }
+
+    /// X-188: `o` in a man page, piped from `man` with its bold struck over, lists its sections
+    /// and subsections (not its title or footer), and jumps to the one picked.
+    #[test]
+    fn outline_lists_a_man_pages_sections() {
+        let bold = |s: &str| s.chars().map(|c| format!("{c}\x08{c}")).collect::<String>();
+        let body: String = (1..=30).map(|i| format!("     line {i}\n")).collect();
+        let text = format!(
+            "LS(1)          User Commands          LS(1)\n\n{}\n     ls - list\n\n{}\n{body}\n   \
+             {}\n{body}\nGNU coreutils 9.12   October 2026   LS(1)\n",
+            bold("NAME"),
+            bold("DESCRIPTION"),
+            bold("Exit status:"),
+        );
+        let mut state = loaded("x", 80, 10);
+        update(
+            &mut state,
+            Msg::DocLoaded {
+                path: "-".into(),
+                mtime: None,
+                text: text.as_str().into(),
+                doc: Computed(None),
+            },
+        );
+        let doc = state.doc.as_ref().unwrap();
+        assert_eq!(doc.filetype, FileType::MANPAGE);
+        assert!(doc.is_man_page() && !doc.is_diff());
+        update(&mut state, Msg::OpenOutline);
+        let listed: Vec<_> = state
+            .outline_entries()
+            .iter()
+            .map(|e| (e.level, e.text.to_string()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (1, "NAME".into()),
+                (1, "DESCRIPTION".into()),
+                (2, "Exit status:".into()),
+            ]
+        );
+        let sub = state.outline_entries()[2].row;
+        update(&mut state, Msg::OutlineMove { by: 2 });
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(state.scroll, sub.min(state.max_scroll()));
     }
 
     #[test]

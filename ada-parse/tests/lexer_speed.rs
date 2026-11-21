@@ -18,6 +18,8 @@ use ada_parse::{Lang, State, lex};
 const LANGS: &[(&str, Lang)] = &[
     ("json", Lang::Json),
     ("diff", Lang::Diff),
+    // X-188's corpus: this machine's man pages as `man` shows them at 80 columns, `col -bx`'d
+    ("man", Lang::Manpage),
     // token-cost's `log.txt`, log-corpus/'s snapshot
     ("log", Lang::Log),
     ("ini", Lang::Ini),

@@ -118,7 +118,7 @@ export PAGER='ada -F' MANPAGER='ada -F'
 ```
 
 ada prints when stdout isn't a terminal, and `-F` prints when the text fits on the screen, as
-`less -F` does.
+`less -F` does. A man page is highlighted from `man`'s own output, and `o` lists its sections.
 
 ### As git's pager
 

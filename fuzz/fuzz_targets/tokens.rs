@@ -32,8 +32,9 @@ use libfuzzer_sys::fuzz_target;
 /// X-095, its runs from its spans from X-094 to then; C's and C++'s X-057; Swift's X-101; CMake's X-104;
 /// Ruby's X-100; Terraform's X-102; Scala's X-137; Haskell's and Literate Haskell's X-136;
 /// Groovy's X-135; Elixir's X-138; CSS's X-125; Nix's X-103; Diff's X-163; x86's and ARM's
-/// assembly X-171; RISC-V's, MIPS's, Z80's and 6502's X-181; 68k's X-183; Dart's X-169).
-const RUN_SCANS: [Lang; 62] = [
+/// assembly X-171; RISC-V's, MIPS's, Z80's and 6502's X-181; 68k's X-183; Dart's X-169; man pages'
+/// X-188).
+const RUN_SCANS: [Lang; 63] = [
     Lang::Bash,
     Lang::Makefile,
     Lang::Scss,
@@ -96,6 +97,7 @@ const RUN_SCANS: [Lang; 62] = [
     Lang::ObjC,
     Lang::ObjCpp,
     Lang::Diff,
+    Lang::Manpage,
 ];
 
 /// A theme of a few rules over the kinds, plain for some, each resolved as it's met into a table

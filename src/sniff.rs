@@ -48,6 +48,10 @@ pub fn sniff(text: &str) -> Option<FileType> {
         let name = highlight::blame::name(blame_language(&lines));
         return Some(FileType::Text { lang: Some(name) });
     }
+    // `man`'s page, its title's `NAME(SECTION)` at both ends (X-188)
+    if ada_parse::is_man_page(sample) {
+        return lang(Lang::Manpage);
+    }
     // before front matter: a diagram's `---` holds its config, not a note's
     if diagram::is_diagram(sample) {
         return code(diagram::LANG);

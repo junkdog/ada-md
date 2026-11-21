@@ -163,15 +163,21 @@ pub fn files(text: &str) -> Vec<DiffFile> {
     found
 }
 
-/// The rows `files` start on in `layout`, `None` past its end. Its rows run in source order, as
-/// a diff's do, so one pass finds them all: each is what `Layout::row_for_line` would answer.
+/// The rows `files` start on in `layout`, `None` past its end.
 pub fn rows(layout: &Layout, files: &[DiffFile]) -> Vec<Option<u32>> {
+    rows_of(layout, files.iter().map(|f| f.line))
+}
+
+/// The rows `lines` (from 1, ascending) start on in `layout`, `None` past its end: a diff's
+/// files, a man page's sections (X-188). Its rows run in source order, as a whole file's do,
+/// so one pass finds them all: each is what `Layout::row_for_line` would answer.
+pub fn rows_of(layout: &Layout, lines: impl IntoIterator<Item = u32>) -> Vec<Option<u32>> {
     let rows = &layout.rows;
     let mut r = 0;
-    files
-        .iter()
-        .map(|f| {
-            while r < rows.len() && !(rows[r].src.contains(f.line) || rows[r].src.start > f.line) {
+    lines
+        .into_iter()
+        .map(|line| {
+            while r < rows.len() && !(rows[r].src.contains(line) || rows[r].src.start > line) {
                 r += 1;
             }
             (r < rows.len()).then_some(r as u32)

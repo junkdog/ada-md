@@ -1,0 +1,221 @@
+# Manpage: ada-parse/tests/readings.rs, manpage
+
+## block 1
+   1 | LS(1)                            User Commands                            LS(1)
+       "LS" meta.preprocessor.man
+       "(" keyword.operator.man
+       "1" string.quoted.other.man
+       ")" keyword.operator.man
+       "User Commands" markup.heading.title.man
+       "LS" meta.preprocessor.man
+       "(" keyword.operator.man
+       "1" string.quoted.other.man
+       ")" keyword.operator.man
+   2 | 
+   3 | NAME
+       "NAME" markup.heading.other.man
+   4 |      ls - list directory contents
+   5 | 
+   6 | SYNOPSIS
+       "SYNOPSIS" markup.heading.synopsis.man
+   7 |      ls [OPTION]... [FILE]...
+       "ls" entity.name.function.man
+       "[" punctuation.section.brackets.begin.man
+       "OPTION" variable.parameter.man
+       "]" punctuation.section.brackets.end.man
+       "[" punctuation.section.brackets.begin.man
+       "FILE" variable.parameter.man
+       "]" punctuation.section.brackets.end.man
+   8 |      ssh [-46] [-B bind_interface] [-b bind_address | -c cipher_spec
+       "ssh" entity.name.function.man
+       "[" punctuation.section.brackets.begin.man
+       "-46" entity.name.command-line-option.man
+       "]" punctuation.section.brackets.end.man
+       "[" punctuation.section.brackets.begin.man
+       "-B" entity.name.command-line-option.man
+       "bind_interface" variable.parameter.man
+       "]" punctuation.section.brackets.end.man
+       "[" punctuation.section.brackets.begin.man
+       "-b" entity.name.command-line-option.man
+       "bind_address" variable.parameter.man
+       "|" keyword.operator.logical.man
+       "-c" entity.name.command-line-option.man
+       "cipher_spec" variable.parameter.man
+   9 |          [-D port]] destination [command [argument ...]]
+       "[" punctuation.section.brackets.begin.man
+       "-D" entity.name.command-line-option.man
+       "port" variable.parameter.man
+       "]" punctuation.section.brackets.end.man
+       "]" punctuation.section.brackets.end.man
+       "[" punctuation.section.brackets.begin.man
+       "[" punctuation.section.brackets.begin.man
+       "]" punctuation.section.brackets.end.man
+       "]" punctuation.section.brackets.end.man
+  10 |      git log [<options>] [<revision-range>] [[--] <path>...]
+       "git" entity.name.function.man
+       "[" punctuation.section.brackets.begin.man
+       "<" punctuation.definition.generic.begin.man
+       "options" variable.parameter.man
+       ">" punctuation.definition.generic.end.man
+       "]" punctuation.section.brackets.end.man
+       "[" punctuation.section.brackets.begin.man
+       "<" punctuation.definition.generic.begin.man
+       "revision-range" variable.parameter.man
+       ">" punctuation.definition.generic.end.man
+       "]" punctuation.section.brackets.end.man
+       "[" punctuation.section.brackets.begin.man
+       "[" punctuation.section.brackets.begin.man
+       "]" punctuation.section.brackets.end.man
+       "<" punctuation.definition.generic.begin.man
+       "path" variable.parameter.man
+       ">" punctuation.definition.generic.end.man
+       "]" punctuation.section.brackets.end.man
+  11 | 
+  12 | DESCRIPTION
+       "DESCRIPTION" markup.heading.other.man
+  13 |      List information about the FILEs (the current directory by default).  Sort
+  14 |      entries alphabetically if none of -cftuvSUX nor --sort is specified, see
+       "-cftuvSUX" entity.name.command-line-option.man
+       "--sort" entity.name.command-line-option.man
+  15 |      dircolors(1), systemd.unit(5) and Archive::Tar(3perl); file(s), g++(1).
+       "dircolors" entity.name.function.man
+       "(" keyword.operator.man
+       "1" constant.numeric.man
+       ")" keyword.operator.man
+       "systemd.unit" entity.name.function.man
+       "(" keyword.operator.man
+       "5" constant.numeric.man
+       ")" keyword.operator.man
+       "Archive::Tar" entity.name.function.man
+       "(" keyword.operator.man
+       "3perl" constant.numeric.man
+       ")" keyword.operator.man
+       "g++" entity.name.function.man
+       "(" keyword.operator.man
+       "1" constant.numeric.man
+       ")" keyword.operator.man
+  16 | 
+  17 |      -a, --all
+       "-a" entity.name.command-line-option.man
+       "," punctuation.separator.man
+       "--all" entity.name.command-line-option.man
+  18 |             do not ignore entries starting with .
+  19 | 
+  20 |      --color[=WHEN]
+       "--color" entity.name.command-line-option.man
+       "[" punctuation.section.brackets.begin.man
+       "=" keyword.operator.man
+       "WHEN" variable.parameter.man
+       "]" punctuation.section.brackets.end.man
+  21 |             color the output WHEN; more info below
+  22 | 
+  23 |      -I, --ignore=PATTERN
+       "-I" entity.name.command-line-option.man
+       "," punctuation.separator.man
+       "--ignore" entity.name.command-line-option.man
+       "=" keyword.operator.man
+       "PATTERN" variable.parameter.man
+  24 |             do not list implied entries matching shell PATTERN
+  25 |      -o file
+       "-o" entity.name.command-line-option.man
+       "file" variable.parameter.man
+  26 |             write to file.
+  27 |      --help display this help and exit
+       "--help" entity.name.command-line-option.man
+  28 | 
+  29 |    Exit status:
+       "Exit status:" markup.heading.subsection.man
+  30 |      0      if OK,
+  31 | 
+  32 | ENVIRONMENT
+       "ENVIRONMENT" markup.heading.env.man
+  33 |      LS_COLORS
+       "LS_COLORS" support.constant.environment-variable.man
+  34 |             the colors, from $HOME/.dir_colors
+       "$" punctuation.definition.variable.man
+       "HOME" constant.other.man
+  35 | 
+  36 | COMMANDS
+       "COMMANDS" markup.heading.commands.man
+  37 |      add [-f] <file>
+       "add" entity.name.command.man
+       "[" punctuation.section.brackets.begin.man
+       "-f" entity.name.command-line-option.man
+       "]" punctuation.section.brackets.end.man
+       "<" punctuation.definition.generic.begin.man
+       "file" variable.parameter.man
+       ">" punctuation.definition.generic.end.man
+  38 |             adds a file
+  39 | 
+  40 | GNU coreutils 9.12                October 2026                            LS(1)
+       "LS" meta.preprocessor.man
+       "(" keyword.operator.man
+       "1" string.quoted.other.man
+       ")" keyword.operator.man
+
+## block 2
+   1 | PRINTF(3)                Library Functions Manual                PRINTF(3)
+       "PRINTF" meta.preprocessor.man
+       "(" keyword.operator.man
+       "3" string.quoted.other.man
+       ")" keyword.operator.man
+       "Library Functions Manual" markup.heading.title.man
+       "PRINTF" meta.preprocessor.man
+       "(" keyword.operator.man
+       "3" string.quoted.other.man
+       ")" keyword.operator.man
+   2 | 
+   3 | SYNOPSIS
+       "SYNOPSIS" markup.heading.synopsis.man
+   4 |        #include <stdio.h>
+       "       " source.c meta.preprocessor.c
+       "#include" source.c keyword.control.import.include.c
+       " " source.c meta.preprocessor.c
+       "<" source.c string.quoted.other.lt-gt.include.c punctuation.definition.string.begin.c
+       "stdio.h" source.c string.quoted.other.lt-gt.include.c
+       ">" source.c string.quoted.other.lt-gt.include.c punctuation.definition.string.end.c
+   5 | 
+   6 |        int printf(const char *restrict format, ...);
+       "int" source.c storage.type.c
+       "printf" source.c entity.name.function.c
+       "(" source.c punctuation.section.group.begin.c
+       "const" source.c storage.modifier.c
+       "char" source.c storage.type.c
+       "*" source.c keyword.operator.c
+       "restrict" source.c storage.modifier.c
+       "format" source.c variable.parameter.c
+       "," source.c punctuation.separator.c
+       "..." source.c keyword.operator.variadic.c
+       ")" source.c punctuation.section.group.end.c
+       ";" source.c punctuation.terminator.c
+   7 |        /* a comment
+       "/*" source.c comment.block.c punctuation.definition.comment.c
+       " a comment" source.c comment.block.c
+   8 |           across lines */
+       "          across lines " source.c comment.block.c
+       "*/" source.c comment.block.c punctuation.definition.comment.c
+   9 | 
+  10 |    Feature Test Macro Requirements for glibc (see feature_test_macros(7)):
+       "Feature Test Macro Requirements for glibc (see feature_test_macros(7)):" markup.heading.subsection.man
+  11 | 
+  12 |        snprintf():
+       "snprintf" source.c support.function.C99.c
+       "(" source.c punctuation.section.group.begin.c
+       ")" source.c punctuation.section.group.end.c
+       ":" source.c keyword.operator.ternary.c
+  13 |            _XOPEN_SOURCE >= 500
+       ">=" source.c keyword.operator.comparison.c
+       "500" source.c constant.numeric.integer.decimal.c
+  14 | 
+  15 | DESCRIPTION
+       "DESCRIPTION" markup.heading.other.man
+  16 |        The functions in the printf() family produce output.
+       "printf" entity.name.function.man
+       "(" keyword.operator.man
+       ")" keyword.operator.man
+  17 | 
+  18 | Linux man-pages 6.9.1            2024-06-15                       PRINTF(3)
+       "PRINTF" meta.preprocessor.man
+       "(" keyword.operator.man
+       "3" string.quoted.other.man
+       ")" keyword.operator.man

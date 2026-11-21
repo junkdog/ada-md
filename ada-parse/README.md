@@ -57,6 +57,7 @@ cargo run -p ada-parse --example incremental
   Dockerfile, `.env`, fstab, Git's own files (config, ignore, attributes, mailmap, link), INI, Java
   properties, JSON, logs, Makefile, nginx, OpenSSH's `ssh_config`, `sshd_config` and
   `known_hosts`, pkg-config, Terraform, TOML, XML, YAML.
+- **Text:** man pages as `man` shows them (`col -bx`'d, bat's `Manpage`), C in their synopses.
 
 `Lang::ALL` lists them. Languages arrive in most releases.
 

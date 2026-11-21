@@ -433,6 +433,25 @@ impl State {
                     })
                     .collect()
             }
+            (Listing::Headings, Some(doc)) if doc.is_man_page() => {
+                let chapters = doc.chapters();
+                let rows = super::diffs::rows_of(&doc.layout, chapters.iter().map(|c| c.line));
+                chapters
+                    .iter()
+                    .zip(rows)
+                    .enumerate()
+                    .filter_map(|(i, (c, row))| {
+                        Some(OutlineEntry {
+                            id: i as u32,
+                            level: c.level,
+                            row: row?,
+                            text: Cow::Borrowed(&c.name),
+                            dest: None,
+                            broken: false,
+                        })
+                    })
+                    .collect()
+            }
             (Listing::Headings, Some(doc)) => doc
                 .layout
                 .headings

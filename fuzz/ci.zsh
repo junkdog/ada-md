@@ -63,6 +63,8 @@ LANGS=(
   z80asm 3357 7              mos6502asm 3720 8          m68kasm 3999 9
   # X-169: Dart, from its cmin after the 300 s smoke and 900 s follow-up (2026-11-21)
   dart 2255 12
+  # X-188: from its first corpus's cmin (2026-11-21, after its 300 s smoke)
+  manpage 5124 9
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done

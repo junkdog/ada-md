@@ -68,6 +68,12 @@ impl FileType {
         lang: Some(crate::diagram::LANG),
     };
 
+    /// A man page as `man` shows it (X-188): its bold and underline, struck over or as escapes,
+    /// read without them, the page highlighted as ada reads it.
+    pub const MANPAGE: FileType = FileType::Text {
+        lang: Some("Manpage"),
+    };
+
     /// Text in its own colors (FEAT-022): colored stdin that isn't a diff ada colors itself, or
     /// any text `-l ansi` names.
     pub const ANSI: FileType = FileType::Text {
@@ -125,7 +131,8 @@ impl FileType {
     /// `README`, `TODO` and the like are read as markdown, as they always were. Colored stdin is
     /// sniffed without its escapes, and keeps its own colors unless that reads as a diff whose
     /// colors say no more than its marks ([`highlight::keeps_own_colors`], FEAT-022). `man`'s
-    /// text struck over itself (bold, underlined) without colors too (PGR-007).
+    /// text struck over itself (bold, underlined) without colors too (PGR-007); `man`'s page,
+    /// in either form, is highlighted as a man page (X-188).
     pub fn of(path: &Path, text: &str) -> FileType {
         let bytes = text.as_bytes();
         if is_stdin(path)
@@ -137,6 +144,9 @@ impl FileType {
                 false => crate::stdin::strip(text),
             };
             let filetype = FileType::of_plain(path, &plain);
+            if filetype == FileType::MANPAGE {
+                return filetype;
+            }
             let diff = filetype == (FileType::Text { lang: Some("Diff") });
             return match highlight::keeps_own_colors(text, diff) {
                 true => FileType::ANSI,
@@ -223,9 +233,12 @@ impl FileType {
     }
 
     /// The text `path`'s document of this type shows, of `text` as read: stdin without its
-    /// escapes, unless it is in its own colors (FEAT-022); a file as it is.
+    /// escapes, unless it is in its own colors (FEAT-022), a man page without its characters
+    /// struck over too (X-188); a file as it is.
     pub fn shown_text<'a>(&self, path: &Path, text: &'a str) -> Cow<'a, str> {
-        if is_stdin(path) && *self != FileType::ANSI {
+        if is_stdin(path) && *self == FileType::MANPAGE {
+            highlight::ansi_shown(text)
+        } else if is_stdin(path) && *self != FileType::ANSI {
             crate::stdin::strip(text)
         } else {
             Cow::Borrowed(text)
@@ -668,6 +681,24 @@ mod tests {
         assert_eq!(FileType::of(stdin, man), FileType::ANSI);
         let doc = FileType::ANSI.parse(stdin, man);
         assert_eq!(&*doc.code_blocks()[0].text, "NAME\n       ls - list\n");
+    }
+
+    /// X-188: `man`'s page, struck over (`GROFF_NO_SGR`) or in SGR escapes, is a man page shown
+    /// without its marks; as plain text too, and `-l man` names it.
+    #[test]
+    fn man_pages_from_man() {
+        let stdin = Path::new("-");
+        let title = "LS(1)                 User Commands                 LS(1)\n\n";
+        let plain = format!("{title}NAME\n     ls - list\n");
+        let struck = format!("{title}N\x08NA\x08AM\x08ME\x08E\n     _\x08l_\x08s - list\n");
+        let sgr = format!("{title}\x1b[1mNAME\x1b[0m\n     \x1b[4mls\x1b[24m - list\n");
+        for text in [&plain, &struck, &sgr] {
+            assert_eq!(FileType::of(stdin, text), FileType::MANPAGE, "{text:?}");
+            let doc = FileType::MANPAGE.parse(stdin, text);
+            assert_eq!(&*doc.code_blocks()[0].text, plain, "{text:?}");
+        }
+        assert_eq!(FileType::named("man"), Some(FileType::MANPAGE));
+        assert_eq!(FileType::of(Path::new("ls.man"), &plain), FileType::MANPAGE);
     }
 
     #[test]

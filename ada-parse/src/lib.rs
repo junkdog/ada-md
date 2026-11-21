@@ -64,6 +64,7 @@ mod line_format;
 mod lisp;
 mod logs;
 mod lua;
+mod man;
 mod matcher;
 mod nginx;
 mod nix;
@@ -105,6 +106,9 @@ pub use lang::Lang;
 // ada-md's, not the API (REL-025)
 #[doc(hidden)]
 pub use lang::{ALIASES, FirstLine, IGNORED_SUFFIXES, first_line_syntaxes};
+// a man page's headings, for ada's outline, and whether a text is one (X-188)
+#[doc(hidden)]
+pub use man::{Section as ManSection, is_page as is_man_page, sections as man_sections};
 // a diff's files and hunks, for ada's lines in their file's language (X-174, X-176)
 #[doc(hidden)]
 pub use diff::{
@@ -425,6 +429,7 @@ fn run_lines(lang: Lang) -> Option<RunLinesOf> {
         Lang::Dockerfile => lines_run::<dockerfile::RunLine>,
         Lang::Makefile => lines_run::<bash::MakeRunLine>,
         Lang::Diff => lines_run::<diff::RunLine>,
+        Lang::Manpage => lines_run::<man::RunLine>,
         _ => return None,
     })
 }
@@ -864,6 +869,10 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
             v.clear();
             diff::line(l.as_bytes(), &mut Out::new(v));
         },
+        Lang::Manpage if !SPANS => {
+            |_, _, _| unreachable!("a man page's runs come from its own scan")
+        }
+        Lang::Manpage => out!(man::line),
         Lang::Ini => out!(ini::line),
         Lang::Toml if !SPANS => |_, _, _| unreachable!("TOML's runs come from its own scan"),
         Lang::Toml => out!(toml_scan::line),
