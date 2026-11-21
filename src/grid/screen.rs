@@ -780,8 +780,8 @@ fn digits(n: u16) -> usize {
     }
 }
 
-/// SGR parameters from `from` to `to`, as ratatui's crossterm backend sends them, each followed
-/// by `;`.
+/// SGR parameters from `from` to `to`, as ratatui's crossterm backend sends them but dim before
+/// bold (below), each followed by `;`.
 fn modifiers(out: &mut Vec<u8>, from: u16, to: u16) {
     let (from, to) = (
         Modifier::from_bits_truncate(from),
@@ -818,13 +818,21 @@ fn modifiers(out: &mut Vec<u8>, from: u16, to: u16) {
     if removed.intersects(Modifier::SLOW_BLINK | Modifier::RAPID_BLINK) {
         sgr(b"25");
     }
-    let added = to - from;
+    let mut added = to - from;
+    // dim before bold, here and past a reset above: a terminal with one intensity (ECMA-48's, as
+    // WezTerm and vt100 keep it) shows the last, so a cell both bold and dim shows bold there, in
+    // every frame, and both where they're two flags (xterm, VTE, kitty). Dim added to bold sends
+    // bold again after it.
+    let intensity = Modifier::BOLD | Modifier::DIM;
+    if to.contains(intensity) && added.intersects(intensity) {
+        added |= intensity;
+    }
     for (m, n) in [
         (Modifier::REVERSED, &b"7"[..]),
+        (Modifier::DIM, b"2"),
         (Modifier::BOLD, b"1"),
         (Modifier::ITALIC, b"3"),
         (Modifier::UNDERLINED, b"4"),
-        (Modifier::DIM, b"2"),
         (Modifier::CROSSED_OUT, b"9"),
         (Modifier::HIDDEN, b"8"),
         (Modifier::SLOW_BLINK, b"5"),
@@ -882,6 +890,24 @@ mod tests {
     use super::*;
 
     use crate::style::Style;
+
+    /// A cell both bold and dim gets dim before bold however it's reached, so that a terminal
+    /// with one intensity (WezTerm, vt100) shows it bold in every frame.
+    #[test]
+    fn dim_before_bold() {
+        let run = |from: Modifier, to: Modifier| {
+            let mut out = Vec::new();
+            modifiers(&mut out, from.bits(), to.bits());
+            String::from_utf8(out).unwrap()
+        };
+        let (b, d, i) = (Modifier::BOLD, Modifier::DIM, Modifier::ITALIC);
+        assert_eq!(run(Modifier::empty(), b | d), "2;1;");
+        assert_eq!(run(b, b | d), "2;1;");
+        assert_eq!(run(d, b | d), "2;1;");
+        assert_eq!(run(b | d | i, b | d), "23;");
+        assert_eq!(run(b | d, d), "22;2;");
+        assert_eq!(run(b | d | i, b), "22;1;23;");
+    }
 
     /// What the encoder wrote, replayed over the terminal's cells, within the scroll margins
     /// the terminal kept from the frame before.

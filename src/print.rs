@@ -721,9 +721,16 @@ fn diff(from: Pen, to: Pen, out: &mut Vec<u8>) -> bool {
             out.extend_from_slice(code);
         }
     }
+    // dim before bold: a terminal with one intensity (ECMA-48's, as WezTerm keeps it) shows the
+    // last, so text both bold and dim shows bold there, and both where they're two flags. Dim
+    // added to bold sends bold again after it.
+    let intensity = Modifier::BOLD | Modifier::DIM;
+    if to.modifier().contains(intensity) && added.intersects(intensity) {
+        added |= intensity;
+    }
     for (flag, code) in [
-        (Modifier::BOLD, b";1"),
         (Modifier::DIM, b";2"),
+        (Modifier::BOLD, b";1"),
         (Modifier::ITALIC, b";3"),
         (Modifier::UNDERLINED, b";4"),
         (Modifier::SLOW_BLINK, b";5"),
@@ -976,6 +983,12 @@ mod tests {
             sgr(to.dim(), to.not_bold().not_italic().dim()),
             "\x1b[22;23;2m"
         );
+        // bold and dim: dim first, so a terminal with one intensity shows bold, and dim added
+        // to bold sends bold again
+        let both = Style::new().add_modifier(Modifier::BOLD | Modifier::DIM);
+        assert_eq!(sgr(Style::new(), both), "\x1b[2;1m");
+        assert_eq!(sgr(both.remove_modifier(Modifier::DIM), both), "\x1b[2;1m");
+        assert_eq!(sgr(both.remove_modifier(Modifier::BOLD), both), "\x1b[2;1m");
         // or a reset, when that's shorter
         assert_eq!(sgr(to, Style::new()), "\x1b[0m");
         assert_eq!(sgr(to, Style::new().fg(rgb)), "\x1b[22;23;49m");

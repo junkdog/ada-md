@@ -911,10 +911,10 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSe
                 .map(|s| m.contains(s));
                 // bold and dim together (text that keeps its own colors, `ESC [ 1 ; 2 m`), as
                 // xterm, VTE and kitty show them: vt100 holds one intensity, ECMA-48's, so `1`
-                // and `2` replace each other there, and the terminal shows whichever the encoder
-                // sent last (`1` then `2` when both are added, `22;2;1` past a reset)
-                if m.contains(Modifier::BOLD | Modifier::DIM) && seen.bold() != seen.dim() {
-                    styles[..2].copy_from_slice(&[seen.bold(), seen.dim()]);
+                // and `2` replace each other there, and the encoder sends dim before bold so that
+                // such a terminal shows bold, in every frame
+                if m.contains(Modifier::BOLD | Modifier::DIM) {
+                    styles[1] = false;
                 }
                 let want = (
                     symbol,
