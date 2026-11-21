@@ -20,6 +20,8 @@
 #   ci.zsh pack                        the local corpora as target/ci-seed/TARGET.tar.zst, for the
 #                                      `fuzz-corpus` release a first round starts from
 #   ci.zsh langs [BIN]                 fails unless `tokens`' languages (BIN's list) are LANGS's
+#   ci.zsh flags TARGET                the target's libFuzzer flags a line each, `--`, then its
+#                                      corpus dirs beyond its own (cover.zsh runs with them)
 #
 # The corpus's store between rounds is the `corpus-TARGET` artifact (kept 90 days), so nothing
 # is written to the repo or its releases. Inputs are named by their hash, so a union is a copy.
@@ -335,5 +337,6 @@ case ${1:-} in
   union) union "${2:?target}" "${3:-}" ;;
   pack) pack ;;
   langs) langs "${2:-}" ;;
-  *) die "usage: ci.zsh plan|fetch|run|union|pack|langs …" ;;
+  flags) flags "${2:?target}"; print -rl -- $args -- $dirs ;;
+  *) die "usage: ci.zsh plan|fetch|run|union|pack|langs|flags …" ;;
 esac

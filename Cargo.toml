@@ -104,6 +104,10 @@ rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/junkdog/ada-md"
 
+# `cargo xtask` runs a dev build; `cover` (F-020) parses gigabytes of libFuzzer's control files
+[profile.dev.package.xtask]
+opt-level = 3
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

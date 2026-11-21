@@ -22,7 +22,13 @@
 //!
 //! `cargo xtask size`: ada-parse's bytes in the release binary, by module: code by the line
 //! tables, data by symbol (`size`, ADR-40).
+//!
+//! `cargo xtask cover [--covered CONTROL]... CONTROL...`: the inputs that reach all of a corpus's
+//! features, from the merge control files of `fuzz/cover.zsh`'s replay, best first; with
+//! `--covered`, those of the rest that add to the covered ones'; with `--new`, a smoke's new inputs
+//! that may add to them, by the features files its workers wrote (`cover`, F-020).
 
+mod cover;
 mod lackey;
 mod names;
 mod size;
@@ -46,12 +52,13 @@ fn main() -> ExitCode {
             let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
             names::run(root, args.any(|a| a == "--check"))
         }
+        Some("cover") => cover::run(&args.collect::<Vec<_>>()),
         Some("size") => size::run(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()),
         Some("lackey") => lackey::filter(io::stdin().lock(), BufWriter::new(io::stdout().lock()))
             .map(|()| ExitCode::SUCCESS)
             .map_err(|e| e.to_string()),
         _ => Err(
-            "usage: cargo ordered [CARGO_ARGS...] | cargo xtask demangle < NAMES | cargo xtask lackey < LOG | cargo xtask names [--check] | cargo xtask size"
+            "usage: cargo ordered [CARGO_ARGS...] | cargo xtask demangle < NAMES | cargo xtask lackey < LOG | cargo xtask names [--check] | cargo xtask size | cargo xtask cover [--covered CONTROL]... (CONTROL... | --new INPUTS FEATURES...)"
                 .into(),
         ),
     };
