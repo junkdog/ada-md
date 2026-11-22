@@ -500,7 +500,10 @@ fn shell_words(s: &str) -> Vec<String> {
 
 /// The command line that opens `file` at `line` in `editor` (a `$VISUAL` / `$EDITOR` value):
 /// `+{line} {file}` for the editors that take it, `{file}:{line}` for helix, and just `{file}`
-/// for the rest. `None` when the setting is blank.
+/// for the rest. Vim and its kin get `+{line}|normal! zt`: `line` is the first source line on
+/// ada's screen, and a bare `+{line}` lands it partway down the window, so the editor would
+/// show from lines above it. `vi` keeps the bare form, as nvi and busybox's have no `normal`.
+/// `None` when the setting is blank.
 pub fn editor_command(editor: &str, file: &Path, line: u32) -> Option<Vec<OsString>> {
     let mut argv: Vec<OsString> = shell_words(editor)
         .into_iter()
@@ -533,7 +536,10 @@ pub fn editor_command(editor: &str, file: &Path, line: u32) -> Option<Vec<OsStri
         "mg",
         "vis",
     ];
-    if plus.contains(&&*program) {
+    if ["vim", "nvim", "gvim", "mvim", "view"].contains(&&*program) {
+        argv.push(format!("+{line}|normal! zt").into());
+        argv.push(file.into());
+    } else if plus.contains(&&*program) {
         argv.push(format!("+{line}").into());
         argv.push(file.into());
     } else if program == "hx" || program == "helix" {
@@ -655,11 +661,23 @@ mod tests {
                     .collect::<Vec<_>>()
             })
         };
-        assert_eq!(cmd("nvim").unwrap(), ["nvim", "+42", "notes/a b.md"]);
+        // vim's kin put the line at the window's top, as it is at ada's
+        assert_eq!(
+            cmd("nvim").unwrap(),
+            ["nvim", "+42|normal! zt", "notes/a b.md"]
+        );
         assert_eq!(
             cmd("/usr/bin/vim -u NONE").unwrap(),
-            ["/usr/bin/vim", "-u", "NONE", "+42", "notes/a b.md"]
+            [
+                "/usr/bin/vim",
+                "-u",
+                "NONE",
+                "+42|normal! zt",
+                "notes/a b.md"
+            ]
         );
+        assert_eq!(cmd("vi").unwrap(), ["vi", "+42", "notes/a b.md"]);
+        assert_eq!(cmd("nano").unwrap(), ["nano", "+42", "notes/a b.md"]);
         assert_eq!(cmd("hx").unwrap(), ["hx", "notes/a b.md:42"]);
         assert_eq!(
             cmd("code --wait").unwrap(),
@@ -676,7 +694,7 @@ mod tests {
             [
                 r"C:\Program Files\Neovim\bin\nvim.exe",
                 "--clean",
-                "+42",
+                "+42|normal! zt",
                 "notes/a b.md"
             ]
         );

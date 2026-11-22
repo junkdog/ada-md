@@ -490,7 +490,12 @@ mod tests {
         let embeds = gather(&host, &text, &crate::links::BuiltinResolver);
         let read: Vec<_> = (embeds.0.iter())
             .map(|n| {
-                let rel = |p: &Path| p.strip_prefix(&dir).unwrap().to_string_lossy().into_owned();
+                // `/` between the parts on every OS: Windows' resolver joins with `\`
+                let rel = |p: &Path| {
+                    let parts = p.strip_prefix(&dir).unwrap().components();
+                    let parts = parts.map(|c| c.as_os_str().to_string_lossy().into_owned());
+                    parts.collect::<Vec<_>>().join("/")
+                };
                 (rel(&n.from), n.target.clone(), rel(&n.path))
             })
             .collect();
