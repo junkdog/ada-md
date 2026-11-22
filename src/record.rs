@@ -29,9 +29,10 @@ use crossterm::event::{self, Event, KeyEventKind};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{self, Computed, Cursor, Dir, Effects, Msg, ScrollBy, Size, State};
+use crate::doc::{Embeds, Vault, embed};
 use crate::grid::Grid;
 use crate::images::{self, Probe, Proto, Wire};
-use crate::links::Resolved;
+use crate::links::{LocalTarget, Resolved};
 use crate::ui;
 
 pub const HEADER: &str = "ada-rec 1";
@@ -70,6 +71,7 @@ messages! {
     "sort-open" => SortOpen {},
     "sort-table" => SortTable { dir },
     "toggle-code-wrap" => ToggleCodeWrap {},
+    "toggle-properties" => ToggleProperties {},
     "toggle-line-numbers" => ToggleLineNumbers {},
     "toggle-theme-bg" => ToggleThemeBg {},
     "toggle-mouse" => ToggleMouse {},
@@ -117,7 +119,7 @@ messages! {
     "settings-save" => SettingsSave {},
     "settings-cancel" => SettingsCancel {},
     "quit" => Quit {},
-    "doc-loaded" => DocLoaded { path, mtime, text, doc },
+    "doc-loaded" => DocLoaded { path, mtime, text, vault, embeds, doc },
     "doc-failed" => DocFailed { path, error },
     "links-resolved" => LinksResolved { doc_gen, resolved },
     "open-failed" => OpenFailed { target, error },
@@ -365,7 +367,104 @@ impl Field for Vec<Probe> {
     }
 }
 
+/// The notes a load read for a note's embeds (OBS-007), each as four lines and its text:
+/// `from "<note>"`, `wiki "<name>"` or `path "<path>"`, `file "<path>"`, `mtime=<ms|none>
+/// bytes=<n>`, then its `n` bytes and a newline. Left out when there are none, as in recordings
+/// from before.
+impl Field for Embeds {
+    fn write(&self, key: &str, line: &mut String, blobs: &mut Vec<u8>) {
+        if self.is_empty() {
+            return;
+        }
+        let mut text = String::new();
+        for n in self.0.iter() {
+            let (kind, name) = match &n.target {
+                LocalTarget::Wiki(name) => ("wiki", name),
+                LocalTarget::Path(name) => ("path", name),
+            };
+            let mtime = n.mtime.map_or_else(|| "none".to_owned(), |m| m.to_string());
+            let _ = writeln!(text, "from {}", quote(&n.from.to_string_lossy()));
+            let _ = writeln!(text, "{kind} {}", quote(name));
+            let _ = writeln!(text, "file {}", quote(&n.path.to_string_lossy()));
+            let _ = writeln!(text, "mtime={mtime} bytes={}", n.text.len());
+            text.push_str(&n.text);
+            text.push('\n');
+        }
+        let _ = write!(line, " {key}:{}", text.len());
+        blobs.extend_from_slice(text.as_bytes());
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        let Value::Blob(bytes) = value else {
+            return None;
+        };
+        let text = String::from_utf8(bytes).ok()?;
+        let mut rest = &text[..];
+        fn next<'a>(rest: &mut &'a str) -> Option<&'a str> {
+            let (l, r) = rest.split_once('\n')?;
+            *rest = r;
+            Some(l)
+        }
+        let field = |l: &str, name: &str| {
+            let value = l.strip_prefix(name)?.strip_prefix(' ')?;
+            left(quoted(), empty()).parse(value).result
+        };
+        let mut notes = Vec::new();
+        while let Some(from) = next(&mut rest) {
+            let from = field(from, "from")?;
+            let target = next(&mut rest)?;
+            let target = match field(target, "wiki") {
+                Some(name) => LocalTarget::Wiki(name),
+                None => LocalTarget::Path(field(target, "path")?),
+            };
+            let path = field(next(&mut rest)?, "file")?;
+            let (mtime, len) = next(&mut rest)?
+                .strip_prefix("mtime=")?
+                .split_once(" bytes=")?;
+            let mtime = match mtime {
+                "none" => None,
+                m => Some(m.parse().ok()?),
+            };
+            let len: usize = len.parse().ok()?;
+            let body = rest.get(..len)?;
+            rest = rest.get(len..)?.strip_prefix('\n')?;
+            notes.push(embed::Note {
+                from: from.into(),
+                target,
+                path: path.into(),
+                mtime,
+                text: body.into(),
+            });
+        }
+        Some(Embeds(notes.into()))
+    }
+
+    fn absent() -> Option<Self> {
+        Some(Embeds::default())
+    }
+}
+
 /// Absent from recordings made before IMG-002, whose images were streamed.
+/// Left out where a note is in no vault, as in recordings from before it was recorded.
+impl Field for Vault {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        if *self != Vault::None {
+            inline(key, line, self.name());
+        }
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Ident(s) => Vault::parse(&s),
+            _ => None,
+        }
+    }
+
+    fn absent() -> Option<Self> {
+        Some(Vault::None)
+    }
+}
+
 impl Field for Wire {
     fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
         inline(key, line, self.name());
@@ -877,6 +976,7 @@ mod tests {
             Msg::SortOpen,
             Msg::SortTable { dir: Dir::Prev },
             Msg::ToggleCodeWrap,
+            Msg::ToggleProperties,
             Msg::ToggleLineNumbers,
             Msg::ToggleThemeBg,
             Msg::ToggleMouse,
@@ -1007,12 +1107,42 @@ mod tests {
                 path: "a.md".into(),
                 mtime: Some(1_760_535_362_123),
                 text: "# Title\n\nno trailing newline".into(),
+                vault: Vault::ObsidianStrict,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
             Msg::DocLoaded {
                 path: "-".into(),
                 mtime: None,
                 text: "".into(),
+                vault: Vault::None,
+                embeds: Default::default(),
+                doc: Computed(None),
+            },
+            Msg::DocLoaded {
+                path: "host.md".into(),
+                mtime: Some(3),
+                text: "![[a]]\n".into(),
+                vault: Vault::ObsidianStrict,
+                embeds: Embeds(
+                    vec![
+                        embed::Note {
+                            from: "host.md".into(),
+                            target: LocalTarget::Wiki("a \"quoted\"".into()),
+                            path: "notes/a.md".into(),
+                            mtime: Some(1_760_535_362_123),
+                            text: "# A\n\nends without a newline".into(),
+                        },
+                        embed::Note {
+                            from: "notes/a.md".into(),
+                            target: LocalTarget::Path("b c.md".into()),
+                            path: "notes/b c.md".into(),
+                            mtime: None,
+                            text: "from \"x\"\nfile \"y\"\n\n".into(),
+                        },
+                    ]
+                    .into(),
+                ),
                 doc: Computed(None),
             },
             Msg::DocFailed {
@@ -1062,6 +1192,8 @@ mod tests {
                 path: "notes/a.md".into(),
                 mtime: Some(1_760_535_362_123),
                 text: "# a\nb\nc".into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             }
         );
@@ -1097,6 +1229,8 @@ mod tests {
                 path: "a.md".into(),
                 mtime: None,
                 text: "```rust\nfn main() {}\n```\n".into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         ]

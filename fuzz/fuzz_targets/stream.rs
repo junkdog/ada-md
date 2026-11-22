@@ -80,12 +80,14 @@ fuzz_target!(|data: &[u8]| {
             LineNumbers::Off
         },
         glyphs_gen: theme().glyphs.generation(),
+        properties: Default::default(),
         images: None,
     };
     let first = text.len() * usize::from(*first) / 255;
 
     let filetype = FileType::Text { lang };
-    let doc = filetype.parse(Path::new("fuzz"), &String::from_utf8_lossy(text));
+    let shown = String::from_utf8_lossy(text);
+    let doc = filetype.parse(Path::new("fuzz"), &shown, Default::default());
     let whole = render(&doc, theme(), filetype.params(params), Options::default());
     let mut out = Vec::new();
     let limits = Limits { piece, lines };

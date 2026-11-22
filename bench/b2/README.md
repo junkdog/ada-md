@@ -21,6 +21,14 @@ UV_TOOL_DIR=$B2_ROOT/tools/uv UV_TOOL_BIN_DIR=$B2_ROOT/tools/bin uv tool install
 # bat, kitty (kitten), chafa and glow from the distribution
 cargo install --locked --root $B2_ROOT/tools mdfried@0.22.8 --no-default-features --features svg,mermaid  # no libchafa
 # treemd HEAD, if wanted, as tools/bin/treemd-head; glow from the distribution; lowdown built with cc -O2
+# the Obsidian viewers (2026-11-22; smd's crates.io name is another project's, so it comes from its tag)
+cargo install --locked --root $B2_ROOT/tools basalt-tui@0.13.0 ekphos@0.60.20 emeraldian@0.10.2
+cargo install --locked --root $B2_ROOT/tools --git https://github.com/ryanlewis/smd --tag v0.2.1 smd
+# their homes: basalt panics without an Obsidian config, even on one file; ekphos reads $HOME/.config, not XDG,
+# and checks for updates at every start unless told not to: run it once with HOME=$B2_ROOT/home/ekphos, then
+# set check_updates = false in the .config/ekphos/config.toml it wrote there
+mkdir -p $B2_ROOT/home/{basalt/config/obsidian,ekphos,emeraldian,smd}
+print '{"vaults":{}}' > $B2_ROOT/home/basalt/config/obsidian/obsidian.json
 # the corpus: s.md, m.md, l.md (vault notes) and xl.md (notes over 4 KB concatenated to 2 MB)
 cargo build --release --manifest-path bench/b2/Cargo.toml   # the pty driver, bench/b2/target/release/b2
 ```
@@ -29,7 +37,9 @@ cargo build --release --manifest-path bench/b2/Cargo.toml   # the pty driver, be
 
 `ADA=<release ada> zsh bench/b2/full.zsh bench/b2/root/results/<date>-<sha>-all` runs all of it (the lanes,
 print mode, the previewer files, images, mermaid diagrams and the tables) into a record set that `rerun.zsh` takes as REF, with
-the bench cores held ready (below). The steps one by one:
+the bench cores held ready (below). A viewer new to B2 gets a dry run first: `zsh bench/b2/dry.zsh OUT
+basalt,ekphos` runs the lanes alone for those viewers, with fewer runs, beside two controls (the last measured ada
+and leaf), whose cells against the tables give the drift; nothing is merged. The steps one by one:
 
 ```zsh
 B2=bench/b2/target/release/b2

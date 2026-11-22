@@ -124,6 +124,8 @@ fn measure(theme: &Theme, text: &str) -> Measured {
                 path: "bench.md".into(),
                 mtime: None,
                 text: text.into(),
+                vault: ada::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -213,6 +215,7 @@ fn params(theme: &Theme, width: u16) -> LayoutParams {
         bare: false,
         line_numbers: Default::default(),
         glyphs_gen: theme.glyphs.generation(),
+        properties: Default::default(),
         images: None,
     }
 }

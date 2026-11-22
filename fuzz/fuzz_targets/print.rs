@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use ada::app::{Head, cut_to_head};
+use ada::doc::Dialect;
 use ada::filetype::{self, FileType};
 use ada::geom::Size;
 use ada::git::LineMarks;
@@ -213,6 +214,7 @@ fuzz_target!(|data: &[u8]| {
         line_numbers: [LineNumbers::Off, LineNumbers::Code, LineNumbers::All]
             [usize::from(setup.line_numbers) % 3],
         glyphs_gen: theme.glyphs.generation(),
+        properties: Default::default(),
         images: proto.map(|_| ImageFit {
             cell,
             max_rows: (height * 3 / 5).max(1),
@@ -222,7 +224,12 @@ fuzz_target!(|data: &[u8]| {
     let filetype = forced.unwrap_or_else(|| FileType::of(path, &text));
     // a file of code printed on the terminal's background, as `ada -p` prints one
     params.bare = setup.table_mode & 0x40 != 0 && matches!(filetype, FileType::Text { .. });
-    let doc = filetype.parse(path, &text);
+    // Obsidian's markdown on a bit of its own (ADR-45)
+    let dialect = match setup.table_mode & 0x20 {
+        0 => Dialect::CommonMark,
+        _ => Dialect::Obsidian { line_breaks: true },
+    };
+    let doc = filetype.parse(path, &text, dialect);
 
     let pictures = proto.map(|proto| {
         if image.is_empty() {

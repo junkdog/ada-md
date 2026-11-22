@@ -23,7 +23,7 @@ More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-m
   them, settings apply behind their popup, and back returns to the same spot.
 - **Small on purpose:** what a note and a vault of linked notes need, from an
   [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) to Obsidian.
-  No file browser, no editor, no math.
+  No file browser and no editor; math is typeset as Unicode text, not drawn.
 - **Never crashes:** safe Rust from parsing to drawing, and whole sessions fuzzed for hours.
 
 ## Highlights
@@ -168,6 +168,7 @@ one. `--code-wrap off` cuts long lines at the pane's edge.
 | `s` | sort a table by a column; `C-←` `C-→` pick another table |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
 | `#` | line numbers on or off |
+| `p` | a note's properties (its front matter) shown or hidden |
 | `B` | the theme's background, or the terminal's |
 | `T` | pick a theme, previewing each; `C-←` `C-→` switch between dark and light |
 | `r` | read the file again |
@@ -193,8 +194,8 @@ with `Shift` held; `M` hands them the mouse, and `mouse = false` starts that way
 
 ## Configuration
 
-ada reads `~/.config/ada/config.toml` (`$XDG_CONFIG_HOME/ada/config.toml`; on Windows,
-`%APPDATA%\ada\config.toml`), and flags on the command line win. The first interactive run creates
+ada reads `~/.config/ada/config.toml` (`$XDG_CONFIG_HOME/ada/config.toml`), on macOS too, not
+`~/Library` (on Windows, `%APPDATA%\ada\config.toml`), and flags on the command line win. The first interactive run creates
 it with every option commented out at its default. It's the only file ada writes unasked; an empty
 file keeps it from coming back.
 
@@ -218,6 +219,10 @@ tables = "auto"            # the table layout to start with: auto, grid or recor
 code_wrap = true
 line_numbers = "code"      # number rows by source line: off, code (code and text files) or all
 
+[markdown]
+flavor = "auto"            # Obsidian's markdown in an Obsidian vault; or "commonmark", "obsidian"
+properties = "show"        # front matter as key and value rows above the note (`p`); "hide", or "source" as written
+
 [links]
 roots = ["~/notes"]       # where links are looked up by name; see Links in a vault
 root_markers = [".obsidian"]  # a directory holding one of these is a root too (the default)
@@ -237,11 +242,33 @@ Keys are written like `j`, `G`, `ctrl-d`, `alt-x`, `shift-up`, `space`, `enter`,
 A `[[wiki link]]` resolves beside its note first, then by name anywhere under the note's root, as
 in Obsidian: the nearest directory above the note that `roots` lists or that holds one of
 `root_markers`. An Obsidian vault needs no setup; any other folder of notes takes one line in
-`roots`. A bare file name such as `![[cat.png]]` is looked up the same way; a path with folders
-stays where it says. Names match ignoring case, and dot folders are skipped. When several files
-share a name, the one in a folder named like the note's wins (`10-projects/sift` →
-`40-archive/sift`); otherwise the link shows as broken and lists them, and `[[folder/name]]` picks
-one.
+`roots`. A bare file name such as `![[cat.png]]` is looked up the same way; a path with folders,
+`[x](Projects/Note.md)`, is found beside the note, else from the root, as Obsidian writes a
+markdown link in its absolute link format. Names match ignoring case, and dot folders are
+skipped. When several files share a name, the one in a folder named like the note's wins
+(`10-projects/sift` → `40-archive/sift`); otherwise the link shows as broken and lists them, and
+`[[folder/name]]` picks one. A name no file has can be another name a note gives itself, in the
+`aliases` of its front matter, as in Obsidian. `[[note#Setup#Linux]]` names the heading Linux
+under Setup.
+
+### Obsidian notes
+
+A note under a `.obsidian` folder reads as Obsidian shows it: a single newline breaks the line,
+unless the vault turns on strict line breaks, and a block's `^id` at its end is hidden. `flavor`
+under `[markdown]`, or `--flavor`, reads every note one way (`commonmark` or `obsidian`), stdin
+too. In any note, `$…$` and `$$…$$` are typeset as Unicode text, and an embedded note alone in its
+paragraph, `![[note]]`, `![[note#Heading]]` or `![[note#^id]]`, shows that note, the heading's
+section of it or the block, in place under a link to it; it reloads when that note changes.
+Beside other text, an embed is the link. `[[note#^id]]` leads to the block, and the task
+statuses of Obsidian's themes, `- [/]` in progress, `[-]` cancelled, `[>]`, `[<]`, `[!]`, `[?]`
+and `[*]`, draw as task boxes of their own.
+
+Front matter, YAML between `---` lines or TOML between `+++` lines, shows above the note as its
+properties: a dim row for each key and its value, lists joined, `tags` as tags and `[[links]]`
+followable, then how many more past the first six. `p` hides them, or shows them again;
+`properties = "source"` under `[markdown]` shows the front matter as written instead, as ada does
+when it can't read it. A `title` heads the outline and the heading path of a note without an H1,
+and search finds what the rows show.
 
 ### Themes
 

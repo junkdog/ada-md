@@ -109,6 +109,7 @@ fn main() {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: theme.glyphs.generation(),
+            properties: Default::default(),
             images: None,
         };
         let lay = best(budget, || {

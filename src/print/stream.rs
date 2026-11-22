@@ -599,6 +599,7 @@ mod tests {
             bare: false,
             line_numbers,
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         }
     }
@@ -617,7 +618,7 @@ mod tests {
         limits: Limits,
     ) {
         let text = String::from_utf8_lossy(bytes);
-        let doc = FileType::Text { lang }.parse(Path::new("x"), &text);
+        let doc = FileType::Text { lang }.parse(Path::new("x"), &text, Default::default());
         for bare in [false, true] {
             let params = LayoutParams {
                 bare,

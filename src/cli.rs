@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::doc::Flavor;
 use crate::images::{ImageMode, Proto};
 use crate::layout::LineNumbers;
 
@@ -93,6 +94,12 @@ pub const FLAGS: &[Flag] = &[
         "language",
         ("NAME", Value::Language),
         "show the file as language NAME instead of what ada detects\n(a syntax name or extension: md for markdown, txt for plain text,\nansi for text in its own colors)",
+    ),
+    flag(
+        None,
+        "flavor",
+        ("NAME", Value::Choice(Flavor::NAMES)),
+        "read markdown as commonmark or obsidian (a single newline\nbreaks the line); auto, the default, reads a note in an\nObsidian vault as obsidian",
     ),
     flag(
         Some('L'),
@@ -262,6 +269,7 @@ pub struct Args {
     pub max_width: Option<u16>,
     /// A language name, checked when it's used: the syntaxes load then.
     pub language: Option<String>,
+    pub flavor: Option<Flavor>,
     pub line: Option<u32>,
     /// A search pattern, compiled when it's used.
     pub matching: Option<String>,
@@ -322,6 +330,13 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--height" => out.height = Some(number(&flag, &value(&flag)?)?),
             "--max-width" => out.max_width = Some(number(&flag, &value(&flag)?)?),
             "-l" | "--language" => out.language = Some(value(&flag)?),
+            "--flavor" => {
+                let name = value(&flag)?;
+                let flavor = Flavor::parse(&name).ok_or_else(|| {
+                    format!("{flag}: `{name}` is not auto, commonmark or obsidian")
+                })?;
+                out.flavor = Some(flavor);
+            }
             "-L" | "--line" => out.line = Some(number(&flag, &value(&flag)?)?),
             "-m" | "--match" => out.matching = Some(value(&flag)?),
             "--gutter" => out.gutter = true,
@@ -459,6 +474,20 @@ mod tests {
         assert!(args(&["--print=yes"]).is_err());
         assert!(args(&["--image-protocol", "chafa"]).is_err());
         assert!(args(&["-n", "yes"]).is_err());
+        assert!(args(&["--flavor", "gfm"]).is_err());
+    }
+
+    #[test]
+    fn flavor() {
+        assert_eq!(args(&[]).unwrap().flavor, None);
+        assert_eq!(
+            args(&["--flavor", "obsidian"]).unwrap().flavor,
+            Some(Flavor::Obsidian)
+        );
+        assert_eq!(
+            args(&["--flavor=commonmark"]).unwrap().flavor,
+            Some(Flavor::CommonMark)
+        );
     }
 
     #[test]

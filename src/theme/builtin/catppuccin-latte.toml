@@ -31,6 +31,8 @@ base = "#eff1f5"
 mantle = "#e6e9ef"
 crust = "#dce0e8"
 bg_landed = "#d6dae3"    # not upstream: a step below crust, for where a jump landed, on the page and on code
+bg_mark = "#e9cea9"    # not upstream: yellow 35% over the page, for ==highlights==
+bg_tag = "#daccf4"     # not upstream: mauve 20% over the page, for #tags
 
 [document]
 fg = "text"
@@ -49,6 +51,8 @@ margin = 2
 emph = { fg = "pink", italic = true }
 strong = { fg = "peach", bold = true }
 strike = { crossed_out = true }
+highlight = { bg = "bg_mark" }
+tag = { fg = "mauve", bg = "bg_tag" }
 code = { fg = "green", bg = "surface0", pad = 1 }
 link = { fg = "blue", underline = true }
 link_focused = { fg = "base", bg = "blue" }
@@ -60,10 +64,12 @@ footnote_ref = { fg = "lavender" }
 quote = { fg = "subtext0" }
 quote_bar = { fg = "overlay0" }
 callout_note = { fg = "blue", bold = true }
-callout_tip = { fg = "green", bold = true }
+callout_tip = { fg = "teal", bold = true }
 callout_important = { fg = "mauve", bold = true }
 callout_warning = { fg = "yellow", bold = true }
 callout_caution = { fg = "red", bold = true }
+callout_success = { fg = "green", bold = true }
+callout_quote = { fg = "overlay2", bold = true }
 code = { fg = "text", bg = "mantle" }
 code_text = {}
 code_label = { fg = "overlay1", bg = "mantle", italic = true }
@@ -72,6 +78,9 @@ list_bullet = { fg = "overlay2" }
 list_number = { fg = "overlay2" }
 task_done = { fg = "green" }
 task_open = { fg = "overlay1" }
+# task_active = { … }       # an in-progress task's box, [/]; unset, block.callout_warning
+# task_important = { … }    # an important task's box, [!]; unset, block.callout_caution
+# task_other = { … }        # the box of [>], [<], [?] and [*]; unset, block.callout_note; [-] is task_open's
 rule = { fg = "overlay0" }
 table_border = { fg = "surface2" }
 table_header = { fg = "mauve", bold = true }
@@ -93,6 +102,34 @@ wrap_mark = "↪"
 code_clip = ["‹", "›"]
 sort_mark = ["▲", "▼"]
 image = "🖼 "
+embed = "↳ "                 # before an embedded note or file, shown as a link (`![[note]]`)
+fold = ["▾", "▸"]            # after the title of a callout that folds (`> [!faq]-`): [open, folded]
+
+[glyphs.task_status]         # Obsidian's task statuses past [ ] and [x], by the character in the brackets
+"/" = "[◐] "                 # in progress
+"-" = "[–] "                 # cancelled
+">" = "[→] "                 # forwarded
+"<" = "[←] "                 # scheduled
+"!" = "[!] "                 # important
+"?" = "[?] "                 # a question
+"*" = "[★] "                 # a star
+
+[glyphs.callout]             # before a callout's title, by kind; an alias has its kind's, an unknown kind note's
+note = "📝"
+abstract = "📋"
+info = "ℹ\uFE0F"
+todo = "☑\uFE0F"
+tip = "🔥"
+success = "✅"
+question = "❓"
+warning = "⚠\uFE0F"
+failure = "❌"
+danger = "⚡"
+bug = "🐛"
+example = "📑"
+quote = "💬"
+important = "❗"
+caution = "🛑"
 
 [gutter.unstaged]
 added = { glyph = "▎", fg = "green" }

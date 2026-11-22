@@ -25,13 +25,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::config::LiveReload;
-use crate::doc::{CodeId, Doc, LineRange, LinkId};
+use crate::doc::{CodeId, Dialect, Doc, Embeds, Flavor, LineRange, LinkId, Vault};
 use crate::filetype::FileType;
 use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Epoch, Highlights, Job, SyntaxTheme};
 use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto, Wire};
 use crate::layout::{
-    self, ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, TableMode,
+    self, ImageFit, Layout, LayoutParams, LineNumbers, Measure, PropertiesMode, RowKind, TableMode,
 };
 use crate::links::{LocalTarget, Resolved};
 use crate::search::SearchMap;
@@ -118,6 +118,8 @@ pub enum Msg {
         dir: Dir,
     },
     ToggleCodeWrap,
+    /// `p`: show or hide a note's properties (ADR-46).
+    ToggleProperties,
     /// `#`: show or hide line numbers for the kind of file shown.
     ToggleLineNumbers,
     /// `B`: the theme's background, or the terminal's.
@@ -248,6 +250,11 @@ pub enum Msg {
         /// Milliseconds since the epoch, when known.
         mtime: Option<u64>,
         text: Arc<str>,
+        /// The Obsidian vault the file is in, if any, which with the `flavor` setting decides how
+        /// a note is read (ADR-45).
+        vault: Vault,
+        /// The notes its embeds name, and theirs, read with it to be transcluded (OBS-007).
+        embeds: Embeds,
         /// The document parsed and laid out by the loader (O-32); recorded as a marker only.
         doc: Computed<Prepared>,
     },
@@ -392,11 +399,11 @@ pub enum Cmd {
     /// Highlighting is wanted only for this document and these rules from now on: the worker
     /// drops other jobs, and stops the one running if it's another's (O-05).
     HighlightOnly(Epoch),
-    /// Find the files a document's links name, relative to `source`.
+    /// Find the files a document's links name, each relative to the file it's in: the
+    /// document's, or a note transcluded into it (OBS-007).
     ResolveLinks {
         doc_gen: u64,
-        source: PathBuf,
-        targets: Vec<LocalTarget>,
+        targets: Vec<(PathBuf, LocalTarget)>,
     },
     /// Hand a file or URL to the desktop's opener: `xdg-open`, `open` on macOS, `ShellExecuteW`
     /// on Windows.
@@ -421,11 +428,13 @@ pub enum Cmd {
     Osc52(String),
     /// Capture the mouse, or give it back to the terminal.
     Mouse(bool),
-    /// Watch `path` for changes, through inotify or by polling its modification time (ADR-26).
-    /// Replaces the file watched before.
+    /// Watch `path` for changes, through inotify or by polling its modification time (ADR-26),
+    /// and by polling, `embeds`, the notes it transcludes (OBS-007). Replaces the files watched
+    /// before.
     Watch {
         path: PathBuf,
         mtime: Option<u64>,
+        embeds: Vec<(PathBuf, Option<u64>)>,
     },
     /// Stop watching, with live reload turned off.
     Unwatch,
@@ -462,12 +471,16 @@ pub struct Config {
     pub table_mode: TableMode,
     pub code_wrap: bool,
     pub line_numbers: LineNumbers,
+    /// How a note's properties start: `[markdown] properties` (ADR-46).
+    pub properties: PropertiesMode,
     pub keys: Bindings,
     /// The config file, for the help to point at.
     pub file: Option<PathBuf>,
     /// The type `-l` gives the file ada opened, over what its name and contents say. Files
     /// reached by a link are typed as usual.
     pub language: Option<(PathBuf, FileType)>,
+    /// Which markdown notes are read as: `--flavor` over `[markdown] flavor` (ADR-45).
+    pub flavor: Flavor,
 }
 
 impl Config {
@@ -494,9 +507,11 @@ impl Default for Config {
             table_mode: TableMode::Auto,
             code_wrap: true,
             line_numbers: LineNumbers::Off,
+            properties: PropertiesMode::Show,
             keys: Bindings::default(),
             file: None,
             language: None,
+            flavor: Flavor::Auto,
         }
     }
 }
@@ -507,8 +522,13 @@ pub struct Document {
     pub path: PathBuf,
     /// Markdown, an image, or code: what the file holds decides how it's parsed and laid out.
     pub filetype: FileType,
+    /// How it was read, if markdown (ADR-45).
+    pub dialect: Dialect,
     pub mtime: Option<u64>,
     pub text: Arc<str>,
+    /// The notes its embeds name, as the load read them (OBS-007): transcluded in `doc`, and
+    /// watched with the file.
+    pub embeds: Embeds,
     pub doc: Doc,
     measure: Measure,
     pub layout: Layout,
@@ -531,7 +551,17 @@ pub struct Document {
     chapters: std::sync::OnceLock<Vec<manpage::Chapter>>,
 }
 
+/// What a load read beside a document's text: the file's modification time, the Obsidian vault
+/// it's in (ADR-45), and the notes its embeds name (OBS-007).
+type Loaded = (Option<u64>, Vault, Embeds);
+
 impl Document {
+    /// Whether the document is `text`, with `embeds`, read in `dialect`: what a load of the same
+    /// file finds, if it needn't be parsed again.
+    fn reads(&self, text: &str, embeds: &Embeds, dialect: Dialect) -> bool {
+        *self.text == *text && self.embeds == *embeds && self.dialect == dialect
+    }
+
     fn new(
         path: PathBuf,
         mtime: Option<u64>,
@@ -539,10 +569,12 @@ impl Document {
         glyphs: &Glyphs,
         params: LayoutParams,
         generation: u64,
-        forced: Option<FileType>,
+        // how it's read: the type `-l` forces, the markdown's dialect (ADR-45), and the notes its
+        // embeds name (OBS-007)
+        (forced, dialect, embeds): (Option<FileType>, Dialect, Embeds),
     ) -> Self {
         let filetype = forced.unwrap_or_else(|| FileType::of(&path, &text));
-        let doc = filetype.parse(&path, &text);
+        let doc = filetype.parse_with(&path, &text, dialect, &embeds);
         let measure = Measure::new(&doc, glyphs);
         let params = filetype.params(params);
         let layout = layout::layout_measured(&doc, &measure, glyphs, params);
@@ -551,8 +583,10 @@ impl Document {
         Self {
             path,
             filetype,
+            dialect,
             mtime,
             text,
+            embeds,
             doc,
             measure,
             layout,
@@ -721,6 +755,8 @@ pub struct State {
     pub table_mode: TableMode,
     pub code_wrap: bool,
     pub line_numbers: LineNumbers,
+    /// How a note's properties show (`p`).
+    pub properties: PropertiesMode,
     /// The shared horizontal offset of code blocks in no-wrap mode (ADR-20).
     pub code_x: u16,
     pub highlights: Highlights,
@@ -787,6 +823,7 @@ impl State {
             table_mode: config.table_mode,
             code_wrap: config.code_wrap,
             line_numbers: config.line_numbers,
+            properties: config.properties,
             config,
             code_x: 0,
             highlights: Highlights::default(),
@@ -827,6 +864,7 @@ impl State {
             width: self.size.w,
             max_width: self.config.max_width,
             table_mode: self.table_mode,
+            properties: self.properties,
             code_wrap: self.code_wrap,
             code_labels: true,
             bare: false,
@@ -852,7 +890,9 @@ impl State {
         let Some(doc) = &mut self.doc else {
             return;
         };
-        let anchor = ScrollAnchor::capture(&doc.layout, self.scroll);
+        // the top stays the top: anchored to its first line, a note whose properties `p` shows
+        // again kept its body's first line there, and the properties above the screen
+        let anchor = ScrollAnchor::capture(&doc.layout, self.scroll).filter(|_| self.scroll > 0);
         doc.relayout(&self.theme.glyphs, params);
         self.scroll = anchor.map_or(0, |a| a.restore(&doc.layout));
         self.scroll = self.scroll.min(self.max_scroll());
@@ -865,15 +905,16 @@ impl State {
     fn install(
         &mut self,
         path: PathBuf,
-        mtime: Option<u64>,
+        (mtime, vault, embeds): Loaded,
         text: Arc<str>,
         prepared: Option<Prepared>,
     ) -> Vec<Cmd> {
         let params = self.params();
+        let dialect = self.config.flavor.dialect(vault);
         let cached = self
             .cache
             .iter()
-            .position(|d| d.path == path && d.text == text)
+            .position(|d| d.path == path && d.reads(&text, &embeds, dialect))
             .map(|i| self.cache.remove(i));
         let mut cmds = Vec::new();
         let doc = match cached {
@@ -888,14 +929,15 @@ impl State {
                 let mut doc = match prepared.and_then(Prepared::take) {
                     // laid out for the screen as it was: the width or the glyphs may have
                     // changed since
-                    Some(mut doc) => {
+                    Some(mut doc) if doc.dialect == dialect => {
                         doc.generation = self.generation;
                         doc.relayout(glyphs, params);
                         doc
                     }
-                    None => {
+                    _ => {
                         let forced = self.config.forced_type(&path);
-                        Document::new(path, mtime, text, glyphs, params, self.generation, forced)
+                        let (generation, read) = (self.generation, (forced, dialect, embeds));
+                        Document::new(path, mtime, text, glyphs, params, generation, read)
                     }
                 };
                 if let Some(old) = self.doc.as_ref().filter(|d| d.path == doc.path) {
@@ -1013,11 +1055,11 @@ impl State {
     fn load(
         &mut self,
         path: PathBuf,
-        mtime: Option<u64>,
+        loaded: Loaded,
         text: Arc<str>,
         prepared: Option<Prepared>,
     ) -> Vec<Cmd> {
-        let cmds = self.install(path, mtime, text, prepared);
+        let cmds = self.install(path, loaded, text, prepared);
         if let (Some(line), Some(doc)) = (self.config.start_line.take(), &self.doc) {
             self.scroll = doc.layout.row_for_line(line).unwrap_or(0);
         }
@@ -1403,10 +1445,12 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             path,
             mtime,
             text,
+            vault,
+            embeds,
             doc,
         } => match state.nav.take() {
-            Some(nav) if nav.path == path => state.arrive(nav, mtime, text, doc.0),
-            _ => state.load(path, mtime, text, doc.0),
+            Some(nav) if nav.path == path => state.arrive(nav, (mtime, vault, embeds), text, doc.0),
+            _ => state.load(path, (mtime, vault, embeds), text, doc.0),
         },
         Msg::DocFailed { path, error } => {
             if state.nav.as_ref().is_some_and(|n| n.path == path) {
@@ -1625,6 +1669,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             Vec::new()
         }
         Msg::ToggleCodeWrap => state.set_code_wrap(!state.code_wrap),
+        Msg::ToggleProperties => state.toggle_properties(),
         Msg::ToggleThemeBg => state.set_theme_bg(!state.theme_bg),
         Msg::ToggleMouse => state.set_mouse(!state.mouse),
         Msg::ToggleLineNumbers => state.toggle_line_numbers(),
@@ -1675,6 +1720,8 @@ fn loader_answer(cmds: &[Cmd], text: &str) -> Msg {
         path: path.clone(),
         mtime: None,
         text: text.into(),
+        vault: Vault::None,
+        embeds: Default::default(),
         doc: Computed(None),
     };
     prepare(loaded, how)
@@ -1698,10 +1745,60 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: text.into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
         state
+    }
+
+    /// `p` hides a note's properties and shows them again, as the config shows them; with the
+    /// config hiding them, as rows. A title heads the heading path of a note without an H1.
+    #[test]
+    fn p_hides_and_shows_properties() {
+        let md = format!("---\ntitle: The title\ntags: [a]\n---\n{}", sample());
+        let mut state = loaded(&md, 60, 20);
+        let rows = |state: &State| state.doc.as_ref().unwrap().layout.row_count();
+        let shown = rows(&state);
+        update(&mut state, Msg::ToggleProperties);
+        assert_eq!(state.properties, PropertiesMode::Hide);
+        // two rows and the blank one under them
+        assert_eq!(rows(&state), shown - 3);
+        assert_eq!(state.status.as_deref(), Some("properties: hidden"));
+        update(&mut state, Msg::ToggleProperties);
+        assert_eq!(
+            (state.properties, rows(&state)),
+            (PropertiesMode::Show, shown)
+        );
+        // shown again from the top, they're on screen, not above it
+        assert_eq!(state.scroll, 0);
+        let layout = &state.doc.as_ref().unwrap().layout;
+        assert_eq!(layout.row_text(0).trim(), "title  The title");
+        // scrolled into the note past them, the view keeps its line as they come and go (shown
+        // from a view at the top once hidden, they show at the top)
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(10),
+            },
+        );
+        let line = top_line(&state);
+        update(&mut state, Msg::ToggleProperties);
+        assert_eq!(top_line(&state), line);
+        update(&mut state, Msg::ToggleProperties);
+        assert_eq!(top_line(&state), line);
+        state.config.properties = PropertiesMode::Source;
+        update(&mut state, Msg::ToggleProperties);
+        update(&mut state, Msg::ToggleProperties);
+        assert_eq!(state.properties, PropertiesMode::Source);
+        let doc = state.doc.as_ref().unwrap();
+        assert_eq!(crate::ui::heading_path(doc, 0), ["The title"]);
+        let first = doc.layout.headings[0].row;
+        assert_eq!(
+            crate::ui::heading_path(doc, first),
+            ["The title", "Heading 1"]
+        );
     }
 
     fn top_line(state: &State) -> u32 {
@@ -1719,6 +1816,36 @@ mod tests {
             .map(|i| format!("## Heading {i}\n\nparagraph {i} with enough words to wrap at narrow widths, and then some more words.\n"))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn a_note_in_an_obsidian_vault_reads_as_obsidians() {
+        let load = |state: &mut State, vault| {
+            update(
+                state,
+                Msg::DocLoaded {
+                    path: "t.md".into(),
+                    mtime: None,
+                    text: "a\nb\n".into(),
+                    vault,
+                    embeds: Default::default(),
+                    doc: Computed(None),
+                },
+            );
+            state.doc.as_ref().unwrap().dialect
+        };
+        let shown = Dialect::Obsidian { line_breaks: true };
+        let mut state = loaded("x", 40, 10);
+        assert_eq!(load(&mut state, Vault::None), Dialect::CommonMark);
+        assert_eq!(load(&mut state, Vault::Obsidian), shown);
+        let strict = Dialect::Obsidian { line_breaks: false };
+        assert_eq!(load(&mut state, Vault::ObsidianStrict), strict);
+        let config = Config {
+            flavor: Flavor::CommonMark,
+            ..Config::default()
+        };
+        let mut state = State::new(Theme::builtin(), config);
+        assert_eq!(load(&mut state, Vault::Obsidian), Dialect::CommonMark);
     }
 
     #[test]
@@ -1877,6 +2004,8 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: text.into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         )
@@ -2128,6 +2257,8 @@ mod tests {
             path: "t.md".into(),
             mtime: None,
             text: sample().into(),
+            vault: Vault::None,
+            embeds: Default::default(),
             doc: Computed(None),
         };
         update(&mut state, msg.clone());
@@ -2145,6 +2276,8 @@ mod tests {
                 path: path.into(),
                 mtime: None,
                 text: text.into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         )
@@ -2180,8 +2313,8 @@ mod tests {
         assert_eq!(
             targets,
             [
-                LocalTarget::Path("b.md".into()),
-                LocalTarget::Wiki("gone".into())
+                ("a.md".into(), LocalTarget::Path("b.md".into())),
+                ("a.md".into(), LocalTarget::Wiki("gone".into()))
             ]
         );
         update(
@@ -2699,6 +2832,19 @@ mod tests {
         assert_eq!(state.hidden_match(), None);
     }
 
+    /// A match in typeset math's TeX says what it matched in (OBS-003).
+    #[test]
+    fn tex_behind_math_explains_itself() {
+        let mut state = loaded("if $\\alpha \\le 1$ then\n", 80, 20);
+        search(&mut state, "alpha");
+        assert_eq!(counter(&state), "1/1");
+        let (kind, text, range) = state.hidden_match().expect("a hidden match");
+        assert_eq!(
+            (kind, text, &text[range]),
+            ("tex", "\\alpha \\le 1", "alpha")
+        );
+    }
+
     #[test]
     fn search_follows_navigation() {
         let mut state = walker();
@@ -3027,6 +3173,8 @@ mod tests {
                 path: "x.diff".into(),
                 mtime: None,
                 text: text.as_str().into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -3077,6 +3225,8 @@ mod tests {
                 path: "x.diff".into(),
                 mtime: None,
                 text: text.as_str().into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -3106,6 +3256,8 @@ mod tests {
                 path: "-".into(),
                 mtime: None,
                 text: text.as_str().into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -3139,6 +3291,8 @@ mod tests {
                 path: "x.diff".into(),
                 mtime: None,
                 text: text.as_str().into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -3182,6 +3336,8 @@ mod tests {
                 path: "-".into(),
                 mtime: None,
                 text: text.as_str().into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -3224,6 +3380,8 @@ mod tests {
                 path: "-".into(),
                 mtime: None,
                 text: text.as_str().into(),
+                vault: Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -3301,7 +3459,8 @@ mod tests {
                 },
                 Cmd::Watch {
                     path: "a.md".into(),
-                    mtime: None
+                    mtime: None,
+                    embeds: Vec::new(),
                 }
             ]
         );
@@ -3863,8 +4022,7 @@ mod tests {
         assert!(!cmds.iter().any(|c| matches!(c, Cmd::RunGit { .. })));
         assert!(cmds.contains(&Cmd::ResolveLinks {
             doc_gen,
-            source: "pics/cat.png".into(),
-            targets: vec![LocalTarget::Path("cat.png".into())],
+            targets: vec![("pics/cat.png".into(), LocalTarget::Path("cat.png".into()))],
         }));
         let resolved = vec![Resolved::Found("pics/cat.png".into())];
         let cmds = update(&mut state, Msg::LinksResolved { doc_gen, resolved });
@@ -3894,7 +4052,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("blob.dat");
         std::fs::write(&path, b"ELF\0\0\x01").unwrap();
-        let msg = load_doc(&path, None);
+        let msg = load_doc(&path, None, &crate::links::BuiltinResolver);
         assert!(
             matches!(&msg, Msg::DocFailed { error, .. } if error == "binary file"),
             "{msg:?}"

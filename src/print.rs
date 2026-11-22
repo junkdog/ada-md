@@ -71,10 +71,10 @@ impl Pictures {
         reuse_ids: bool,
     ) -> Pictures {
         let mut probed: Vec<(PathBuf, Option<(u32, u32)>)> = Vec::new();
-        let files = doc
-            .links
-            .iter()
-            .map(|link| {
+        let files = (doc.links.iter().enumerate())
+            .map(|(id, link)| {
+                // a transcluded note's image is found from that note (OBS-007)
+                let source = doc.link_source(id as u32, source);
                 let Target::Local { target, .. } = Target::of(link) else {
                     return None;
                 };
@@ -1138,6 +1138,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let out = render(&doc, &Theme::builtin(), params, Options::default());
@@ -1156,6 +1157,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let plain = |text: &str, line| {
@@ -1203,6 +1205,7 @@ mod tests {
             bare: false,
             line_numbers: crate::layout::LineNumbers::All,
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         // as `main` prints it: on the terminal's background
@@ -1253,6 +1256,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: Some(crate::layout::ImageFit {
                 cell,
                 max_rows: 6,
@@ -1331,6 +1335,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let theme = Theme::builtin();
@@ -1359,6 +1364,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let theme = Theme::builtin().with_bg(false);
@@ -1388,6 +1394,7 @@ mod tests {
             bare: true,
             line_numbers: crate::layout::LineNumbers::Code,
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let theme = Theme::builtin().with_bg(false).without_code_bg();
@@ -1433,6 +1440,7 @@ mod tests {
                 bare: true,
                 line_numbers: crate::layout::LineNumbers::Off,
                 glyphs_gen: 0,
+                properties: Default::default(),
                 images: None,
             };
             let filetype = crate::filetype::FileType::Text { lang: Some("Diff") };
@@ -1459,6 +1467,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let theme = Theme::builtin().with_bg(false);
@@ -1581,6 +1590,7 @@ mod tests {
             bare: false,
             line_numbers: crate::layout::LineNumbers::All,
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let layout = layout::layout(&doc, &theme.glyphs, params);

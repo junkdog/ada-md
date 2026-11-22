@@ -216,7 +216,7 @@ fn print(note: &str) -> String {
     print::start();
     let filetype = FileType::of(path, note);
     assert_eq!(filetype, FileType::Markdown);
-    let doc = filetype.parse(path, note);
+    let doc = filetype.parse(path, note, Default::default());
     let theme = Theme::builtin();
     let params = LayoutParams {
         width: 80,
@@ -227,6 +227,7 @@ fn print(note: &str) -> String {
         bare: false,
         line_numbers: LineNumbers::Off,
         glyphs_gen: theme.glyphs.generation(),
+        properties: Default::default(),
         images: None,
     };
     print::render(&doc, &theme, filetype.params(params), Options::default())

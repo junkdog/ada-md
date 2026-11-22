@@ -530,6 +530,8 @@ fn position(state: &State) -> String {
 
 /// The headings enclosing row `top`, outermost first.
 pub fn heading_path(doc: &Document, top: u32) -> Vec<&str> {
+    // a note without an H1 is headed by its properties' title (ADR-46)
+    let title = doc.doc.title();
     let mut stack: Vec<(u8, u32)> = Vec::new();
     for h in doc.layout.headings.iter().take_while(|h| h.row <= top) {
         while stack.last().is_some_and(|&(level, _)| level >= h.level) {
@@ -537,11 +539,11 @@ pub fn heading_path(doc: &Document, top: u32) -> Vec<&str> {
         }
         stack.push((h.level, h.anchor));
     }
-    stack
+    let headings = stack
         .iter()
         .filter_map(|&(_, a)| doc.doc.anchors.get(a as usize))
-        .map(|a| &*a.text)
-        .collect()
+        .map(|a| &*a.text);
+    title.into_iter().chain(headings).collect()
 }
 
 /// Keep the end of `s`, which is the interesting part of a path, within `max` columns.
@@ -603,6 +605,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let l = layout::layout(&doc, &Theme::builtin().glyphs, params);
@@ -636,6 +639,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let l = layout::layout(&doc, &Theme::builtin().glyphs, params);
@@ -667,6 +671,8 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: text.into(),
+                vault: crate::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -712,6 +718,8 @@ mod tests {
                     path: "t.md".into(),
                     mtime: None,
                     text: text.into(),
+                    vault: crate::doc::Vault::None,
+                    embeds: Default::default(),
                     doc: Computed(None),
                 },
             );

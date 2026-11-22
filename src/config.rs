@@ -14,8 +14,9 @@ use std::path::{Path, PathBuf};
 use toml::de::DeTable;
 
 use crate::app::{Action, Bindings, KeySeq};
+use crate::doc::Flavor;
 use crate::images::{ImageMode, Proto};
-use crate::layout::{LineNumbers, TableMode};
+use crate::layout::{LineNumbers, PropertiesMode, TableMode};
 use crate::links::{self, Roots};
 use crate::select::CopyOn;
 use crate::theme::BUILTIN;
@@ -36,6 +37,10 @@ pub struct Settings {
     pub line_numbers: LineNumbers,
     pub keys: Bindings,
     pub links: Roots,
+    /// `[markdown] flavor` (ADR-45).
+    pub flavor: Flavor,
+    /// `[markdown] properties` (ADR-46).
+    pub properties: PropertiesMode,
 }
 
 /// What a change to the open file on disk does (`live_reload`, ADR-26): read it again, mark it
@@ -85,6 +90,8 @@ impl Default for Settings {
             line_numbers: LineNumbers::Off,
             keys: Bindings::default(),
             links: Roots::default(),
+            flavor: Flavor::Auto,
+            properties: PropertiesMode::Show,
         }
     }
 }
@@ -207,6 +214,7 @@ pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Setti
                 })?;
             }
             "links" => s.links = parse_links(&mut cx, v)?,
+            "markdown" => parse_markdown(&mut cx, v, &mut s)?,
             "keys" => {
                 let mut set = Vec::new();
                 for (k, v) in cx.table(v)? {
@@ -237,6 +245,38 @@ pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Setti
         (true, None) => ImageMode::Auto,
     };
     Ok(s)
+}
+
+/// `[markdown]`: how notes are read.
+fn parse_markdown(
+    cx: &mut Cx<'_>,
+    v: &toml_walk::Value<'_>,
+    s: &mut Settings,
+) -> Result<(), String> {
+    for (k, v) in cx.table(v)? {
+        match k.get_ref().as_ref() {
+            "flavor" => {
+                let name = cx.string(v)?;
+                s.flavor = Flavor::parse(name).ok_or_else(|| {
+                    cx.at(
+                        v.span(),
+                        format_args!("unknown flavor \"{name}\" (auto, commonmark or obsidian)"),
+                    )
+                })?;
+            }
+            "properties" => {
+                let name = cx.string(v)?;
+                s.properties = PropertiesMode::parse(name).ok_or_else(|| {
+                    cx.at(
+                        v.span(),
+                        format_args!("unknown properties \"{name}\" (show, hide or source)"),
+                    )
+                })?;
+            }
+            other => cx.warn(k.span(), format_args!("unknown key \"markdown.{other}\"")),
+        }
+    }
+    Ok(())
 }
 
 /// `[links]`: the roots links are looked up under ([`Roots`]).
@@ -336,6 +376,15 @@ pub fn default_text() -> String {
 # and other text files, or all for markdown too.
 # line_numbers = \"off\"
 
+# How notes are read. \"auto\" reads a note in an Obsidian vault (a .obsidian folder at or above
+# it) as Obsidian does: a single newline breaks the line, unless the vault turns on strict line
+# breaks. \"commonmark\" and \"obsidian\" read every note one way; --flavor wins over it.
+# A note's front matter shows above it as its properties (`p` hides them or shows them
+# again): \"show\" as key and value rows, \"hide\", or \"source\" as written.
+[markdown]
+# flavor = \"auto\"
+# properties = \"show\"
+
 # Where links are looked up by name. A [[wiki]] link, or a link that is just a file name, that
 # isn't beside its note is searched for in the whole tree of the note's root: the nearest
 # directory above the note that is listed in roots or holds one of root_markers. Folders whose
@@ -386,10 +435,10 @@ pub fn write(path: &Path, text: &str) -> io::Result<()> {
     fs::write(path, text)
 }
 
-/// The options `S` saves, in the order its box lists them. `copy_on` and `keep_screen` have no
-/// key or flag to change them in a session (only the settings popup does), and `[keys]` none at
-/// all.
-const SAVED: [&str; 12] = [
+/// The options `S` saves, in the order its box lists them, a table's as `table.key`. `copy_on`
+/// and `keep_screen` have no key or flag to change them in a session (only the settings popup
+/// does), and `[keys]` none at all.
+const SAVED: [&str; 13] = [
     "theme",
     "theme_bg",
     "mouse",
@@ -402,6 +451,7 @@ const SAVED: [&str; 12] = [
     "image_protocol",
     "live_reload",
     "keep_screen",
+    "markdown.properties",
 ];
 
 /// What saving the session's settings does: each option whose active value differs from the
@@ -417,7 +467,7 @@ pub struct Save {
 /// marks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Saved {
-    values: [String; 12],
+    values: [String; 13],
     /// The file's `image_protocol`, which stays as it is while images are off.
     protocol: String,
 }
@@ -481,7 +531,7 @@ pub fn save(file: &str, text: &str, active: &Settings) -> Result<Save, String> {
 
 /// The options [`SAVED`] names, as `s` sets them, in TOML. With images off, `image_protocol` is
 /// `protocol`.
-fn values(s: &Settings, protocol: &str) -> [String; 12] {
+fn values(s: &Settings, protocol: &str) -> [String; 13] {
     [
         toml_string(s.theme.as_deref().unwrap_or(BUILTIN[0].0)),
         s.theme_bg.to_string(),
@@ -499,6 +549,7 @@ fn values(s: &Settings, protocol: &str) -> [String; 12] {
         },
         toml_string(s.live_reload.name()),
         s.keep_screen.to_string(),
+        toml_string(s.properties.name()),
     ]
 }
 
@@ -524,13 +575,17 @@ fn toml_string(s: &str) -> String {
 
 /// `text` with each change's new value in place. A key the file sets has its value replaced.
 /// One it doesn't takes its commented default line, `# key = …`, uncommented; failing that, it
-/// goes before the first table and the comments over it, so it stays top-level.
+/// goes before the first table and the comments over it, so it stays top-level. A table's key
+/// (`markdown.properties`) is looked for in its table the same way, and goes right under the
+/// table's header; without the table, both go at the end.
 fn rewrite(text: &str, root: &DeTable<'_>, changes: &[(&str, String, String)]) -> String {
     let tables = first_table(text, root);
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let mut added = String::new();
     for (key, _, value) in changes {
-        if let Some(v) = toml_walk::entry(root, key) {
+        if let Some((table, name)) = key.split_once('.') {
+            edits.push(table_edit(text, root, table, name, value));
+        } else if let Some(v) = toml_walk::entry(root, key) {
             edits.push((v.span(), value.clone()));
         } else if let Some(line) = commented(&text[..tables], key) {
             edits.push((line, format!("{key} = {value}")));
@@ -563,6 +618,55 @@ fn rewrite(text: &str, root: &DeTable<'_>, changes: &[(&str, String, String)]) -
     }
     out.push_str(&text[from..]);
     out
+}
+
+/// The edit that sets `name` in `table` to `value`: its value replaced, its commented default
+/// line in the table uncommented, a line under the table's header, or the table at the end.
+fn table_edit(
+    text: &str,
+    root: &DeTable<'_>,
+    table: &str,
+    name: &str,
+    value: &str,
+) -> (Range<usize>, String) {
+    let line_of = |at: usize| text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let header = root.iter().find_map(|(k, v)| {
+        let line = line_of(k.span().start);
+        let is_header = text[line..].trim_start().starts_with('[');
+        (k.get_ref().as_ref() == table && is_header).then_some((line, v))
+    });
+    let Some((line, v)) = header else {
+        let sep = if text.is_empty() || text.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        return (
+            text.len()..text.len(),
+            format!("{sep}\n[{table}]\n{name} = {value}\n"),
+        );
+    };
+    if let Some(v) = v
+        .get_ref()
+        .as_table()
+        .and_then(|t| toml_walk::entry(t, name))
+    {
+        return (v.span(), value.to_owned());
+    }
+    // the table's lines: from its header's to the next header's
+    let Some(body) = text[line..].find('\n').map(|i| line + i + 1) else {
+        return (text.len()..text.len(), format!("\n{name} = {value}\n"));
+    };
+    let end = root
+        .iter()
+        .map(|(k, _)| line_of(k.span().start))
+        .filter(|&l| l > line && text[l..].trim_start().starts_with('['))
+        .min()
+        .unwrap_or(text.len());
+    match commented(&text[body..end], name) {
+        Some(at) => (at.start + body..at.end + body, format!("{name} = {value}")),
+        None => (body..body, format!("{name} = {value}\n")),
+    }
 }
 
 /// Where the line of the first table header (`[keys]`) starts, or the end of `text`.
@@ -661,6 +765,24 @@ mod tests {
             &mut Vec::new(),
         );
         assert_eq!(off.unwrap().images, ImageMode::Off);
+    }
+
+    #[test]
+    fn markdown_flavor() {
+        let s = parse(
+            "c.toml",
+            "[markdown]\nflavor = \"obsidian\"\n",
+            &mut Vec::new(),
+        );
+        assert_eq!(s.unwrap().flavor, Flavor::Obsidian);
+        let bad = parse("c.toml", "[markdown]\nflavor = \"gfm\"\n", &mut Vec::new());
+        assert_eq!(
+            bad.unwrap_err(),
+            "c.toml:2:10: unknown flavor \"gfm\" (auto, commonmark or obsidian)"
+        );
+        let mut warnings = Vec::new();
+        parse("c.toml", "[markdown]\nbreaks = true\n", &mut warnings).unwrap();
+        assert_eq!(warnings, ["c.toml:2:1: unknown key \"markdown.breaks\""]);
     }
 
     /// FEAT-014: the three modes by name, and the booleans from before them still read.

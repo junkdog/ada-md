@@ -7,10 +7,15 @@
 //!   - the note: a file of the tree, one reached through a symlink, or a missing one
 //!   - up to 8 links, `[[wiki]]` names or paths, built from the same alphabet
 //!
+//!   - a third of the files written front matter giving them aliases (OBS-010), from a few names
+//!     that collide with the files' and with each other's in case
+//!
 //! Each answer must match a reference written apart from ada's (a recursive walk, no index):
 //! what the built-in rules find stands; otherwise the nearest root's unique match, the one in a
 //! folder named like the note's, or the built-in reason, or an ambiguity listing the matches.
-//! Asked again, by the same resolver (its index) or a fresh one, the answer is the same.
+//! A `[[name]]` without folders that no file has is the note that gives it as an alias, by the
+//! same rules. Asked again, by the same resolver (its index) or a fresh one, the answer is the
+//! same.
 //!
 //! Also `[links]` in the config: a parse that succeeds has absolute roots and plain markers (no
 //! `/`, not `.` or `..`). Markers that exist above the tree are dropped, so a root stays inside it.
@@ -56,6 +61,9 @@ const NAMES: &[&str] = &[
     "n.MD",
     "deep",
 ];
+
+/// Aliases a note's front matter gives it: some named like files, some like each other.
+const ALIASES: &[&str] = &["Alias", "alias", "note", "Bob", "sift", "ä", "Ä", "deep"];
 
 /// The tree's directory, the same for every run of this process. The first call removes the
 /// trees of processes that have exited: a fork job ends without cleaning up (round 9 left 514).
@@ -132,7 +140,17 @@ fn build(u: &mut Unstructured, root: &Path) -> Result<Vec<PathBuf>> {
         let _ = fs::create_dir_all(parent);
         match u.int_in_range(0..=9)? {
             0..=5 => {
-                let _ = fs::write(&path, "x");
+                let text = match u.ratio(1, 3)? {
+                    true => {
+                        let n = u.int_in_range(1..=2)?;
+                        let given: Vec<&str> = (0..n)
+                            .map(|_| u.choose(ALIASES).copied())
+                            .collect::<Result<_>>()?;
+                        format!("---\naliases: [{}]\n---\nx\n", given.join(", "))
+                    }
+                    false => "x".to_owned(),
+                };
+                let _ = fs::write(&path, text);
             }
             6 | 7 => {
                 let _ = fs::create_dir_all(&path);
@@ -239,7 +257,63 @@ fn reference(
             )),
         });
     }
-    None
+    // no file has the name: the notes that give it as an alias, for a name without folders
+    let LocalTarget::Wiki(name) = target else {
+        return None;
+    };
+    if !dirs.is_empty() {
+        return None;
+    }
+    let markdown = ["md", "markdown", "mdown", "mkd", "mkdn"];
+    let mut found: Vec<PathBuf> = files
+        .iter()
+        .filter(|p| {
+            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+            markdown.iter().any(|m| m.eq_ignore_ascii_case(ext))
+        })
+        .filter(|p| {
+            aliases_of(p)
+                .iter()
+                .any(|a| a.to_lowercase() == name.to_lowercase())
+        })
+        .cloned()
+        .collect();
+    found.sort();
+    found.dedup();
+    let rebase = |p: &Path| match p.strip_prefix(&canonical) {
+        Ok(rest) => dir.join(rest),
+        Err(_) => p.to_path_buf(),
+    };
+    match &found[..] {
+        [] => None,
+        [one] => Some(Expect::Found(rebase(one))),
+        many => {
+            let near: Vec<_> = many
+                .iter()
+                .filter(|p| p.parent().and_then(Path::file_name) == canonical.file_name())
+                .collect();
+            Some(match near[..] {
+                [one] => Expect::Found(rebase(one)),
+                _ => Expect::Ambiguous(format!(
+                    "{} notes with the alias {name} under {}: ",
+                    many.len(),
+                    root.display()
+                )),
+            })
+        }
+    }
+}
+
+/// The aliases [`build`] wrote at the start of the file at `path`, read as it wrote them.
+fn aliases_of(path: &Path) -> Vec<String> {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    let Some(list) = text
+        .strip_prefix("---\naliases: [")
+        .and_then(|rest| rest.split_once("]\n---\n"))
+    else {
+        return Vec::new();
+    };
+    list.0.split(", ").map(str::to_owned).collect()
 }
 
 enum Expect {

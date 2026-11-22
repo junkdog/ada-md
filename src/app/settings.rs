@@ -3,7 +3,7 @@
 //! session, `s` saves them to the config file too, and `Esc` puts back the settings it opened
 //! with. A row whose value isn't the config file's is marked, so the marks are what `s` saves.
 //!
-//! A change runs the setter the option's own key runs (`B`, `t`, `w`, `#`, `M`), so the popup
+//! A change runs the setter the option's own key runs (`B`, `t`, `w`, `#`, `p`, `M`), so the popup
 //! adds no second way to change one; the popup's own messages are what a recording keeps. Images
 //! and their protocol are read at start: changed here, they are only saved, for the next start.
 
@@ -11,7 +11,7 @@ use super::{Action, Cmd, Dir, Listing, State};
 use crate::config::{LiveReload, Saved, Settings};
 use crate::filetype::FileType;
 use crate::images::{ImageMode, Proto};
-use crate::layout::{LineNumbers, TableMode};
+use crate::layout::{LineNumbers, PropertiesMode, TableMode};
 use crate::select::CopyOn;
 
 /// A row of the popup: one option.
@@ -23,6 +23,7 @@ pub enum Row {
     Tables,
     CodeWrap,
     LineNumbers,
+    Properties,
     Images,
     Protocol,
     Mouse,
@@ -32,13 +33,14 @@ pub enum Row {
 }
 
 impl Row {
-    pub const ALL: [Row; 12] = [
+    pub const ALL: [Row; 13] = [
         Row::Theme,
         Row::ThemeBg,
         Row::Width,
         Row::Tables,
         Row::CodeWrap,
         Row::LineNumbers,
+        Row::Properties,
         Row::Images,
         Row::Protocol,
         Row::Mouse,
@@ -51,9 +53,12 @@ impl Row {
     pub fn group(self) -> &'static str {
         match self {
             Row::Theme | Row::ThemeBg | Row::Width => "Appearance",
-            Row::Tables | Row::CodeWrap | Row::LineNumbers | Row::Images | Row::Protocol => {
-                "Content"
-            }
+            Row::Tables
+            | Row::CodeWrap
+            | Row::LineNumbers
+            | Row::Properties
+            | Row::Images
+            | Row::Protocol => "Content",
             Row::Mouse | Row::CopyOn | Row::LiveReload | Row::KeepScreen => "Behavior",
         }
     }
@@ -66,6 +71,7 @@ impl Row {
             Row::Tables => "Tables",
             Row::CodeWrap => "Wrap code",
             Row::LineNumbers => "Line numbers",
+            Row::Properties => "Properties",
             Row::Images => "Images",
             Row::Protocol => "Image protocol",
             Row::Mouse => "Mouse",
@@ -84,6 +90,7 @@ impl Row {
             Row::Tables => "tables",
             Row::CodeWrap => "code_wrap",
             Row::LineNumbers => "line_numbers",
+            Row::Properties => "markdown.properties",
             Row::Images => "images",
             Row::Protocol => "image_protocol",
             Row::Mouse => "mouse",
@@ -101,6 +108,7 @@ impl Row {
             Row::Tables => Some(Action::TableMode),
             Row::CodeWrap => Some(Action::CodeWrap),
             Row::LineNumbers => Some(Action::LineNumbers),
+            Row::Properties => Some(Action::Properties),
             Row::Mouse => Some(Action::Mouse),
             _ => None,
         }
@@ -229,6 +237,10 @@ impl State {
             Row::LineNumbers => Value::Choice(
                 LINE_NUMBERS,
                 index(LINE_NUMBERS, self.line_numbers.spelling()).unwrap_or(0),
+            ),
+            Row::Properties => Value::Choice(
+                PropertiesMode::NAMES,
+                index(PropertiesMode::NAMES, self.properties.name()).unwrap_or(0),
             ),
             Row::Images => Value::Switch(self.next_start.images != ImageMode::Off),
             Row::Protocol => {
@@ -426,6 +438,10 @@ impl State {
                 .get(i)
                 .and_then(|name| LineNumbers::parse(name))
                 .map_or_else(Vec::new, |n| self.set_line_numbers(n)),
+            Row::Properties => PropertiesMode::NAMES
+                .get(i)
+                .and_then(|name| PropertiesMode::parse(name))
+                .map_or_else(Vec::new, |mode| self.set_properties(mode)),
             Row::Protocol => {
                 if let Some(name) = PROTOCOLS.get(i) {
                     self.set_images(Proto::parse(name).map_or(ImageMode::Auto, ImageMode::Force));
@@ -498,6 +514,7 @@ impl State {
         self.table_mode = was.table_mode;
         self.code_wrap = was.code_wrap;
         self.line_numbers = was.line_numbers;
+        self.properties = was.properties;
         self.set_images(was.images);
         cmds.extend(self.set_live_reload(was.live_reload));
         self.set_keep_screen(was.keep_screen);
@@ -533,6 +550,23 @@ impl State {
         self.status = Some(format!("line numbers: {}", numbers.name()));
         self.relayout();
         self.visible_jobs()
+    }
+
+    pub(super) fn set_properties(&mut self, mode: PropertiesMode) -> Vec<Cmd> {
+        self.properties = mode;
+        let what = match mode {
+            PropertiesMode::Show => "shown",
+            PropertiesMode::Hide => "hidden",
+            PropertiesMode::Source => "shown as written",
+        };
+        self.status = Some(format!("properties: {what}"));
+        self.relayout();
+        self.visible_jobs()
+    }
+
+    /// `p`: hide the properties, or show them as the config does (as rows when it hides them).
+    pub(super) fn toggle_properties(&mut self) -> Vec<Cmd> {
+        self.set_properties(self.properties.toggle(self.config.properties))
     }
 
     /// `#`'s next step for the kind of file shown.
@@ -638,6 +672,7 @@ fn differs_any(a: &Settings, b: &Settings, row: Row) -> bool {
         Row::Tables => a.table_mode != b.table_mode,
         Row::CodeWrap => a.code_wrap != b.code_wrap,
         Row::LineNumbers => a.line_numbers != b.line_numbers,
+        Row::Properties => a.properties != b.properties,
         Row::Mouse => a.mouse != b.mouse,
         Row::CopyOn => a.copy_on != b.copy_on,
         Row::LiveReload => a.live_reload != b.live_reload,
@@ -694,6 +729,8 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: sample().into(),
+                vault: crate::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -991,6 +1028,7 @@ mod tests {
             (Row::Tables, 2),
             (Row::CodeWrap, 1),
             (Row::LineNumbers, 1),
+            (Row::Properties, 1),
             (Row::Images, 1),
             (Row::Mouse, 1),
             (Row::CopyOn, 1),
@@ -1121,7 +1159,8 @@ mod tests {
             cmds,
             [Cmd::Watch {
                 path: "t.md".into(),
-                mtime: None
+                mtime: None,
+                embeds: Vec::new(),
             }]
         );
 

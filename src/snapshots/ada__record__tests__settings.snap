@@ -12,6 +12,7 @@ expression: frames.last().unwrap()
  │   Tables               auto │ grid │ records                             t │
  │ • Wrap code            ●━━ off                                           w │
  │   Line numbers         off │ code │ all                                  # │
+ │   Properties           show │ hide │ source                              p │
  │   Images               ━━● on                                      restart │
  │ • Image protocol       auto │ kitty │ sixel │ iterm2 │ halfblocks  restart │
  │ Behavior                                                                   │
@@ -22,7 +23,6 @@ expression: frames.last().unwrap()
  ├────────────────────────────────────────────────────────────────────────────┤
  │            a keep for this session  s save to config  esc undo             │
  ╰────────────────────────────────────────────────────────────────────────────╯
-  │ asm-tree     │ 4,120 │ 14 classes │ oxasm-tree     │ The tree API:       │
   │              │       │ · 5.1k     │                │ ClassNode,          │
   │              │       │ lines      │                │ MethodNode,         │
  tests/fixtures/tables.md  images: kitty, once saved and restarted          Top

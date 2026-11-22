@@ -31,6 +31,6 @@ keep_screen = false
 +400 settings-move by=-2
 +450 settings-digit digit=6
 +500 settings-digit digit=0
-+550 settings-move by=5
++550 settings-move by=6
 +600 settings-flip
 +650 settings-move by=-1

@@ -128,7 +128,9 @@ pub fn text_of(doc: &Doc) -> Vec<&str> {
     fn walk<'a>(doc: &'a Doc, blocks: &'a [ada::doc::Block], out: &mut Vec<&'a str>) {
         for block in blocks {
             match &block.kind {
-                BlockKind::Heading { inlines: i, .. } | BlockKind::Paragraph(i) => {
+                BlockKind::Heading { inlines: i, .. }
+                | BlockKind::Paragraph(i)
+                | BlockKind::Math(i) => {
                     inlines(doc, i, out);
                 }
                 BlockKind::List(list) => {
@@ -137,12 +139,19 @@ pub fn text_of(doc: &Doc) -> Vec<&str> {
                         .for_each(|item| walk(doc, &item.blocks, out));
                 }
                 BlockKind::Quote { blocks, .. } => walk(doc, blocks, out),
+                BlockKind::Embed(e) => {
+                    inlines(doc, &e.title, out);
+                    walk(doc, &e.blocks, out);
+                }
                 BlockKind::Code(code) => out.push(&code.text),
                 BlockKind::Table(t) => {
                     t.cells.iter().for_each(|c| inlines(doc, c, out));
                 }
                 BlockKind::Image { alt, .. } => out.push(alt),
                 BlockKind::Html(html) => out.push(html),
+                BlockKind::Properties(p) => {
+                    p.rows.iter().for_each(|r| inlines(doc, &r.value, out));
+                }
                 BlockKind::Rule | BlockKind::FootnoteDefs => {}
             }
         }

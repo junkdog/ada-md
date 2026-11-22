@@ -400,6 +400,8 @@ fn answer(
                         path,
                         mtime: u.arbitrary()?,
                         text: text.into(),
+                        vault: ada::doc::Vault::None,
+                        embeds: Default::default(),
                         doc: Computed(None),
                     }
                 }
@@ -413,6 +415,8 @@ fn answer(
                         path,
                         mtime: u.arbitrary()?,
                         text: doc[cut..].into(),
+                        vault: ada::doc::Vault::None,
+                        embeds: Default::default(),
                         doc: Computed(None),
                     }
                 }
@@ -420,6 +424,8 @@ fn answer(
                     path,
                     mtime: u.arbitrary()?,
                     text: doc.clone(),
+                    vault: ada::doc::Vault::None,
+                    embeds: Default::default(),
                     doc: Computed(None),
                 },
             };
@@ -458,7 +464,7 @@ fn answer(
             doc_gen, targets, ..
         } => {
             let mut resolved = Vec::with_capacity(targets.len());
-            for target in &targets {
+            for (_, target) in &targets {
                 // a path naming a world file finds it, mostly, so the dictionary's
                 // `![i](img.png)` shows that image (F-11); else any file, or none. Here and in
                 // the probes and decodes, an exhausted input (`int_in_range` gives its start)
@@ -1397,6 +1403,8 @@ fuzz_target!(|data: &[u8]| {
         path: if stdin { "-".into() } else { doc_path(name) },
         mtime: Some(1),
         text: doc,
+        vault: ada::doc::Vault::None,
+        embeds: Default::default(),
         doc: Computed(None),
     });
     for _ in 0..MAX_OPS {

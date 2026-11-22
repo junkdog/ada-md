@@ -131,6 +131,8 @@ fn main() {
                     path: path.as_str().into(),
                     mtime: None,
                     text: text.as_str().into(),
+                    vault: ada::doc::Vault::None,
+                    embeds: Default::default(),
                     doc: Computed(None),
                 },
             );

@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::path::Path;
 
-use crate::doc::{self, Doc};
+use crate::doc::{self, Dialect, Doc, Embeds};
 use crate::highlight;
 use crate::layout::{LayoutParams, LineNumbers};
 use crate::{links, sniff};
@@ -221,14 +221,20 @@ impl FileType {
         )
     }
 
-    /// The file `path`, holding `text`, as a document.
-    pub fn parse(&self, path: &Path, text: &str) -> Doc {
+    /// The file `path`, holding `text`, as a document; markdown read in `dialect` (ADR-45).
+    pub fn parse(&self, path: &Path, text: &str, dialect: Dialect) -> Doc {
+        self.parse_with(path, text, dialect, &Embeds::default())
+    }
+
+    /// [`FileType::parse`], a note transcluding the notes its embeds name from `embeds`, as its
+    /// load read them (OBS-007).
+    pub fn parse_with(&self, path: &Path, text: &str, dialect: Dialect, embeds: &Embeds) -> Doc {
         if *self == FileType::ANSI {
             return doc::file::colored(text);
         }
         let text = &*self.shown_text(path, text);
         match self {
-            FileType::Markdown => doc::parse(text),
+            FileType::Markdown => doc::parse_with(text, dialect, path, embeds),
             FileType::Text { lang } => doc::file::code(text, *lang),
             FileType::Image => {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -557,7 +563,11 @@ mod tests {
 
     #[test]
     fn a_mermaid_file_draws_its_diagram() {
-        let doc = FileType::MERMAID.parse(Path::new("flow.mmd"), "graph TD\n  A --> B\n");
+        let doc = FileType::MERMAID.parse(
+            Path::new("flow.mmd"),
+            "graph TD\n  A --> B\n",
+            Dialect::CommonMark,
+        );
         let [block] = &doc.blocks[..] else {
             panic!("{:?}", doc.blocks);
         };
@@ -565,7 +575,11 @@ mod tests {
             panic!("{block:?}");
         };
         assert!(code.diagram.is_some());
-        let er = FileType::MERMAID.parse(Path::new("er.mmd"), "erDiagram\n  A ||--o{ B : has\n");
+        let er = FileType::MERMAID.parse(
+            Path::new("er.mmd"),
+            "erDiagram\n  A ||--o{ B : has\n",
+            Dialect::CommonMark,
+        );
         assert!(matches!(&er.blocks[0].kind, doc::BlockKind::Code(c) if c.diagram.is_none()));
     }
 
@@ -636,6 +650,7 @@ mod tests {
                 bare: false,
                 line_numbers: mode,
                 glyphs_gen: 0,
+                properties: Default::default(),
                 images: None,
             };
             ft.params(params).line_numbers
@@ -658,7 +673,7 @@ mod tests {
         let log = "* \x1b[38;5;208mabc1234\x1b[m -\x1b[38;5;214m (HEAD -> main)\x1b[m feat: x\n";
         let ft = FileType::of(stdin, log);
         assert_eq!(ft, FileType::ANSI);
-        let doc = ft.parse(stdin, log);
+        let doc = ft.parse(stdin, log, Dialect::CommonMark);
         let code = doc.code_blocks()[0];
         assert_eq!(&*code.text, "* abc1234 - (HEAD -> main) feat: x\n");
         assert_eq!(code.highlight_text().as_ref(), log);
@@ -668,7 +683,7 @@ mod tests {
                     \x1b[32m+b\x1b[m\n";
         let ft = FileType::of(stdin, diff);
         assert_eq!(ft, FileType::Text { lang: Some("Diff") });
-        let doc = ft.parse(stdin, diff);
+        let doc = ft.parse(stdin, diff, Dialect::CommonMark);
         assert!(
             doc.code_blocks()[0]
                 .text
@@ -677,7 +692,9 @@ mod tests {
         assert_eq!(doc.code_blocks()[0].colors, None);
         // `-l` names a type: `ansi` keeps them, another drops them
         assert_eq!(FileType::named("ansi"), Some(FileType::ANSI));
-        let named = FileType::named("txt").unwrap().parse(stdin, log);
+        let named = FileType::named("txt")
+            .unwrap()
+            .parse(stdin, log, Dialect::CommonMark);
         assert_eq!(
             &*named.code_blocks()[0].text,
             "* abc1234 - (HEAD -> main) feat: x\n"
@@ -689,7 +706,7 @@ mod tests {
         // PGR-007: `man` with `GROFF_NO_SGR`, bold and underline struck over, no escapes
         let man = "N\x08NA\x08AM\x08ME\x08E\n       _\x08l_\x08s - list\n";
         assert_eq!(FileType::of(stdin, man), FileType::ANSI);
-        let doc = FileType::ANSI.parse(stdin, man);
+        let doc = FileType::ANSI.parse(stdin, man, Dialect::CommonMark);
         assert_eq!(&*doc.code_blocks()[0].text, "NAME\n       ls - list\n");
     }
 
@@ -704,7 +721,7 @@ mod tests {
         let sgr = format!("{title}\x1b[1mNAME\x1b[0m\n     \x1b[4mls\x1b[24m - list\n");
         for text in [&plain, &struck, &sgr] {
             assert_eq!(FileType::of(stdin, text), FileType::MANPAGE, "{text:?}");
-            let doc = FileType::MANPAGE.parse(stdin, text);
+            let doc = FileType::MANPAGE.parse(stdin, text, Dialect::CommonMark);
             assert_eq!(&*doc.code_blocks()[0].text, plain, "{text:?}");
         }
         assert_eq!(FileType::named("man"), Some(FileType::MANPAGE));
@@ -715,7 +732,7 @@ mod tests {
     fn colored_text_prints_in_its_colors() {
         let stdin = Path::new("-");
         let log = "\x1b[38;5;208mabc\x1b[m x \x1b[1;38;2;1;2;3mbold\x1b[22m rgb\x1b[m\n";
-        let doc = FileType::ANSI.parse(stdin, log);
+        let doc = FileType::ANSI.parse(stdin, log, Dialect::CommonMark);
         let params = LayoutParams {
             width: 80,
             max_width: None,
@@ -725,6 +742,7 @@ mod tests {
             bare: true,
             line_numbers: LineNumbers::Off,
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let theme = crate::theme::Theme::builtin()

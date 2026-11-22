@@ -588,6 +588,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: theme.glyphs.generation(),
+            properties: Default::default(),
             images: None,
         };
         let l = layout(&doc, &theme.glyphs, params);

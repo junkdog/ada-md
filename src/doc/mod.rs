@@ -1,11 +1,17 @@
 //! The document IR (ADR-01, ADR-02): an owned, markup-free block tree, parsed once per source
 //! version. Nothing downstream of [`parse`] sees pulldown-cmark types.
 
+mod comments;
+pub mod embed;
 mod fence;
 pub mod file;
+pub mod flavor;
+pub mod front;
 mod lines;
 mod parse;
+pub mod props;
 pub mod slug;
+pub mod tex;
 
 use std::hash::BuildHasher;
 use std::ops::BitOr;
@@ -13,14 +19,18 @@ use std::sync::Arc;
 
 use crate::diagram::Diagram;
 
+pub use embed::{Embed, Embedded, Embeds};
 pub use fence::language as fence_language;
-pub use parse::parse;
+pub use flavor::{Dialect, Flavor, Vault};
+pub use parse::{parse, parse_as, parse_with};
 
 pub type LinkId = u32;
 pub type AnchorId = u32;
 pub type FootnoteId = u32;
 pub type TableId = u32;
 pub type CodeId = u32;
+/// Typeset math, indexed into [`Doc::math`] (OBS-003).
+pub type MathId = u32;
 /// A searchable stretch of visible text: a paragraph, heading, table cell, image alt text or
 /// code line (ADR-12). Numbered `0..Doc::unit_count` in source order.
 pub type UnitId = u32;
@@ -81,14 +91,36 @@ pub struct Doc {
     /// Search units are numbered `0..unit_count`.
     pub unit_count: u32,
     /// Every run's text, in source order: a run holds its range (PAR-004), one heap block for
-    /// the document's inline text instead of one a run.
+    /// the document's inline text instead of one a run. Typeset math's TeX is here too.
     pub text: String,
+    /// The TeX of each run of typeset math, indexed by [`MathId`]: ranges of [`Doc::text`],
+    /// searched behind the math (OBS-003). The rows of one line of display math share one.
+    pub math: Vec<TextRange>,
     /// Every paragraph's, heading's and cell's runs, end to end: an [`Inlines`] holds its range
     /// (PAR-008), one heap block for the document's runs instead of one a paragraph or cell.
     pub runs: Vec<Run>,
+    /// The notes transcluded into it (OBS-007), indexed by [`Embed::note`]: their links and
+    /// anchors are ranges of the document's.
+    pub embedded: Vec<Embedded>,
 }
 
 impl Doc {
+    /// The note's properties: its front matter, read.
+    pub fn properties(&self) -> Option<&Properties> {
+        match &self.blocks.first()?.kind {
+            BlockKind::Properties(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// The `title` of a note without an H1 of its own, from its properties (ADR-46): what heads
+    /// the outline and the heading path.
+    pub fn title(&self) -> Option<&str> {
+        let h1 = (self.anchors.iter().enumerate())
+            .any(|(i, a)| a.kind == AnchorKind::Heading(1) && self.anchor_note(i as u32).is_none());
+        self.properties()?.title.as_deref().filter(|_| !h1)
+    }
+
     pub fn line_count(&self) -> u32 {
         self.line_starts.len() as u32
     }
@@ -114,6 +146,9 @@ pub struct Block {
     pub kind: BlockKind,
     pub src: LineRange,
 }
+
+// a variant held in place grows every block, and the parse with it (OBS-010's properties)
+const _: () = assert!(size_of::<Block>() == 104);
 
 #[derive(Debug)]
 pub enum BlockKind {
@@ -141,6 +176,39 @@ pub enum BlockKind {
     Html(Box<str>),
     /// Where the footnote section renders.
     FootnoteDefs,
+    /// Display math typeset (OBS-003): its rows as runs of [`RunKind::Math`] with hard breaks
+    /// between them, set centered.
+    Math(Inlines),
+    /// The note's front matter, read (ADR-46, OBS-010): always its first block. Boxed: in place,
+    /// its 128 bytes grew every block past them, from 104, and every note's parse took 1.7% more
+    /// instructions, front matter or not.
+    Properties(Box<Properties>),
+    /// A note embedded and transcluded (OBS-007): a link to it, then its blocks, or the blocks
+    /// of the heading's section it names. Boxed, as properties are.
+    Embed(Box<Embed>),
+}
+
+/// A note's front matter read into rows of a key and its value, shown above the note, hidden or
+/// as written, as [`crate::layout::PropertiesMode`] says (ADR-46, OBS-010).
+#[derive(Debug)]
+pub struct Properties {
+    /// What it holds, but for the keys of Obsidian's own ([`props::is_hidden`]).
+    pub rows: Vec<Property>,
+    /// The block as written, between its fences: shown as code in `source` mode, and in place of
+    /// the rows when ada couldn't read it.
+    pub source: CodeBlock,
+    /// Whether ada read it: its rows are what it holds.
+    pub read: bool,
+    /// Its `title`, which titles a note without an H1 ([`Doc::title`]).
+    pub title: Option<Box<str>>,
+}
+
+/// A row of [`Properties`]: a key, and its value as runs, its tags styled and its links links.
+#[derive(Debug)]
+pub struct Property {
+    pub key: Box<str>,
+    pub value: Inlines,
+    pub src: LineRange,
 }
 
 #[derive(Debug)]
@@ -153,30 +221,130 @@ pub struct List {
 
 #[derive(Debug)]
 pub struct ListItem {
-    pub task: Option<bool>,
+    pub task: Option<Task>,
     pub blocks: Vec<Block>,
     pub src: LineRange,
 }
 
+/// A list item's task box: GFM's `[ ]` and `[x]`, or a status Obsidian's themes and the Tasks
+/// plugin draw past them (OBS-012).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Callout {
+pub enum Task {
+    Open,
+    Done,
+    /// `[/]` in progress, `[-]` cancelled, `[>]` forwarded, `[<]` scheduled, `[!]` important,
+    /// `[?]` a question, `[*]` a star: the character in the brackets, one of [`Task::STATUSES`].
+    Status(char),
+}
+
+impl Task {
+    /// The statuses read past GFM's: Obsidian takes any character for one, but a letter or a
+    /// digit in brackets opens many a list of options or references (`- [a] first`, `- [1] Knuth`)
+    /// in other markdown, and these have no other meaning there.
+    pub const STATUSES: [char; 7] = ['/', '-', '>', '<', '!', '?', '*'];
+}
+
+/// A quote that opens with `[!kind]` (OBS-002): GitHub's alerts and Obsidian's callouts.
+#[derive(Debug)]
+pub struct Callout {
+    pub kind: CalloutKind,
+    /// What follows the marker on its line, else the kind as written, in title case.
+    pub title: Inlines,
+    /// Obsidian's `+` or `-` after the marker: a callout that folds. Shown open either way.
+    pub fold: Option<Fold>,
+}
+
+/// A callout's kind: Obsidian's thirteen, then GitHub's two that Obsidian reads as aliases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalloutKind {
     Note,
+    Abstract,
+    Info,
+    Todo,
     Tip,
-    Important,
+    Success,
+    Question,
     Warning,
+    Failure,
+    Danger,
+    Bug,
+    Example,
+    Quote,
+    Important,
     Caution,
 }
 
-impl Callout {
-    pub fn title(self) -> &'static str {
-        match self {
-            Callout::Note => "Note",
-            Callout::Tip => "Tip",
-            Callout::Important => "Important",
-            Callout::Warning => "Warning",
-            Callout::Caution => "Caution",
+impl CalloutKind {
+    pub const ALL: [CalloutKind; 15] = [
+        CalloutKind::Note,
+        CalloutKind::Abstract,
+        CalloutKind::Info,
+        CalloutKind::Todo,
+        CalloutKind::Tip,
+        CalloutKind::Success,
+        CalloutKind::Question,
+        CalloutKind::Warning,
+        CalloutKind::Failure,
+        CalloutKind::Danger,
+        CalloutKind::Bug,
+        CalloutKind::Example,
+        CalloutKind::Quote,
+        CalloutKind::Important,
+        CalloutKind::Caution,
+    ];
+
+    /// The kind a marker names, in any case: one of Obsidian's or an alias of one, and any
+    /// other name a note, as in Obsidian. `important` and `caution` are GitHub's own kinds,
+    /// except in an Obsidian note (`obsidian`), where they are tip and warning.
+    pub fn of(name: &str, obsidian: bool) -> Self {
+        let is = |s: &str| name.eq_ignore_ascii_case(s);
+        let any = |names: &[&str]| names.iter().any(|s| is(s));
+        match () {
+            _ if any(&["abstract", "summary", "tldr"]) => CalloutKind::Abstract,
+            _ if is("info") => CalloutKind::Info,
+            _ if is("todo") => CalloutKind::Todo,
+            _ if is("important") && !obsidian => CalloutKind::Important,
+            _ if any(&["tip", "hint", "important"]) => CalloutKind::Tip,
+            _ if any(&["success", "check", "done"]) => CalloutKind::Success,
+            _ if any(&["question", "help", "faq"]) => CalloutKind::Question,
+            _ if is("caution") && !obsidian => CalloutKind::Caution,
+            _ if any(&["warning", "caution", "attention"]) => CalloutKind::Warning,
+            _ if any(&["failure", "fail", "missing"]) => CalloutKind::Failure,
+            _ if any(&["danger", "error"]) => CalloutKind::Danger,
+            _ if is("bug") => CalloutKind::Bug,
+            _ if is("example") => CalloutKind::Example,
+            _ if any(&["quote", "cite"]) => CalloutKind::Quote,
+            _ => CalloutKind::Note,
         }
     }
+
+    /// Its name in a theme's `[glyphs.callout]`.
+    pub fn name(self) -> &'static str {
+        match self {
+            CalloutKind::Note => "note",
+            CalloutKind::Abstract => "abstract",
+            CalloutKind::Info => "info",
+            CalloutKind::Todo => "todo",
+            CalloutKind::Tip => "tip",
+            CalloutKind::Success => "success",
+            CalloutKind::Question => "question",
+            CalloutKind::Warning => "warning",
+            CalloutKind::Failure => "failure",
+            CalloutKind::Danger => "danger",
+            CalloutKind::Bug => "bug",
+            CalloutKind::Example => "example",
+            CalloutKind::Quote => "quote",
+            CalloutKind::Important => "important",
+            CalloutKind::Caution => "caution",
+        }
+    }
+}
+
+/// How a foldable callout starts in Obsidian: `+` open, `-` folded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+    Open,
+    Folded,
 }
 
 #[derive(Debug)]
@@ -317,7 +485,9 @@ pub fn plain_text(runs: &[Run], text: &str) -> String {
     let mut out = String::new();
     for run in runs {
         match run.kind {
-            RunKind::Text | RunKind::InlineImage(_) => out.push_str(run.text.of(text)),
+            RunKind::Text | RunKind::Math(_) | RunKind::InlineImage(_) | RunKind::Embed(_) => {
+                out.push_str(run.text.of(text));
+            }
             RunKind::SoftBreak | RunKind::HardBreak => out.push(' '),
             RunKind::FootnoteRef(_) => {}
         }
@@ -325,7 +495,7 @@ pub fn plain_text(runs: &[Run], text: &str) -> String {
     out
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Run {
     /// Unescaped text: what is rendered and searched, a range of [`Doc::text`] (read it with
     /// [`Doc::run_text`]).
@@ -364,7 +534,12 @@ pub enum RunKind {
     Text,
     SoftBreak,
     HardBreak,
+    /// Math typeset as Unicode (OBS-003): its text what shows, [`Doc::math`] its TeX.
+    Math(MathId),
     InlineImage(LinkId),
+    /// A note or another file that isn't an image, embedded (`![[note]]`): shown as a link to it,
+    /// its text what the embed names (OBS-007).
+    Embed(LinkId),
     FootnoteRef(FootnoteId),
 }
 
@@ -378,8 +553,10 @@ impl InlineStyle {
     pub const STRONG: Self = Self(1 << 1);
     pub const STRIKE: Self = Self(1 << 2);
     pub const CODE: Self = Self(1 << 3);
-    pub const SUP: Self = Self(1 << 4);
-    pub const SUB: Self = Self(1 << 5);
+    /// Obsidian's `==highlight==` (OBS-005), and its `#tag` (OBS-006): superscript and subscript
+    /// had their bits, never set, as pulldown-cmark's options for them are off.
+    pub const HIGHLIGHT: Self = Self(1 << 4);
+    pub const TAG: Self = Self(1 << 5);
     /// A class diagram member's UML classifier, static (`$`) or abstract (`*`), over whatever
     /// colors its parts.
     pub const STATIC: Self = Self(1 << 6);
@@ -409,6 +586,59 @@ pub struct LinkRef {
     pub title: Box<str>,
     pub kind: LinkKind,
     pub src_line: u32,
+    /// An image's size in Obsidian's `|100` or `|100x145` (OBS-008); in the padding, so a link
+    /// stays 48 bytes.
+    pub size: ImageSize,
+}
+
+/// The size Obsidian gives an image after a `|` in its alt text, `![[pic.png|100]]` or
+/// `![alt|100x145](pic.png)` (OBS-008): the most pixels it takes across and down, 0 for no
+/// bound. The image keeps its shape and is never enlarged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImageSize {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl ImageSize {
+    pub const NONE: Self = Self {
+        width: 0,
+        height: 0,
+    };
+
+    /// `100` or `100x145`, spaces around it allowed; a width of 0 is none.
+    pub fn parse(s: &str) -> Option<Self> {
+        let num = |s: &str| {
+            let s = s.trim();
+            (!s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))
+                .then(|| s.parse::<u64>().map_or(u16::MAX, |n| n.min(65535) as u16))
+        };
+        let size = match s.split_once('x') {
+            Some((w, h)) => Self {
+                width: num(w)?,
+                height: num(h)?,
+            },
+            None => Self {
+                width: num(s)?,
+                height: 0,
+            },
+        };
+        (size.width > 0).then_some(size)
+    }
+
+    /// An image of `px` pixels scaled down, its shape kept, to fit this size.
+    pub fn cap(self, px: (u32, u32)) -> (u32, u32) {
+        let bound = |max: u16, n: u32| match max {
+            0 => 1.0,
+            _ => f64::from(max) / f64::from(n.max(1)),
+        };
+        let scale = bound(self.width, px.0).min(bound(self.height, px.1));
+        if scale >= 1.0 {
+            return px;
+        }
+        let of = |n: u32| ((f64::from(n) * scale).round() as u32).max(1);
+        (of(px.0), of(px.1))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -434,6 +664,15 @@ pub struct Anchor {
 pub enum AnchorKind {
     Heading(u8),
     Footnote(FootnoteId),
+    /// A block named by Obsidian's `^id` (OBS-009), its slug `^id` and its text the id: a
+    /// paragraph or list item it ends, or the list, quote or table before it on a line alone.
+    Block {
+        /// The block's first search unit, which layout finds its row by.
+        unit: UnitId,
+        /// The block's lines in the note it was parsed from (not moved when grafted): what
+        /// `![[note#^id]]` transcludes.
+        lines: LineRange,
+    },
 }
 
 #[derive(Debug)]
@@ -460,6 +699,7 @@ impl Doc {
                         }
                     }
                     BlockKind::Quote { blocks, .. } => walk(blocks, f),
+                    BlockKind::Embed(e) => walk(&e.blocks, f),
                     _ => {}
                 }
             }
@@ -474,9 +714,12 @@ impl Doc {
     pub fn code_blocks(&self) -> Vec<&CodeBlock> {
         let mut out = vec![None; self.code_count as usize];
         self.each_block(&mut |block| {
-            if let BlockKind::Code(code) = &block.kind
-                && let Some(slot) = out.get_mut(code.id as usize)
-            {
+            let code = match &block.kind {
+                BlockKind::Code(code) => code,
+                BlockKind::Properties(p) => &p.source,
+                _ => return,
+            };
+            if let Some(slot) = out.get_mut(code.id as usize) {
                 *slot = Some(code);
             }
         });

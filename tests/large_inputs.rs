@@ -222,6 +222,8 @@ fn large_documents_hold_in_the_tui() {
                     path: path.into(),
                     mtime: None,
                     text: text.into(),
+                    vault: ada::doc::Vault::None,
+                    embeds: Default::default(),
                     doc: Computed(None),
                 },
             );
@@ -241,7 +243,7 @@ fn large_documents_hold_in_print() {
     each_document(|name, path, text| {
         let theme = Theme::builtin();
         let filetype = FileType::of(path, text);
-        let doc = filetype.parse(path, text);
+        let doc = filetype.parse(path, text, Default::default());
         for (width, max_width, table_mode, line_numbers) in [
             (80, None, TableMode::Auto, LineNumbers::Off),
             (u16::MAX, None, TableMode::Grid, LineNumbers::All),
@@ -260,6 +262,7 @@ fn large_documents_hold_in_print() {
                 bare: false,
                 line_numbers,
                 glyphs_gen: theme.glyphs.generation(),
+                properties: Default::default(),
                 images: None,
             };
             let opts = Options {

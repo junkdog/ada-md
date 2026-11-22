@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use crate::geom::Size;
 
 use super::{
-    ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, Sort, TableMode, layout,
-    layout_measured, layout_print, relayout,
+    ImageFit, Layout, LayoutParams, LineNumbers, Measure, PropertiesMode, RowKind, Sort, TableMode,
+    layout, layout_measured, layout_print, relayout, text_width,
 };
-use crate::doc::{BlockKind, parse};
+use crate::doc::{AnchorKind, BlockKind, Dialect, Task, parse, parse_as};
 use crate::theme::{Glyphs, TableBorder, Theme};
 
 fn fixtures() -> Vec<(String, String)> {
@@ -41,6 +41,7 @@ fn params(width: u16) -> LayoutParams {
         bare: false,
         line_numbers: Default::default(),
         glyphs_gen: 0,
+        properties: Default::default(),
         images: None,
     }
 }
@@ -597,6 +598,89 @@ fn hits_cover_link_text() {
     assert_eq!(texts, ["the docs", "wiki"]);
 }
 
+/// A key cut to its column stays in it when an emoji takes more columns beside U+FE0F than
+/// alone: cut by the characters' own widths it came out wider, and its padding underflowed
+/// (fuzz, `render`, 2026-11-22).
+#[test]
+fn a_key_with_emoji_presentation_is_cut_to_its_column() {
+    let theme = Theme::builtin();
+    let doc = parse("---\n\"🎙\u{fe0f}🎙\u{fe0f}ab\": x\n---\n");
+    for width in 4..20 {
+        let l = layout(&doc, &theme.glyphs, params(width));
+        assert!(l.row_count() > 0);
+    }
+    let text = render(&layout(&doc, &theme.glyphs, params(12)));
+    // the column is 4: the first emoji's 2, then one of the second's, then `…`
+    assert!(text.contains("🎙\u{fe0f}🎙…  x"), "{text}");
+}
+
+/// A note's properties (ADR-46): rows of a key and its value, the rest counted; hidden, they
+/// leave no gap; as source, the front matter as written.
+#[test]
+fn properties_show_hide_and_show_as_written() {
+    let theme = Theme::builtin();
+    let mut md = String::from("---\ntitle: T\ntags: [a, b]\n");
+    for i in 0..8 {
+        md.push_str(&format!("k{i}: v{i}\n"));
+    }
+    md.push_str("---\n# Body\n");
+    let doc = parse(&md);
+    let shown = |properties| {
+        let p = LayoutParams {
+            properties,
+            ..params(40)
+        };
+        render(&layout(&doc, &theme.glyphs, p))
+    };
+    assert_eq!(
+        shown(PropertiesMode::Show),
+        "    2│  title  T
+    3│  tags   #a #b
+    4│  k0     v0
+    5│  k1     v1
+    6│  k2     v2
+    7│  k3     v3
+ 8-11│  +4 more
+     │
+   13│   Body
+"
+    );
+    assert_eq!(shown(PropertiesMode::Hide), "   13│   Body\n");
+    let source = shown(PropertiesMode::Source);
+    assert!(source.contains("│   title: T"), "{source}");
+    assert!(source.ends_with("     │\n   13│   Body\n"), "{source}");
+    // seven rows show whole: the row counting one more would take one's place
+    let doc = parse("---\na: 1\nb: 2\nc: 3\nd: 4\ne: 5\nf: 6\ng: 7\n---\n");
+    let l = layout(&doc, &theme.glyphs, params(40));
+    assert_eq!(l.row_count(), 7);
+    // a value wraps under itself, and a long key is cut to a third of the width
+    let doc =
+        parse("---\nshort: one two three four five six seven\nwhat a long key this is: x\n---\n");
+    let l = layout(&doc, &theme.glyphs, params(40));
+    let rows: Vec<String> = (0..l.rows.len())
+        .map(|r| l.row_text(r).trim_end().to_owned())
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            "  short         one two three four",
+            "                five six seven",
+            "  what a long…  x",
+        ]
+    );
+    // a value takes three rows at most, the third saying how many more lines it has
+    let items: Vec<String> = (0..40).map(|i| format!("item{i}")).collect();
+    let doc = parse(&format!("---\nlist: [{}]\n---\n", items.join(", ")));
+    let l = layout(&doc, &theme.glyphs, params(40));
+    assert_eq!(
+        render(&l),
+        "    2│  list  item0, item1, item2, item3,
+    2│        item4, item5, item6, item7,
+    2│        +10 more lines
+"
+    );
+}
+
 #[test]
 fn anchors_map_to_rows() {
     let theme = Theme::builtin();
@@ -608,6 +692,59 @@ fn anchors_map_to_rows() {
         .map(|&r| l.row_text(r as usize).trim().to_owned())
         .collect();
     assert_eq!(rows, ["One", "## Two", "[1] the note"]);
+}
+
+#[test]
+fn block_ids_map_to_their_blocks_rows() {
+    let theme = Theme::builtin();
+    let md = "# One\n\ntext ^para\n\n- a\n- b ^item\n\n| | x |\n|---|---|\n| y | z |\n\n^table\n";
+    let doc = parse_as(md, Dialect::Obsidian { line_breaks: false });
+    let l = layout(&doc, &theme.glyphs, params(80));
+    let rows: Vec<String> = (doc.anchors.iter())
+        .map(|a| match a.kind {
+            AnchorKind::Block { unit, .. } => l.block_row(unit),
+            _ => None,
+        })
+        .map(|r| r.map_or(String::new(), |r| l.row_text(r as usize).trim().to_owned()))
+        .collect();
+    // a table whose first cell is empty: its first row with text
+    assert_eq!(rows[1..3], ["text", "• b"]);
+    assert!(rows[3].contains('x'), "{}", rows[3]);
+}
+
+#[test]
+fn task_statuses_draw_their_own_boxes() {
+    let theme = Theme::builtin();
+    let md = "- [ ] open\n- [x] done\n- [/] doing\n- [-] dropped\n- [>] moved\n- [<] planned\n\
+              - [!] urgent\n- [?] unsure\n- [*] starred\n";
+    let doc = parse(md);
+    let l = layout(&doc, &theme.glyphs, params(80));
+    let rows: Vec<String> = (0..l.rows.len())
+        .map(|r| l.row_text(r).trim().to_owned())
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            "[ ] open",
+            "[✓] done",
+            "[◐] doing",
+            "[–] dropped",
+            "[→] moved",
+            "[←] planned",
+            "[!] urgent",
+            "[?] unsure",
+            "[★] starred"
+        ]
+    );
+    // every box as wide as GFM's, so the tasks' text lines up
+    for c in Task::STATUSES {
+        let (glyph, _) = theme.glyphs.task_box(Task::Status(c));
+        assert_eq!(
+            text_width(glyph),
+            text_width(&theme.glyphs.task[1]),
+            "{glyph}"
+        );
+    }
 }
 
 /// The invariants over a real corpus: `ADA_CORPUS=~/opt/birb-vault cargo test -- --ignored`.
@@ -702,6 +839,41 @@ fn block_images_reserve_rows_once_their_size_is_known() {
     assert!(text.row_text(2).contains("🖼 a cat (cat.png)"));
 }
 
+/// Obsidian's `|100` caps an image's pixels before it's fit to cells, and never enlarges it
+/// (OBS-008).
+#[test]
+fn obsidians_image_sizes_cap_block_images() {
+    let theme = Theme::builtin();
+    let doc = parse("![[cat.png|100]]\n\n![dog|60x30](dog.png)\n\n![[ant.png|4000]]\n");
+    let mut measure = Measure::new(&doc, &theme.glyphs);
+    for link in 0..3 {
+        measure.set_image(link, Some((400, 300)));
+    }
+    let p = LayoutParams {
+        images: Some(ImageFit {
+            cell: Size::new(10, 20),
+            max_rows: 10,
+            screen_rows: 16,
+        }),
+        ..params(60)
+    };
+    let l = layout_measured(&doc, &measure, &theme.glyphs, p);
+    check_invariants(&l, None, "images");
+    // 100×75 pixels, 10×4 cells; 40×30, 4×2; 400×300 as without a size, cut to 10 rows
+    let sizes: Vec<_> = l.images.iter().map(|s| s.size).collect();
+    assert_eq!(
+        sizes,
+        [Size::new(10, 4), Size::new(4, 2), Size::new(27, 10)]
+    );
+    // no caption from the size: the alt text, or the target as for `![[cat.png]]`
+    let captions: Vec<_> = (0..l.rows.len())
+        .map(|r| l.row_text(r))
+        .filter(|t| t.contains('🖼'))
+        .map(|t| t.trim().to_owned())
+        .collect();
+    assert_eq!(captions, ["🖼 cat.png", "🖼 dog", "🖼 ant.png"]);
+}
+
 /// Line numbers take columns of their own, left of the margin, and number each line on its
 /// first row only.
 #[test]
@@ -769,4 +941,42 @@ fn pads_and_nbsps_show_as_spaces() {
             rows[i]
         );
     }
+}
+
+/// A note transcluded (OBS-007): behind a bar, its link and its blocks, without its properties,
+/// every row the embed's line; its headings aren't the outline's.
+#[test]
+fn an_embed_lays_out_the_note_on_its_line() {
+    use crate::doc::{Embeds, embed::Note, parse_with};
+    use crate::links::LocalTarget;
+
+    let theme = Theme::builtin();
+    let note = Note {
+        from: "host.md".into(),
+        target: LocalTarget::Wiki("other".into()),
+        path: "other.md".into(),
+        mtime: None,
+        text: "---\ntags: x\n---\n# Other\n\nbody\n".into(),
+    };
+    let embeds = Embeds(vec![note].into());
+    let md = "# Host\n\n![[other]]\n\nafter\n";
+    let doc = parse_with(md, Dialect::CommonMark, Path::new("host.md"), &embeds);
+    let l = layout(&doc, &theme.glyphs, params(40));
+    assert_eq!(
+        render(&l),
+        concat!(
+            "    1│   Host\n",
+            "     │\n",
+            "    3│  │ ↳ other\n",
+            "    3│  │  Other\n",
+            "    3│  │\n",
+            "    3│  │ body\n",
+            "     │\n",
+            "    5│  after\n",
+        )
+    );
+    let outline: Vec<_> = l.headings.iter().map(|h| h.anchor).collect();
+    assert_eq!(outline, [0]);
+    // its heading's row is known, for a link to it
+    assert_eq!(l.anchor_rows[1], 3);
 }

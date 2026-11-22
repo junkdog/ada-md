@@ -15,3 +15,6 @@
 >
 > - item one
 > - item two
+
+> [!faq]- An Obsidian callout, with a *title*
+> Its body, under a title of its own.

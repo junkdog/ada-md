@@ -36,6 +36,8 @@ fn main() {
                 path: path.as_str().into(),
                 mtime: None,
                 text: text.as_str().into(),
+                vault: ada::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -100,6 +102,7 @@ fn main() {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let printed = print::render(&doc::parse(&text), &theme, params, Default::default());

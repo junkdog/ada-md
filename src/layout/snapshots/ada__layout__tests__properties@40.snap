@@ -1,0 +1,22 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    2│  title    Properties, shown above the
+    2│           note
+    3│  aliases  Front matter, Properties
+    3│           fixture
+    6│  tags     #ada #obsidian #nested/tag
+    7│  up       Basics
+    8│  source   https://help.obsidian.md/
+    8│           properties, read 2026-11-22
+    9│  summary  A folded scalar, which YAML
+    9│           reads as one line of text,
+    9│           +2 more lines
+12-17│  +3 more
+     │
+   20│  ## The note itself
+     │
+   22│  Its properties are its first block:
+   22│  a key and its value a row, the rest
+   22│  counted.

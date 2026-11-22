@@ -12,9 +12,9 @@ expression: frames.last().unwrap()
   │
   │ Back to the outer quote.
 
-  │ Note
+  │ 📝 Note
   │ A callout, as GitHub renders them.
 
-  │ Warning
+  │ ⚠️ Warning
   │ Careful: this one has a list.
  tests/fixtures/quotes.md  background: the terminal's   Top

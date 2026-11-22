@@ -11,7 +11,8 @@ use crate::filetype::FileType;
 use crate::images::ImageCache;
 
 impl State {
-    /// Watch the current document's file, when live reload is on. Stdin has no file.
+    /// Watch the current document's file, and the notes it transcludes (OBS-007), when live
+    /// reload is on. Stdin has no file.
     pub(super) fn watch_cmd(&self) -> Option<Cmd> {
         let doc = self
             .doc
@@ -20,6 +21,7 @@ impl State {
         Some(Cmd::Watch {
             path: doc.path.clone(),
             mtime: doc.mtime,
+            embeds: doc.embeds.files(),
         })
     }
 
@@ -29,10 +31,15 @@ impl State {
         if path.as_os_str() == "-" {
             return self.stdin_read();
         }
-        let Some(doc) = self.doc.as_mut().filter(|d| d.path == path) else {
+        let Some(doc) = self.doc.as_mut() else {
             return Vec::new();
         };
-        let changed = doc.mtime != mtime;
+        // the file, or a note it transcludes (OBS-007): either reads the file again
+        let changed = match doc.embeds.0.iter().find(|n| n.path == path) {
+            _ if doc.path == path => doc.mtime != mtime,
+            Some(note) => note.mtime != mtime || doc.changed,
+            None => return Vec::new(),
+        };
         match self.config.live_reload {
             LiveReload::Auto if changed => self.reload(),
             LiveReload::Notify => {
@@ -150,6 +157,8 @@ mod tests {
                 path: path.into(),
                 mtime: Some(5),
                 text: text.into(),
+                vault: crate::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
@@ -165,6 +174,67 @@ mod tests {
         md
     }
 
+    /// A note transcluded (OBS-007): its links resolve from it, it's watched beside the note,
+    /// and its change reads the note again.
+    #[test]
+    fn a_transcluded_note_is_resolved_from_and_watched() {
+        use crate::doc::{Embeds, embed::Note};
+        use crate::links::LocalTarget;
+
+        let note = Note {
+            from: "a.md".into(),
+            target: LocalTarget::Wiki("other".into()),
+            path: "notes/other.md".into(),
+            mtime: Some(7),
+            text: "# Other\n\n![[pic.png]] [b](b.md)\n".into(),
+        };
+        let embeds = Embeds(vec![note].into());
+        let mut state = State::new(Theme::builtin(), Config::default());
+        let loaded = |embeds: &Embeds| Msg::DocLoaded {
+            path: "a.md".into(),
+            mtime: Some(5),
+            text: "# A\n\n![[other]]\n\n[b](b.md)\n".into(),
+            vault: crate::doc::Vault::None,
+            embeds: embeds.clone(),
+            doc: Computed(None),
+        };
+        let cmds = update(&mut state, loaded(&embeds));
+        let resolve = cmds.iter().find_map(|c| match c {
+            Cmd::ResolveLinks { targets, .. } => Some(targets.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            resolve.unwrap(),
+            [
+                // the embed's own link is the host's
+                ("a.md".into(), LocalTarget::Wiki("other".into())),
+                ("notes/other.md".into(), LocalTarget::Path("pic.png".into())),
+                ("notes/other.md".into(), LocalTarget::Path("b.md".into())),
+                ("a.md".into(), LocalTarget::Path("b.md".into())),
+            ]
+        );
+        assert!(cmds.contains(&Cmd::Watch {
+            path: "a.md".into(),
+            mtime: Some(5),
+            embeds: vec![("notes/other.md".into(), Some(7))],
+        }));
+        // the note at the time it was read says nothing; a newer one reads the host again
+        let changed = |mtime| Msg::FileChanged {
+            path: "notes/other.md".into(),
+            mtime: Some(mtime),
+        };
+        assert!(update(&mut state, changed(7)).is_empty());
+        let cmds = update(&mut state, changed(8));
+        assert_eq!(only_load(&cmds), Some("a.md"));
+        // read again with the same text but a changed note, it's parsed again
+        let before = state.generation;
+        let mut newer = embeds.0.to_vec();
+        newer[0].text = "# Other, edited\n".into();
+        update(&mut state, loaded(&Embeds(newer.into())));
+        assert!(state.generation > before);
+        assert!(state.status.as_deref() == Some("reloaded"));
+    }
+
     #[test]
     fn loads_watch_the_file() {
         let mut state = State::new(Theme::builtin(), Config::default());
@@ -174,12 +244,15 @@ mod tests {
                 path: "a.md".into(),
                 mtime: Some(5),
                 text: "# a\n".into(),
+                vault: crate::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );
         assert!(cmds.contains(&Cmd::Watch {
             path: "a.md".into(),
-            mtime: Some(5)
+            mtime: Some(5),
+            embeds: Vec::new(),
         }));
 
         for (live_reload, watched) in [(LiveReload::Notify, true), (LiveReload::Off, false)] {
@@ -194,6 +267,8 @@ mod tests {
                     path: "a.md".into(),
                     mtime: Some(5),
                     text: "# a\n".into(),
+                    vault: crate::doc::Vault::None,
+                    embeds: Default::default(),
                     doc: Computed(None),
                 },
             );
@@ -242,6 +317,8 @@ mod tests {
             path: "a.md".into(),
             mtime: Some(mtime),
             text: text.into(),
+            vault: crate::doc::Vault::None,
+            embeds: Default::default(),
             doc: Computed(None),
         };
         update(&mut state, loaded(5, &note()));
@@ -312,6 +389,8 @@ mod tests {
                 path: "a.md".into(),
                 mtime: Some(6),
                 text: note().into(),
+                vault: crate::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );

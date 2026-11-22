@@ -396,6 +396,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let layout = crate::layout::layout(&doc, &theme.glyphs, params);
@@ -431,6 +432,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         };
         let layout = crate::layout::layout(&doc, &theme.glyphs, params);

@@ -7,9 +7,10 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the script's directory out
 import timeouts
 
-V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow"]
+V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow", "basalt", "ekphos", "emeraldian", "smd"]
 NAME = {"ada": "**ada**", "treemd": "treemd 0.9.1", "treemd-head": "treemd HEAD", "leaf": "leaf", "mdfried": "mdfried",
-        "mdtui": "md-tui", "glow": "glow"}
+        "mdtui": "md-tui", "glow": "glow", "basalt": "basalt", "ekphos": "ekphos", "emeraldian": "emeraldian",
+        "smd": "smd"}
 DOCS = ["s", "m", "l", "xl"]
 runs = defaultdict(list)
 for l in open(sys.argv[1]):

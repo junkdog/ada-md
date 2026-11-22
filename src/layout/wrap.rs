@@ -16,7 +16,7 @@ use std::ops::Range;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::doc::{Doc, InlineStyle, LineRange, LinkId, Run, RunKind, TextRange, UnitId};
+use crate::doc::{Doc, InlineStyle, LineRange, LinkId, MathId, Run, RunKind, TextRange, UnitId};
 use crate::theme::{Glyphs, StyleKey};
 
 /// Non-breaking padding; rendered as a plain space.
@@ -426,6 +426,39 @@ pub fn unit_text(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> String {
         .collect()
 }
 
+/// [`unit_text`], and the bytes of it each run of typeset math takes (OBS-003): consecutive
+/// runs of one [`MathId`], the rows of a matrix, as one stretch.
+pub fn unit_text_math(
+    runs: &[Run],
+    doc: &Doc,
+    glyphs: &Glyphs,
+) -> (String, Vec<(MathId, Range<u32>)>) {
+    let mut w = Wrapped::default();
+    let mut src = Vec::new();
+    let mut math: Vec<(MathId, Range<u32>)> = Vec::new();
+    // a run at a time, into one buffer: as one call would, but for where each run ends
+    for run in runs {
+        let at = w.unit_len;
+        flatten(
+            std::slice::from_ref(run),
+            StyleKey::Text,
+            (doc, None),
+            glyphs,
+            (&mut w, &mut src),
+        );
+        if let RunKind::Math(id) = run.kind {
+            match math.last_mut() {
+                Some((last, range)) if *last == id => range.end = w.unit_len,
+                _ => math.push((id, at..w.unit_len)),
+            }
+        }
+    }
+    let text = (w.pieces.iter())
+        .map(|p| &w.buf[p.body_start as usize..p.body_end as usize])
+        .collect();
+    (text, math)
+}
+
 /// Wrap plain text that has a single style.
 pub fn wrap_plain(text: &str, key: StyleKey, src_line: u32, avail: u16) -> Wrapped {
     let (mut w, mut src) = (Wrapped::default(), Vec::new());
@@ -706,12 +739,15 @@ fn flatten(
                 });
                 push_code((w, src), pad, (doc, run, marks), look);
             }
-            RunKind::Text => push_text((w, src), (doc, run, marks), look),
+            RunKind::Text | RunKind::Math(_) => push_text((w, src), (doc, run, marks), look),
             RunKind::SoftBreak => push_parts((w, src), ["", " ", ""], look, line, false),
             RunKind::HardBreak => push_parts((w, src), ["", "\n", ""], look, line, false),
-            RunKind::InlineImage(link) => {
-                let icon: String = glyphs
-                    .image
+            RunKind::InlineImage(link) | RunKind::Embed(link) => {
+                let (glyph, key) = match run.kind {
+                    RunKind::Embed(_) => (&glyphs.embed, key),
+                    _ => (&glyphs.image, StyleKey::Image),
+                };
+                let icon: String = glyph
                     .chars()
                     .map(|c| if c == ' ' { NBSP } else { c })
                     .collect();
@@ -720,7 +756,7 @@ fn flatten(
                 } else {
                     &icon
                 };
-                let look = (StyleKey::Image, run.style, Some(link));
+                let look = (key, run.style, Some(link));
                 push_parts((w, src), [icon, text, ""], look, line, true);
             }
             RunKind::FootnoteRef(id) => {

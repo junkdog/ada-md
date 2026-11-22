@@ -15,7 +15,7 @@ use std::ops::Range;
 
 use unicode_width::UnicodeWidthChar;
 
-use crate::doc::{Align, Block, BlockKind, CodeBlock, CodeId, Doc, Table, UnitId};
+use crate::doc::{Align, Block, BlockKind, CodeBlock, CodeId, Doc, Table, Task, UnitId};
 use crate::geom;
 use crate::layout::{Layout, RowKind, SearchSeg, TAB_STOP};
 use crate::search::SearchMap;
@@ -741,7 +741,9 @@ impl Roles {
     fn walk(&mut self, blocks: &[Block], indent: u16, marker: &mut Option<String>) {
         for block in blocks {
             match &block.kind {
-                BlockKind::Heading { inlines, .. } | BlockKind::Paragraph(inlines) => {
+                BlockKind::Heading { inlines, .. }
+                | BlockKind::Paragraph(inlines)
+                | BlockKind::Math(inlines) => {
                     self.set(inlines.unit, indent, marker);
                 }
                 BlockKind::Table(t) => {
@@ -751,21 +753,14 @@ impl Roles {
                         self.set(cell.unit, 0, &mut None);
                     }
                 }
-                BlockKind::Code(code) => {
-                    for n in 0..code.lines().count() as u32 {
-                        let unit = code.first_unit + n;
-                        self.set(unit, indent, marker);
-                        if let Some(role) = self.0.get_mut(unit as usize) {
-                            role.code = Some((code.id, n));
-                        }
-                    }
-                }
+                BlockKind::Code(code) => self.code_lines(code, indent, marker),
                 BlockKind::Image { unit, .. } => self.set(*unit, indent, marker),
                 BlockKind::List(list) => {
                     for (i, item) in list.items.iter().enumerate() {
                         let mark = match (item.task, list.start) {
-                            (Some(true), _) => "- [x] ".to_owned(),
-                            (Some(false), _) => "- [ ] ".to_owned(),
+                            (Some(Task::Done), _) => "- [x] ".to_owned(),
+                            (Some(Task::Open), _) => "- [ ] ".to_owned(),
+                            (Some(Task::Status(c)), _) => format!("- [{c}] "),
                             (None, Some(n)) => format!("{}. ", n.saturating_add(i as u64)),
                             (None, None) => "- ".to_owned(),
                         };
@@ -776,8 +771,33 @@ impl Roles {
                         self.walk(&item.blocks, inner, &mut mark);
                     }
                 }
-                BlockKind::Quote { blocks, .. } => self.walk(blocks, indent, marker),
+                BlockKind::Quote { callout, blocks } => {
+                    if let Some(c) = callout {
+                        self.set(c.title.unit, indent, marker);
+                    }
+                    self.walk(blocks, indent, marker);
+                }
+                BlockKind::Embed(e) => {
+                    self.set(e.title.unit, indent, marker);
+                    self.walk(&e.blocks, indent, marker);
+                }
+                BlockKind::Properties(p) => {
+                    for row in &p.rows {
+                        self.set(row.value.unit, 0, &mut None);
+                    }
+                    self.code_lines(&p.source, 0, &mut None);
+                }
                 BlockKind::Rule | BlockKind::Html(_) | BlockKind::FootnoteDefs => {}
+            }
+        }
+    }
+
+    fn code_lines(&mut self, code: &CodeBlock, indent: u16, marker: &mut Option<String>) {
+        for n in 0..code.lines().count() as u32 {
+            let unit = code.first_unit + n;
+            self.set(unit, indent, marker);
+            if let Some(role) = self.0.get_mut(unit as usize) {
+                role.code = Some((code.id, n));
             }
         }
     }
@@ -1028,6 +1048,7 @@ mod tests {
             bare: false,
             line_numbers: LineNumbers::Off,
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         }
     }

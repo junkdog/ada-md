@@ -279,6 +279,8 @@ fn replay(rng: &mut Rng, text: &str) {
                 path: "fuzz.md".into(),
                 mtime: None,
                 text: text.into(),
+                vault: ada::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         ];

@@ -7,6 +7,7 @@ use std::{env, fs, thread};
 use ada::app::{self, Config, Effects, Head, Msg, State};
 use ada::cli::{self, Args, Input};
 use ada::config::LiveReload;
+use ada::doc::Vault;
 use ada::filetype::{self, FileType};
 use ada::git::{self, LineMarks};
 use ada::images::{self, ImageMode};
@@ -97,9 +98,11 @@ fn run() -> Result<(), String> {
         table_mode: settings.table_mode,
         code_wrap: args.code_wrap.unwrap_or(settings.code_wrap),
         line_numbers: args.line_numbers.unwrap_or(settings.line_numbers),
+        properties: settings.properties,
         keys: settings.keys,
         file,
         language: None,
+        flavor: args.flavor.unwrap_or(settings.flavor),
     };
 
     if let Some(path) = &args.replay {
@@ -112,7 +115,7 @@ fn run() -> Result<(), String> {
             eprintln!("ada: warning: {w}");
         }
         let mut effects = Effects::new(None);
-        effects.set_resolver(Box::new(resolver));
+        effects.set_resolver(resolver);
         return record::replay(path, State::new(theme, config), effects, opts);
     }
 
@@ -219,7 +222,7 @@ fn run() -> Result<(), String> {
     if let Some((input, read)) = rest {
         effects.read_rest(input, read);
     }
-    effects.set_resolver(Box::new(resolver));
+    effects.set_resolver(resolver);
     app::run_tui(state, path, effects, recorder)
 }
 
@@ -430,6 +433,7 @@ fn print_doc(
         width,
         max_width: config.max_width,
         table_mode: config.table_mode,
+        properties: config.properties,
         code_wrap: args
             .code_wrap
             .unwrap_or(config.code_wrap || preview.is_none()),
@@ -481,16 +485,16 @@ fn print_doc(
     // a piped image prints from a file of its own, removed once it's printed
     let mut image = None;
     let piped = path == Path::new("-");
-    let (path, text) = if let Some((text, _)) = fit {
-        (path, Arc::clone(text))
+    let (path, text, vault) = if let Some((text, _)) = fit {
+        (path, Arc::clone(text), Vault::of(path))
     } else if piped {
         match read_stdin(read, head, forced)? {
-            Piped::Text(text) => (path, text),
-            Piped::Image(piped) => (&*image.insert(piped).path, Arc::from("")),
+            Piped::Text(text) => (path, text, Vault::None),
+            Piped::Image(piped) => (&*image.insert(piped).path, Arc::from(""), Vault::None),
         }
     } else {
         match app::load_doc_head(path, None, head) {
-            Msg::DocLoaded { text, .. } => (path, text),
+            Msg::DocLoaded { text, vault, .. } => (path, text, vault),
             Msg::DocFailed { path, error } => return Err(format!("{}: {error}", path.display())),
             other => return Err(format!("unexpected {other:?}")),
         }
@@ -512,7 +516,12 @@ fn print_doc(
             move || git::run(&path)
         })
     });
-    let doc = filetype.parse(path, &text);
+    // the notes a note embeds, transcluded (OBS-007)
+    let embeds = match filetype == FileType::Markdown && !piped {
+        true => ada::doc::embed::gather(path, &text, resolver),
+        false => Default::default(),
+    };
+    let doc = filetype.parse_with(path, &text, config.flavor.dialect(vault), &embeds);
     // fzf redraws its preview pane for every file: its images can replace the last file's
     let reuse_ids = env::var_os("FZF_PREVIEW_LINES").is_some();
     let pictures = proto

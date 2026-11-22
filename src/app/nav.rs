@@ -3,11 +3,11 @@
 //! history changes only once they have, so a failed load leaves it alone.
 
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::{Cmd, Dir, Document, Prepared, ScrollAnchor, State};
-use crate::doc::{AnchorId, Doc, LineRange, LinkId, LinkKind};
+use super::{Cmd, Dir, Document, Loaded, Prepared, ScrollAnchor, State};
+use crate::doc::{AnchorId, AnchorKind, Doc, LineRange, LinkId, LinkKind};
 use crate::filetype::FileType;
 use crate::links::{self, LocalTarget, Resolved, Target};
 
@@ -69,20 +69,21 @@ pub(super) struct Nav {
     land: Landing,
 }
 
-/// The local targets of `doc`'s links, without duplicates, and each link's index among them.
-fn local_targets(doc: &Doc) -> (Vec<LocalTarget>, Vec<Option<usize>>) {
-    let mut targets: Vec<LocalTarget> = Vec::new();
-    let index = doc
-        .links
-        .iter()
-        .map(|link| match Target::of(link) {
-            Target::Local { target, .. } => Some(match targets.iter().position(|t| *t == target) {
-                Some(i) => i,
-                None => {
-                    targets.push(target);
+/// The local targets of `doc`'s links, the file at `path`, each with the file it's resolved
+/// from (a transcluded note's links from that note, OBS-007), without duplicates, and each
+/// link's index among them.
+fn local_targets(doc: &Doc, path: &Path) -> (Vec<(PathBuf, LocalTarget)>, Vec<Option<usize>>) {
+    let mut targets: Vec<(PathBuf, LocalTarget)> = Vec::new();
+    let index = (doc.links.iter().enumerate())
+        .map(|(id, link)| match Target::of(link) {
+            Target::Local { target, .. } => {
+                let from = doc.link_source(id as LinkId, path);
+                let at = targets.iter().position(|(f, t)| *t == target && f == from);
+                Some(at.unwrap_or_else(|| {
+                    targets.push((from.to_owned(), target));
                     targets.len() - 1
-                }
-            }),
+                }))
+            }
             _ => None,
         })
         .collect();
@@ -91,13 +92,15 @@ fn local_targets(doc: &Doc) -> (Vec<LocalTarget>, Vec<Option<usize>>) {
 
 /// Link states that need no filesystem: anchors, footnotes, external links.
 pub(super) fn initial_links(doc: &Doc) -> Vec<LinkState> {
-    doc.links
-        .iter()
-        .map(|link| match Target::of(link) {
-            Target::Anchor(frag) => match links::find_anchor(doc, &frag) {
-                Some(a) => LinkState::Anchor(a),
-                None => LinkState::Broken(format!("no heading #{frag}")),
-            },
+    (doc.links.iter().enumerate())
+        .map(|(id, link)| match Target::of(link) {
+            // a transcluded note's `#heading` is its own (OBS-007)
+            Target::Anchor(frag) => {
+                match links::find_anchor_in(doc, &frag, doc.link_note(id as LinkId)) {
+                    Some(a) => LinkState::Anchor(a),
+                    None => LinkState::Broken(no_anchor(&frag)),
+                }
+            }
             Target::Footnote(id) => match doc.footnotes.get(id as usize).and_then(|f| f.anchor) {
                 Some(a) => LinkState::Anchor(a),
                 None => LinkState::Broken("the footnote is never defined".into()),
@@ -109,6 +112,14 @@ pub(super) fn initial_links(doc: &Doc) -> Vec<LinkState> {
         .collect()
 }
 
+/// Why a link's `#frag` leads nowhere: no heading has the name, or no block the id (OBS-009).
+fn no_anchor(frag: &str) -> String {
+    match frag.strip_prefix('^') {
+        Some(id) => format!("no block ^{id}"),
+        None => format!("no heading #{frag}"),
+    }
+}
+
 /// The first line a GitHub line fragment names: `L42` or `L42-L50`.
 pub(super) fn line_frag(frag: &str) -> Option<u32> {
     let first = frag.strip_prefix('L')?.split('-').next()?;
@@ -117,10 +128,9 @@ pub(super) fn line_frag(frag: &str) -> Option<u32> {
 
 /// The command that resolves a new document's local links, if it has any.
 pub(super) fn resolve_cmd(doc: &Document) -> Option<Cmd> {
-    let (targets, _) = local_targets(&doc.doc);
-    (!targets.is_empty()).then(|| Cmd::ResolveLinks {
+    let (targets, _) = local_targets(&doc.doc, &doc.path);
+    (!targets.is_empty()).then_some(Cmd::ResolveLinks {
         doc_gen: doc.generation,
-        source: doc.path.clone(),
         targets,
     })
 }
@@ -130,7 +140,7 @@ impl State {
         let Some(doc) = self.doc_by_gen_mut(doc_gen) else {
             return;
         };
-        let (_, index) = local_targets(&doc.doc);
+        let (_, index) = local_targets(&doc.doc, &doc.path);
         for (id, i) in index.into_iter().enumerate() {
             let (Some(i), Some(link)) = (i, doc.doc.links.get(id)) else {
                 continue;
@@ -301,12 +311,18 @@ impl State {
                 .layout
                 .row_for_line(line)
                 .ok_or_else(|| format!("no line {line}")),
-            None => Err(format!("no heading #{frag}")),
+            None => Err(no_anchor(frag)),
         }
     }
 
     fn anchor_row(&self, anchor: AnchorId) -> Option<u32> {
         let doc = self.doc.as_ref()?;
+        // a block id's row is sought now, not at layout (OBS-009)
+        if let Some(AnchorKind::Block { unit, .. }) =
+            doc.doc.anchors.get(anchor as usize).map(|a| a.kind)
+        {
+            return doc.layout.block_row(unit);
+        }
         doc.layout
             .anchor_rows
             .get(anchor as usize)
@@ -554,7 +570,7 @@ impl State {
     pub(super) fn arrive(
         &mut self,
         mut nav: Nav,
-        mtime: Option<u64>,
+        (mtime, vault, embeds): Loaded,
         text: Arc<str>,
         prepared: Option<Prepared>,
     ) -> Vec<Cmd> {
@@ -569,7 +585,7 @@ impl State {
             }
             if let Some(doc) = &mut self.doc
                 && doc.path == nav.path
-                && doc.text == text
+                && doc.reads(&text, &embeds, self.config.flavor.dialect(vault))
             {
                 doc.mtime = mtime;
                 doc.changed = false;
@@ -584,7 +600,7 @@ impl State {
             }
         }
         self.shift_history(nav.op);
-        let cmds = self.install(nav.path, mtime, text, prepared);
+        let cmds = self.install(nav.path, (mtime, vault, embeds), text, prepared);
         match nav.land {
             Landing::Entry(entry) => self.restore(&entry),
             Landing::Frag(None) => {}

@@ -251,6 +251,8 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: text.into(),
+                vault: crate::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
         );

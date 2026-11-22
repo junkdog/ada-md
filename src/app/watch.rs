@@ -2,7 +2,8 @@
 //! the system for the file's directory, inotify on Linux and `ReadDirectoryChangesW` on Windows,
 //! so a save shows within the time a reload takes, and an idle ada doesn't wake at all.
 //! Elsewhere, on a network filesystem, or when the system's watch fails, it `stat`s the file
-//! every second (ADR-14).
+//! every second (ADR-14). The notes a note transcludes (OBS-007) are `stat`ed every second
+//! beside it, whichever way it is watched.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -17,16 +18,17 @@ use inotify::Inotify as Native;
 #[cfg(windows)]
 use read_changes::ReadChanges as Native;
 
-/// A file to watch, with the time of the text on screen; `None` stops watching.
-type File = Option<(PathBuf, Option<u64>)>;
+/// Files to poll, each with the time of the text on screen; none stops polling.
+type Files = Vec<(PathBuf, Option<u64>)>;
 
 pub struct Watcher {
     tx: Sender<Msg>,
     /// The system's watch, started on the first file; `None` inside when it can't be had.
     #[cfg(any(target_os = "linux", windows))]
     native: Option<Option<Native>>,
-    /// The polling thread, started on the first file the system's watch can't watch.
-    poll: Option<Sender<File>>,
+    /// The polling thread, started on the first file the system's watch can't watch, or the
+    /// first note transcluded.
+    poll: Option<Sender<Files>>,
 }
 
 impl Watcher {
@@ -39,12 +41,18 @@ impl Watcher {
         }
     }
 
-    /// Watch `path` instead of the file watched until now; `mtime` is the time of the text
-    /// on screen. A file already past it is posted at once, as the poll's first look would:
-    /// it changed while live reload was off, or between its read and the watch.
-    pub fn watch(&mut self, path: PathBuf, mut mtime: Option<u64>) {
+    /// Watch `path` instead of the file watched until now, and `embeds`, the notes it
+    /// transcludes (OBS-007), by polling; `mtime` is the time of the text on screen, and each
+    /// note's beside it. A file already past it is posted at once, as the poll's first look
+    /// would: it changed while live reload was off, or between its read and the watch.
+    pub fn watch(&mut self, path: PathBuf, mut mtime: Option<u64>, mut embeds: Files) {
         if !post_if_changed(&path, &mut mtime, &self.tx) {
             return;
+        }
+        for (note, known) in &mut embeds {
+            if !post_if_changed(note, known, &self.tx) {
+                return;
+            }
         }
         #[cfg(any(target_os = "linux", windows))]
         {
@@ -54,17 +62,27 @@ impl Watcher {
                 .get_or_insert_with(|| Native::spawn(tx.clone()).ok());
             if let Some(native) = native {
                 if native.watch(&path, mtime) {
-                    if let Some(poll) = &self.poll {
-                        let _ = poll.send(None);
-                    }
+                    self.poll(embeds);
                     return;
                 }
                 native.stop();
             }
         }
+        embeds.insert(0, (path, mtime));
+        self.poll(embeds);
+    }
+
+    /// Poll `files` in place of those polled until now: none stops the polling.
+    fn poll(&mut self, files: Files) {
+        if files.is_empty() {
+            if let Some(poll) = &self.poll {
+                let _ = poll.send(files);
+            }
+            return;
+        }
         let tx = &self.tx;
         let poll = self.poll.get_or_insert_with(|| spawn_poll(tx.clone()));
-        let _ = poll.send(Some((path, mtime)));
+        let _ = poll.send(files);
     }
 
     /// Stop watching, with live reload turned off; the threads stay for the next watch.
@@ -74,7 +92,7 @@ impl Watcher {
             native.stop();
         }
         if let Some(poll) = &self.poll {
-            let _ = poll.send(None);
+            let _ = poll.send(Vec::new());
         }
     }
 }
@@ -82,26 +100,25 @@ impl Watcher {
 /// How often the polling thread looks at the file (ADR-14).
 const POLL_EVERY: Duration = Duration::from_secs(1);
 
-/// Start the polling thread: once it has a file, it `stat`s it every second and posts
-/// `FileChanged` when its modification time moves. Without one, it sleeps in `recv()`.
-fn spawn_poll(tx: Sender<Msg>) -> Sender<File> {
-    let (files, rx) = mpsc::channel::<File>();
+/// Start the polling thread: once it has files, it `stat`s them every second and posts
+/// `FileChanged` when one's modification time moves. Without any, it sleeps in `recv()`.
+fn spawn_poll(tx: Sender<Msg>) -> Sender<Files> {
+    let (files, rx) = mpsc::channel::<Files>();
     thread::spawn(move || {
-        let mut watched: File = None;
+        let mut watched: Files = Vec::new();
         loop {
-            let next = match watched {
-                None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
-                Some(_) => rx.recv_timeout(POLL_EVERY),
+            let next = match watched.is_empty() {
+                true => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                false => rx.recv_timeout(POLL_EVERY),
             };
             match next {
-                Ok(file) => watched = file,
+                Ok(files) => watched = files,
                 Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => {
-                    let Some((path, known)) = &mut watched else {
-                        continue;
-                    };
-                    if !post_if_changed(path, known, &tx) {
-                        return;
+                    for (path, known) in &mut watched {
+                        if !post_if_changed(path, known, &tx) {
+                            return;
+                        }
                     }
                 }
             }
@@ -732,12 +749,12 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let poll = spawn_poll(tx);
         // told an old time: the next look reports the real one
-        poll.send(Some((path.clone(), Some(1)))).unwrap();
+        poll.send(vec![(path.clone(), Some(1))]).unwrap();
         assert_eq!(next(&rx, Duration::from_secs(5)), Some(changed(&path)));
         // and then stays quiet while nothing changes
         assert_eq!(next(&rx, Duration::from_millis(1500)), None);
         // until told to stop watching
-        poll.send(None).unwrap();
+        poll.send(Vec::new()).unwrap();
         fs::write(&path, "ab").unwrap();
         assert_eq!(next(&rx, Duration::from_millis(1500)), None);
         drop(poll);
@@ -756,7 +773,7 @@ mod tests {
         fs::write(&path, "a").unwrap();
         let (tx, rx) = mpsc::channel();
         let mut watcher = Watcher::new(tx);
-        watcher.watch(path.clone(), mtime_of(&path));
+        watcher.watch(path.clone(), mtime_of(&path), Vec::new());
         assert!(watcher.poll.is_none(), "the system watches it");
         let soon = Duration::from_millis(400);
         // nothing happened yet
@@ -788,7 +805,7 @@ mod tests {
         assert_eq!(next(&rx, Duration::from_millis(200)), None);
 
         // until it's the one watched; the old one then says nothing
-        watcher.watch(other.clone(), mtime_of(&other));
+        watcher.watch(other.clone(), mtime_of(&other), Vec::new());
         thread::sleep(Duration::from_millis(5));
         fs::write(&path, "e").unwrap();
         assert_eq!(next(&rx, Duration::from_millis(200)), None);
@@ -800,7 +817,7 @@ mod tests {
         fs::create_dir_all(&sub).unwrap();
         let deeper = sub.join("z.md");
         fs::write(&deeper, "a").unwrap();
-        watcher.watch(deeper.clone(), mtime_of(&deeper));
+        watcher.watch(deeper.clone(), mtime_of(&deeper), Vec::new());
         thread::sleep(Duration::from_millis(5));
         fs::write(&other, "z").unwrap();
         assert_eq!(next(&rx, Duration::from_millis(200)), None);
@@ -824,7 +841,7 @@ mod tests {
         fs::write(&path, "a").unwrap();
         let (tx, rx) = mpsc::channel();
         let mut watcher = Watcher::new(tx);
-        watcher.watch(path.clone(), Some(1));
+        watcher.watch(path.clone(), Some(1), Vec::new());
         assert_eq!(rx.try_recv().ok(), Some(changed(&path)), "posted at once");
         // the time it posted is the one known: the next write is posted, once
         thread::sleep(Duration::from_millis(5));
@@ -837,7 +854,7 @@ mod tests {
         fs::write(&path, "c").unwrap();
         assert_eq!(next(&rx, Duration::from_millis(400)), None, "not watched");
         // watched again, from the time on screen: the write meanwhile is posted
-        watcher.watch(path.clone(), Some(1));
+        watcher.watch(path.clone(), Some(1), Vec::new());
         assert_eq!(rx.try_recv().ok(), Some(changed(&path)));
         drop(watcher);
         fs::remove_dir_all(&dir).unwrap();
@@ -900,7 +917,7 @@ mod tests {
         std::os::unix::fs::symlink(&file, &link).unwrap();
         let (tx, rx) = mpsc::channel();
         let mut watcher = Watcher::new(tx);
-        watcher.watch(link.clone(), mtime_of(&link));
+        watcher.watch(link.clone(), mtime_of(&link), Vec::new());
         thread::sleep(Duration::from_millis(5));
         fs::write(&file, "b").unwrap();
         assert_eq!(

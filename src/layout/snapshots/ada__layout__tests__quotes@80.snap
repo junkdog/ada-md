@@ -11,11 +11,14 @@ expression: render(&l)
      │  │
     8│  │ Back to the outer quote.
      │
-   10│  │ Note
+   10│  │ 📝 Note
    11│  │ A callout, as GitHub renders them.
      │
-   13│  │ Warning
+   13│  │ ⚠️ Warning
    14│  │ Careful: this one has a list.
      │  │
    16│  │ • item one
    17│  │ • item two
+     │
+   19│  │ ❓ An Obsidian callout, with a title ▾
+   20│  │ Its body, under a title of its own.

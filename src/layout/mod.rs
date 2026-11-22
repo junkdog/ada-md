@@ -20,8 +20,8 @@ use crate::geom::Size;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{
-    AnchorId, Block, BlockKind, Callout, CodeId, Doc, InlineStyle, Inlines, LineRange, LinkId,
-    List, Run, Table, TableId, UnitId,
+    AnchorId, Block, BlockKind, Callout, CodeBlock, CodeId, Doc, Embed, InlineStyle, Inlines,
+    LineRange, LinkId, List, Properties, Run, Table, TableId, UnitId,
 };
 use crate::images;
 use crate::theme::{Glyphs, StyleKey};
@@ -109,6 +109,57 @@ impl LineNumbers {
     }
 }
 
+/// How a note's properties show (ADR-46): `p` hides them or shows them again for the session,
+/// and `[markdown] properties` says how they start.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PropertiesMode {
+    /// A compact block of key and value rows.
+    #[default]
+    Show,
+    Hide,
+    /// The front matter as written, highlighted as YAML or TOML.
+    Source,
+}
+
+impl PropertiesMode {
+    pub const NAMES: &[&str] = &["show", "hide", "source"];
+
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "show" => Some(PropertiesMode::Show),
+            "hide" => Some(PropertiesMode::Hide),
+            "source" => Some(PropertiesMode::Source),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PropertiesMode::Show => "show",
+            PropertiesMode::Hide => "hide",
+            PropertiesMode::Source => "source",
+        }
+    }
+
+    /// `p`: shown properties hidden, hidden ones shown as `shown` (the config's) shows them, as
+    /// rows when that hides them too.
+    pub fn toggle(self, shown: Self) -> Self {
+        match (self, shown) {
+            (PropertiesMode::Hide, PropertiesMode::Hide) => PropertiesMode::Show,
+            (PropertiesMode::Hide, shown) => shown,
+            _ => PropertiesMode::Hide,
+        }
+    }
+}
+
+/// The most property rows shown before a row saying how many more there are; one more than this
+/// shows whole, as the row saying so would take its place.
+pub const MAX_PROPERTIES: usize = 6;
+
+/// The most rows a property's value takes: past them, its first rows, then one saying how many
+/// more lines it has. A list of hundreds of links (a playlist's tracks) took a thousand rows.
+pub const MAX_VALUE_ROWS: usize = 3;
+
 /// Everything a layout depends on besides the Doc. Colors are deliberately absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayoutParams {
@@ -117,6 +168,7 @@ pub struct LayoutParams {
     /// Prose wraps at `min(width, max_width)`.
     pub max_width: Option<u16>,
     pub table_mode: TableMode,
+    pub properties: PropertiesMode,
     pub code_wrap: bool,
     /// Code blocks name their language on their top row: the TUI's do, a print's don't. A
     /// [whole file](crate::doc::CodeBlock::whole_file) has no such row in either.
@@ -406,7 +458,8 @@ pub struct Layout {
     pub rows: Vec<Row>,
     /// Top-level block index → its rows.
     pub block_rows: Vec<Range<u32>>,
-    /// Anchor → first row (`u32::MAX` if it didn't render).
+    /// Anchor → first row (`u32::MAX` if it didn't render, or is a block id's, which
+    /// [`Layout::block_row`] finds when a link is followed).
     pub anchor_rows: Vec<u32>,
     pub headings: Vec<HeadingRow>,
     pub hits: Vec<Hit>,
@@ -475,6 +528,17 @@ impl Layout {
             .position(|r| r.src.contains(line))
             .or_else(|| self.rows.iter().position(|r| r.src.start > line))
             .map(|r| r as u32)
+    }
+
+    /// The first row of the block whose first search unit is `unit`, which an Obsidian `^id`
+    /// names (OBS-009); failing that (a table whose first cell is empty), the first row showing a
+    /// later unit. Sought when a link to it is followed, not at every layout: from
+    /// [`Layout::search`], so on screen only.
+    pub fn block_row(&self, unit: UnitId) -> Option<u32> {
+        let exact = self.search.iter().find(|s| s.unit == unit);
+        exact
+            .or_else(|| self.search.iter().find(|s| s.unit > unit))
+            .map(|s| s.row)
     }
 
     /// The line number `row` shows: the first source line it renders, unless the row before
@@ -629,6 +693,7 @@ fn relayout_lines(
         right_margin: margin,
         text_key: StyleKey::Text,
         list_depth: 0,
+        pin: None,
         row_start: 0,
         col: 0,
         search_col: 0,
@@ -642,8 +707,17 @@ fn relayout_lines(
     if margin > 0 {
         b.push_prefix(&" ".repeat(margin as usize), StyleKey::Text);
     }
+    // properties that took no rows (hidden, or none to show) leave no gap
+    let gap = |i: usize, b: &Builder<'_>| match i {
+        0 => false,
+        1 => {
+            let rows = b.out.block_rows[0].clone();
+            !(rows.is_empty() && matches!(doc.blocks[0].kind, BlockKind::Properties(_)))
+        }
+        _ => true,
+    };
     for (i, block) in doc.blocks.iter().enumerate() {
-        if i > 0 {
+        if gap(i, &b) {
             b.blank_row();
         }
         let first = b.out.row_count();
@@ -666,6 +740,26 @@ fn number_width(lines: u32, params: LayoutParams) -> u16 {
     }
     let width = lines.max(1).ilog10() as u16 + 2;
     if params.width >= width + 24 { width } else { 0 }
+}
+
+/// `text` in at most `width` columns (but for a `…` in fewer than one), cut with `…` when it's
+/// wider. Measured as [`text_width`] measures the whole: a character's own width can be less
+/// than it takes beside the next (an emoji, then U+FE0F), and a key cut by those widths came
+/// out wider than its column, which underflowed its padding (fuzz, 2026-11-22).
+fn fit(text: &str, width: usize) -> String {
+    if text_width(text) <= width {
+        return text.to_owned();
+    }
+    let mut out = String::new();
+    for c in text.chars() {
+        out.push(c);
+        if text_width(&out) + 1 > width {
+            out.pop();
+            break;
+        }
+    }
+    out.push('…');
+    out
 }
 
 /// The part of an image block's alt text that renders: its search unit's text.
@@ -699,6 +793,9 @@ struct Builder<'a> {
     /// The base style of prose: `Text`, or `Quote` inside a block quote.
     text_key: StyleKey,
     list_depth: usize,
+    /// The source lines of the embed being laid out (OBS-007): every row of a note transcluded
+    /// is its embed's line, for the gutter, line numbers, `e` and a reload's anchor alike.
+    pin: Option<LineRange>,
     /// Where the row being built starts in `out.spans`.
     row_start: u32,
     /// The column the next span lands in.
@@ -889,7 +986,7 @@ impl Builder<'_> {
         };
         self.out.rows.push(Row {
             spans: self.row_start..self.out.spans.len() as u32,
-            src,
+            src: self.pin.unwrap_or(src),
             kind,
         });
     }
@@ -1159,6 +1256,20 @@ impl Builder<'_> {
     }
 
     fn block(&mut self, block: &Block) {
+        // one call of `code::layout`, a properties block's source through it too: a second took it
+        // out of line, and fenced code's layout +3.4% in instructions
+        let code = match &block.kind {
+            BlockKind::Code(code) => code,
+            BlockKind::Properties(p) => match self.properties(p) {
+                Some(source) => source,
+                None => return,
+            },
+            _ => return self.other_block(block),
+        };
+        code::layout(self, code, block.src);
+    }
+
+    fn other_block(&mut self, block: &Block) {
         match &block.kind {
             BlockKind::Heading {
                 level,
@@ -1168,15 +1279,97 @@ impl Builder<'_> {
             BlockKind::Paragraph(inlines) => {
                 self.paragraph(self.doc.runs(inlines), inlines.unit, self.text_key, None);
             }
+            BlockKind::Math(inlines) => self.math(inlines),
             BlockKind::List(list) => self.list(list),
-            BlockKind::Quote { callout, blocks } => self.quote(*callout, blocks, block.src),
-            BlockKind::Code(code) => code::layout(self, code, block.src),
+            BlockKind::Quote { callout, blocks } => {
+                self.quote(callout.as_ref(), blocks, block.src);
+            }
+            BlockKind::Code(_) | BlockKind::Properties(_) => {}
             BlockKind::Table(table) => table::layout(self, table),
             BlockKind::Image { link, alt, unit } => self.image(*link, alt, *unit, block.src),
             BlockKind::Rule => self.rule(block.src),
             BlockKind::Html(html) => self.html(html, block.src),
             BlockKind::FootnoteDefs => self.footnotes(),
+            BlockKind::Embed(e) => self.embed(e, block.src),
         }
+    }
+
+    /// A note's properties (ADR-46): a compact block of dim `key  value` rows, without borders,
+    /// the keys in a column as wide as the widest (at most a third of the prose width, longer
+    /// ones cut), each value wrapped under itself; past [`MAX_PROPERTIES`], a row says how many
+    /// more. `source` mode, and a block ada couldn't read, show the front matter as written: the
+    /// code block returned, which [`Builder::block`] lays out.
+    fn properties<'p>(&mut self, p: &'p Properties) -> Option<&'p CodeBlock> {
+        match self.params.properties {
+            PropertiesMode::Hide => return None,
+            PropertiesMode::Source => return Some(&p.source),
+            PropertiesMode::Show if !p.read => return Some(&p.source),
+            PropertiesMode::Show => {}
+        }
+        let shown = match p.rows.len() {
+            n if n <= MAX_PROPERTIES + 1 => n,
+            _ => MAX_PROPERTIES,
+        };
+        let keys: Vec<String> = p.rows[..shown]
+            .iter()
+            .map(|r| wrap::clean(&r.key))
+            .collect();
+        let cap = usize::from(self.avail() / 3).max(4);
+        let width = keys
+            .iter()
+            .map(|k| text_width(k))
+            .max()
+            .unwrap_or(0)
+            .min(cap);
+        for (row, key) in p.rows[..shown].iter().zip(keys) {
+            let mut key = fit(&key, width);
+            let pad = width.saturating_sub(text_width(&key));
+            key.extend(std::iter::repeat_n(' ', pad + 2));
+            self.push_prefix(&key, StyleKey::PropertyKey);
+            let runs = self.doc.runs(&row.value);
+            if runs.is_empty() {
+                self.begin_row();
+                self.end_row(row.src, RowKind::Text);
+            } else {
+                self.property_value(runs, row.value.unit);
+            }
+            self.pop_prefix();
+        }
+        if let [first, .., last] | [first @ last] = &p.rows[shown..] {
+            let more = format!("+{} more", p.rows.len() - shown);
+            let more = fit(&more, usize::from(self.avail()));
+            self.begin_row();
+            self.text(&more, StyleKey::PropertyKey);
+            self.end_row(LineRange::new(first.src.start, last.src.end), RowKind::Text);
+        }
+        None
+    }
+
+    /// A property's value, wrapped under itself in at most [`MAX_VALUE_ROWS`] rows.
+    fn property_value(&mut self, runs: &[Run], unit: UnitId) {
+        let avail = self.avail();
+        let into = std::mem::take(&mut self.scratch).recycle(Some(unit));
+        let doc = (self.doc, Some(&self.measure.marks));
+        let key = StyleKey::PropertyValue;
+        let mut w = wrap::wrap(into, &mut self.wraps, runs, key, avail, doc, self.g, None);
+        let all = w.lines.len();
+        let shown = match all {
+            n if n <= MAX_VALUE_ROWS => n,
+            _ => MAX_VALUE_ROWS - 1,
+        };
+        let cut = (w.lines[shown..].iter()).fold(LineRange::NONE, |r, l| r.union(l.src));
+        // through `emit_lines`, as a paragraph's: a second caller of `emit_line` took it out of
+        // line, and fenced code's layout +3.4% in instructions
+        w.lines.truncate(shown);
+        self.emit_lines(&w);
+        if shown < all {
+            let more = format!("+{} more lines", all - shown);
+            let more = fit(&more, usize::from(avail));
+            self.begin_row();
+            self.text(&more, StyleKey::PropertyKey);
+            self.end_row(cut, RowKind::Text);
+        }
+        self.scratch = w;
     }
 
     fn paragraph(&mut self, runs: &[Run], unit: UnitId, key: StyleKey, suffix: Option<&str>) {
@@ -1188,12 +1381,33 @@ impl Builder<'_> {
         self.scratch = w;
     }
 
+    /// Display math typeset (OBS-003): its rows set as a block in the middle of the prose width,
+    /// their alignment kept; a row wider than that wraps as a paragraph's line does.
+    fn math(&mut self, inlines: &Inlines) {
+        let runs = self.doc.runs(inlines);
+        let widest = (runs.iter())
+            .map(|r| text_width(self.doc.run_text(r)))
+            .max()
+            .unwrap_or(0);
+        let indent = usize::from(self.avail()).saturating_sub(widest) / 2;
+        if indent > 0 {
+            self.push_prefix(&" ".repeat(indent), self.text_key);
+        }
+        self.paragraph(runs, inlines.unit, self.text_key, None);
+        if indent > 0 {
+            self.pop_prefix();
+        }
+    }
+
     fn heading(&mut self, level: u8, inlines: &Inlines, anchor: AnchorId) {
         let row = self.out.row_count();
         if let Some(slot) = self.out.anchor_rows.get_mut(anchor as usize) {
             *slot = row;
         }
-        self.out.headings.push(HeadingRow { row, level, anchor });
+        // a transcluded note's headings are its own: not the outline's, nor the heading path's
+        if self.pin.is_none() {
+            self.out.headings.push(HeadingRow { row, level, anchor });
+        }
         let key = StyleKey::heading(level);
         let g = self.g;
         let (prefix, suffix) = &g.heading[usize::from(level.clamp(1, 6) - 1)];
@@ -1215,14 +1429,10 @@ impl Builder<'_> {
                 self.blank_row();
             }
             let (marker, key) = match (item.task, list.start) {
-                (Some(done), _) => (
-                    g.task[usize::from(!done)].clone(),
-                    if done {
-                        StyleKey::TaskDone
-                    } else {
-                        StyleKey::TaskOpen
-                    },
-                ),
+                (Some(task), _) => {
+                    let (glyph, key) = g.task_box(task);
+                    (glyph.to_owned(), key)
+                }
                 (None, Some(start)) => (
                     format!("{:>num_width$}. ", start.saturating_add(i as u64)),
                     StyleKey::ListNumber,
@@ -1244,14 +1454,12 @@ impl Builder<'_> {
         self.list_depth -= 1;
     }
 
-    fn quote(&mut self, callout: Option<Callout>, blocks: &[Block], src: LineRange) {
+    fn quote(&mut self, callout: Option<&Callout>, blocks: &[Block], src: LineRange) {
         let g = self.g;
         self.push_bar(&g.quote_bar, StyleKey::QuoteBar);
         let saved = std::mem::replace(&mut self.text_key, StyleKey::Quote);
         if let Some(callout) = callout {
-            self.begin_row();
-            self.text(callout.title(), StyleKey::callout(callout));
-            self.end_row(LineRange::line(src.start), RowKind::Text);
+            self.callout_title(callout);
         }
         self.blocks(blocks, false);
         if blocks.is_empty() && callout.is_none() {
@@ -1262,12 +1470,55 @@ impl Builder<'_> {
         self.pop_prefix();
     }
 
+    /// A note transcluded (OBS-007): behind a quote's bar, the embed's link to it (`↳ note`),
+    /// then its blocks, without its properties, in the prose's style around it. Its rows are the
+    /// embed's source lines ([`Builder::pin`]), the outermost embed's when they nest.
+    fn embed(&mut self, e: &Embed, src: LineRange) {
+        let g = self.g;
+        let outer = self.pin.is_none();
+        if outer {
+            self.pin = Some(src);
+        }
+        self.push_bar(&g.quote_bar, StyleKey::QuoteBar);
+        let runs = self.doc.runs(&e.title);
+        self.paragraph(runs, e.title.unit, self.text_key, None);
+        let blocks = match e.blocks.first().map(|b| &b.kind) {
+            Some(BlockKind::Properties(_)) => &e.blocks[1..],
+            _ => &e.blocks[..],
+        };
+        self.blocks(blocks, false);
+        self.pop_prefix();
+        if outer {
+            self.pin = None;
+        }
+    }
+
+    /// A callout's title (OBS-002): its kind's icon, then the title in the kind's color, wrapped
+    /// under itself, and the fold mark of one that folds, open as the callout is shown.
+    fn callout_title(&mut self, callout: &Callout) {
+        let g = self.g;
+        let key = StyleKey::callout(callout.kind);
+        let icon = &g.callout[callout.kind as usize];
+        let icon = match icon.is_empty() {
+            true => String::new(),
+            false => format!("{icon} "),
+        };
+        let fold = callout.fold.map(|_| format!(" {}", g.fold[0]));
+        self.push_prefix(&icon, key);
+        let runs = self.doc.runs(&callout.title);
+        self.paragraph(runs, callout.title.unit, key, fold.as_deref());
+        self.pop_prefix();
+    }
+
     /// A block image: reserved rows and a caption when its size is known and the terminal can
-    /// show images, otherwise a `🖼 alt (path)` line.
+    /// show images, otherwise a `🖼 alt (path)` line. Obsidian's size for it (`|100`, OBS-008)
+    /// caps its pixels, as the terminal's cells measure them.
     fn image(&mut self, link: LinkId, alt: &str, unit: UnitId, src: LineRange) {
-        let dest = self.doc.links.get(link as usize).map_or("", |l| &l.dest);
+        let link_ref = self.doc.links.get(link as usize);
+        let dest = link_ref.map_or("", |l| &l.dest);
         let alt = image_alt(alt);
         let px = self.measure.images.get(link as usize).copied().flatten();
+        let px = px.map(|px| link_ref.map_or(px, |l| l.size.cap(px)));
         let shown = match (self.params.images, px) {
             (Some(fit), Some(px)) => {
                 let max = Size::new(self.avail(), fit.max_rows);

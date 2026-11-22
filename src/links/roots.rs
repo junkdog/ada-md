@@ -7,15 +7,22 @@
 //!
 //! The tree is indexed by file name on the first lookup that needs it, and walked again on a
 //! miss once the index is a little old, so a note created during the session is found.
+//!
+//! A `[[name]]` that no file has may be another name a note gives itself, in the `aliases` of its
+//! front matter (OBS-010, ADR-46), as Obsidian resolves it. Those are read on the first lookup
+//! that misses every file, from each note's front matter alone, and kept with the note's
+//! modification time: when the index is walked again, only the notes changed since are read.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant, SystemTime};
 
 use super::{BuiltinResolver, LocalTarget, Resolved, Resolver, is_markdown};
+use crate::doc::{front, props};
 
 /// Where links may be looked up by name: `[links]` in the config.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,7 +75,9 @@ pub struct RootedResolver {
     roots: Vec<PathBuf>,
     markers: Vec<String>,
     refresh: Duration,
-    indexes: RefCell<Vec<Index>>,
+    /// Behind a lock: the loader resolves a note's embeds while the UI thread resolves links
+    /// (OBS-007), and both share the indexes.
+    indexes: Mutex<Vec<Index>>,
 }
 
 #[derive(Debug)]
@@ -77,7 +86,16 @@ struct Index {
     built: Instant,
     /// Lowercased file name → the files of that name, sorted.
     names: HashMap<String, Vec<PathBuf>>,
+    /// Lowercased alias → the notes that give it, sorted: made when a lookup first misses every
+    /// file, from `read`.
+    aliases: Option<HashMap<String, Vec<PathBuf>>>,
+    /// Each note's aliases as last read, beside its modification time then.
+    read: HashMap<PathBuf, (Option<SystemTime>, Vec<String>)>,
 }
+
+/// The most of a note read for its front matter: a block that runs on past it is no front matter
+/// ada reads aliases from.
+const MAX_FRONT: usize = 256 * 1024;
 
 impl RootedResolver {
     pub fn new(roots: &Roots) -> Self {
@@ -89,8 +107,12 @@ impl RootedResolver {
                 .collect(),
             markers: roots.markers.clone(),
             refresh: REFRESH,
-            indexes: RefCell::default(),
+            indexes: Mutex::default(),
         }
+    }
+
+    fn indexes(&self) -> MutexGuard<'_, Vec<Index>> {
+        self.indexes.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The nearest directory at or above `dir` (canonical) that is a root.
@@ -105,11 +127,13 @@ impl RootedResolver {
     /// The files under `root` named `name` (ignoring case), walking the tree first if it has no
     /// index yet, or, when `fresh` is asked for, if its index is older than [`REFRESH`].
     fn named(&self, root: &Path, name: &str, fresh: bool) -> Vec<PathBuf> {
-        let mut indexes = self.indexes.borrow_mut();
+        let mut indexes = self.indexes();
         let at = match indexes.iter().position(|i| i.root == root) {
             Some(at) => {
                 if fresh && indexes[at].built.elapsed() >= self.refresh {
+                    let read = std::mem::take(&mut indexes[at].read);
                     indexes[at] = Index::build(root);
+                    indexes[at].read = read;
                 }
                 at
             }
@@ -120,6 +144,19 @@ impl RootedResolver {
         };
         indexes[at]
             .names
+            .get(&name.to_lowercase())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The notes under `root`, which has an index, that give `name` as an alias, ignoring case.
+    fn aliased(&self, root: &Path, name: &str) -> Vec<PathBuf> {
+        let mut indexes = self.indexes();
+        let Some(index) = indexes.iter_mut().find(|i| i.root == root) else {
+            return Vec::new();
+        };
+        let aliases = index.aliases();
+        aliases
             .get(&name.to_lowercase())
             .cloned()
             .unwrap_or_default()
@@ -137,11 +174,12 @@ impl RootedResolver {
                 };
                 (dirs, names)
             }
-            // a path with directories in it says where the file is
             LocalTarget::Path(p) if !p.contains('/') && !matches!(&**p, "" | "." | "..") => {
                 ("", vec![p.clone()])
             }
-            LocalTarget::Path(_) => return None,
+            // a path with directories in it says where the file is: beside the note, else from
+            // the root
+            LocalTarget::Path(p) => return self.under_root(source, p),
         };
         if names.iter().any(String::is_empty) {
             return None;
@@ -164,7 +202,15 @@ impl RootedResolver {
                 (!found.is_empty()).then_some((n, found))
             })
         };
-        let (name, found) = find(false).or_else(|| find(true))?;
+        let (what, found) = match (find(false).or_else(|| find(true)), target) {
+            (Some((name, found)), _) => (format!("files named {name}"), found),
+            // no file has the name: a note's alias, a name without folders
+            (None, LocalTarget::Wiki(name)) if dirs.as_os_str().is_empty() => {
+                let found = self.aliased(&root, name);
+                (format!("notes with the alias {name}"), found)
+            }
+            (None, _) => return None,
+        };
         Some(match &found[..] {
             [] => return None,
             [one] => Resolved::Found(rebase(one, dir, &canonical)),
@@ -176,10 +222,28 @@ impl RootedResolver {
                     .collect();
                 match near[..] {
                     [one] => Resolved::Found(rebase(one, dir, &canonical)),
-                    _ => Resolved::Broken(ambiguous(name, &root, many)),
+                    _ => Resolved::Broken(ambiguous(&what, &root, many)),
                 }
             }
         })
+    }
+}
+
+impl RootedResolver {
+    /// `path` from the root of `source`, as Obsidian writes a markdown link in its `absolute`
+    /// link format, and in its `shortest` one for a name that isn't unique (OBS-013):
+    /// `[x](Projects/Note.md)` in any folder of the vault. Never a file outside the root.
+    fn under_root(&self, source: &Path, path: &str) -> Option<Resolved> {
+        if path.is_empty() || Path::new(path).has_root() {
+            return None;
+        }
+        let dir = source.parent().filter(|d| !d.as_os_str().is_empty());
+        let dir = dir.unwrap_or(Path::new("."));
+        let canonical = fs::canonicalize(dir).ok()?;
+        let root = self.root_of(&canonical)?;
+        let found = super::normalize(&root.join(path));
+        (found.starts_with(&root) && found.exists())
+            .then(|| Resolved::Found(rebase(&found, dir, &canonical)))
     }
 }
 
@@ -234,7 +298,99 @@ impl Index {
             root: root.to_path_buf(),
             built: Instant::now(),
             names,
+            aliases: None,
+            read: HashMap::new(),
         }
+    }
+
+    /// Lowercased alias → the notes that give it, made from their front matter on first use: a
+    /// note unchanged since it was last read keeps the aliases read then.
+    fn aliases(&mut self) -> &HashMap<String, Vec<PathBuf>> {
+        let Index {
+            names,
+            aliases,
+            read,
+            ..
+        } = self;
+        aliases.get_or_insert_with(|| {
+            let notes: Vec<&PathBuf> = names
+                .values()
+                .flatten()
+                .filter(|p| is_markdown(p))
+                .collect();
+            // on threads: from a cold cache, a note's read is ~0.1 ms of waiting on the disk
+            // (5,536 notes, 0.53 s on one), a warm one's 8 µs
+            let fresh = on_threads(&notes, |path| {
+                let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
+                let same = read
+                    .get(*path)
+                    .is_some_and(|(then, _)| then.is_some() && *then == modified);
+                (modified, (!same).then(|| read_aliases(path)))
+            });
+            let mut map: HashMap<String, Vec<PathBuf>> = HashMap::new();
+            let mut now = HashMap::new();
+            for (path, (modified, fresh)) in notes.into_iter().zip(fresh) {
+                let given = match fresh {
+                    Some(given) => given,
+                    None => read
+                        .remove(path)
+                        .map(|(_, given)| given)
+                        .unwrap_or_default(),
+                };
+                for alias in &given {
+                    map.entry(alias.to_lowercase())
+                        .or_default()
+                        .push(path.clone());
+                }
+                now.insert(path.clone(), (modified, given));
+            }
+            for paths in map.values_mut() {
+                paths.sort();
+                paths.dedup();
+            }
+            *read = now;
+            map
+        })
+    }
+}
+
+/// `f` of each of `items`, in order, on up to 8 threads; on this one for a few.
+fn on_threads<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+    if threads == 1 || items.len() < 64 {
+        return items.iter().map(f).collect();
+    }
+    let f = &f;
+    std::thread::scope(|s| {
+        let chunks: Vec<_> = (items.chunks(items.len().div_ceil(threads)))
+            .map(|chunk| s.spawn(move || chunk.iter().map(f).collect::<Vec<R>>()))
+            .collect();
+        (chunks.into_iter())
+            .flat_map(|c| c.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect()
+    })
+}
+
+/// The aliases the note at `path` gives itself: its front matter read, and nothing past it but
+/// the rest of the first 4 KiB.
+fn read_aliases(path: &Path) -> Vec<String> {
+    let Ok(mut file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut head = Vec::new();
+    let mut limit = 4096;
+    loop {
+        let want = (limit - head.len()) as u64;
+        if (&mut file).take(want).read_to_end(&mut head).is_err()
+            || !(head.starts_with(b"---") || head.starts_with(b"+++"))
+        {
+            return Vec::new();
+        }
+        let text = String::from_utf8_lossy(&head);
+        if head.len() < limit || limit >= MAX_FRONT || front::find(&text, true).is_some() {
+            return crate::guard::catch(|| props::aliases(&text)).unwrap_or_default();
+        }
+        limit *= 4;
     }
 }
 
@@ -251,8 +407,9 @@ fn rebase(found: &Path, dir: &Path, canonical: &Path) -> PathBuf {
     }
 }
 
-/// Why a name that matches several files isn't followed: the first few, relative to the root.
-fn ambiguous(name: &str, root: &Path, many: &[PathBuf]) -> String {
+/// Why a name that matches several files isn't followed: `what` they are, and the first few,
+/// relative to the root.
+fn ambiguous(what: &str, root: &Path, many: &[PathBuf]) -> String {
     const SHOWN: usize = 3;
     let mut list = many
         .iter()
@@ -263,11 +420,7 @@ fn ambiguous(name: &str, root: &Path, many: &[PathBuf]) -> String {
     if many.len() > SHOWN {
         list.push_str(", …");
     }
-    format!(
-        "{} files named {name} under {}: {list}",
-        many.len(),
-        root.display()
-    )
+    format!("{} {what} under {}: {list}", many.len(), root.display())
 }
 
 #[cfg(test)]
@@ -329,11 +482,50 @@ mod tests {
             r.resolve(&source, &path("cat.png")),
             Resolved::Found(dir.join("30-resources/pics/cat.png"))
         );
-        // a path with directories in it is where it says
+        // a path with directories in it is where it says: beside the note, or from the root
         let Resolved::Broken(why) = r.resolve(&source, &path("pics/cat.png")) else {
             panic!("followed a path that isn't there");
         };
         assert!(why.starts_with("no such file"), "{why}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_path_resolves_from_the_root_after_the_note() {
+        let dir = tree(
+            "from-root",
+            &[
+                "vault/.obsidian/.keep",
+                "vault/Projects/Note.md",
+                "vault/Daily/2026/today.md",
+                "vault/Daily/2026/Projects/Note.md",
+                "vault/pics/cat.png",
+                "outside.md",
+            ],
+        );
+        let r = rooted(&[]);
+        let source = dir.join("vault/Daily/2026/today.md");
+        // the note's folder first
+        assert_eq!(
+            r.resolve(&source, &path("Projects/Note.md")),
+            Resolved::Found(dir.join("vault/Daily/2026/Projects/Note.md"))
+        );
+        let source = dir.join("vault/Daily/today.md");
+        assert_eq!(
+            r.resolve(&source, &path("Projects/Note.md")),
+            Resolved::Found(dir.join("vault/Projects/Note.md"))
+        );
+        assert_eq!(
+            r.resolve(&source, &path("pics/cat.png")),
+            Resolved::Found(dir.join("vault/pics/cat.png"))
+        );
+        // never out of the root, nor a path the root doesn't have
+        for p in ["../outside.md", "pics/../../outside.md", "Projects/Gone.md"] {
+            let Resolved::Broken(why) = r.resolve(&source, &path(p)) else {
+                panic!("followed {p}");
+            };
+            assert!(why.starts_with("no such file"), "{why}");
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -507,6 +699,52 @@ mod tests {
             r.resolve(&source, &wiki("far")),
             Resolved::Found(dir.join("vault/q/far.md"))
         );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_alias_in_front_matter_names_its_note() {
+        let dir = tree("aliases", &["vault/.obsidian/.keep", "vault/a/src.md"]);
+        let note = |path: &str, text: &str| {
+            let path = dir.join("vault").join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        note(
+            "b/Robert.md",
+            "---\naliases: [Bob, \"Rob B\"]\n---\n# Robert\n",
+        );
+        note("c/Bob.md", "a note named like the alias wins\n");
+        note("d/one.md", "---\nalias: Twin\n---\n");
+        note("e/two.md", "---\naliases:\n  - twin\n---\n");
+        // past the first 4 KiB of front matter too
+        let long = format!("---\nnote: {}\naliases: [Far]\n---\n", "x".repeat(6000));
+        note("f/long.md", &long);
+        let r = rooted(&[]);
+        let source = dir.join("vault/a/src.md");
+        assert_eq!(
+            r.resolve(&source, &wiki("rob b")),
+            Resolved::Found(dir.join("vault/b/Robert.md"))
+        );
+        assert_eq!(
+            r.resolve(&source, &wiki("Bob")),
+            Resolved::Found(dir.join("vault/c/Bob.md"))
+        );
+        assert_eq!(
+            r.resolve(&source, &wiki("Far")),
+            Resolved::Found(dir.join("vault/f/long.md"))
+        );
+        let Resolved::Broken(why) = r.resolve(&source, &wiki("Twin")) else {
+            panic!("picked one of two");
+        };
+        assert!(
+            why.starts_with("2 notes with the alias Twin under"),
+            "{why}"
+        );
+        // a folder in the link names a file, never an alias
+        let Resolved::Broken(_) = r.resolve(&source, &wiki("b/Rob B")) else {
+            panic!("took an alias for a path");
+        };
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -401,6 +401,8 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: "# Behind\n\nthe document\n".into(),
+                vault: crate::doc::Vault::None,
+                embeds: Default::default(),
                 doc: Computed(None),
             },
             Msg::OpenSettings,

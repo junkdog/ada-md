@@ -10,6 +10,7 @@ use crate::style::{Color, Modifier, Style};
 use toml::de::{DeTable, DeValue};
 
 use super::{StyleKey, TableBorder, Theme};
+use crate::doc::{CalloutKind, Task};
 use crate::toml_walk::{self, Cx, Value, entry};
 
 /// Built-in themes, `(name, toml)`. The first one is the default.
@@ -179,6 +180,7 @@ pub fn load_str(
     // from the theme as a whole, the one it extends under it (X-174)
     if depth == 0 {
         theme.derive_tints();
+        theme.derive_marks();
     }
     Ok(theme)
 }
@@ -336,6 +338,36 @@ fn glyphs(theme: &mut Theme, v: &Value<'_>, cx: &mut Cx<'_>) -> Result<(), Strin
                 Err(_) => return Err(cx.at(v.span(), "sort_mark needs two glyphs: [asc, desc]")),
             },
             "image" => g.image = cx.string(v)?.to_owned(),
+            "embed" => g.embed = cx.string(v)?.to_owned(),
+            "callout" => {
+                for (k, v) in cx.table(v)? {
+                    let name: &str = k.get_ref();
+                    match CalloutKind::ALL.iter().position(|c| c.name() == name) {
+                        // empty: no icon
+                        Some(i) => g.callout[i] = cx.string(v)?.to_owned(),
+                        None => cx.warn(k.span(), format_args!("unknown callout kind \"{name}\"")),
+                    }
+                }
+            }
+            // the box of each of Obsidian's task statuses (OBS-012), by the character in it
+            "task_status" => {
+                for (k, v) in cx.table(v)? {
+                    let name: &str = k.get_ref();
+                    let mut chars = name.chars();
+                    let at = match (chars.next(), chars.next()) {
+                        (Some(c), None) => Task::STATUSES.iter().position(|&s| s == c),
+                        _ => None,
+                    };
+                    match at {
+                        Some(i) => g.task_status[i] = cx.string(v)?.to_owned(),
+                        None => cx.warn(k.span(), format_args!("unknown task status \"{name}\"")),
+                    }
+                }
+            }
+            "fold" => match <[String; 2]>::try_from(cx.strings(v)?) {
+                Ok(fold) => g.fold = fold,
+                Err(_) => return Err(cx.at(v.span(), "fold needs two glyphs: [open, folded]")),
+            },
             other => cx.warn(k.span(), format_args!("unknown glyph \"{other}\"")),
         }
     }
@@ -418,6 +450,32 @@ mod tests {
             Some(Color::rgb(0xd5, 0xc4, 0xa1))
         );
         assert!(!theme.syntax.is_empty());
+    }
+
+    #[test]
+    fn callout_icons_are_two_columns_wide_and_set_by_kind() {
+        let defaults = super::super::Glyphs::default();
+        for (name, text) in BUILTIN {
+            let theme = load_str("builtin", text, &mut Vec::new(), 0).unwrap();
+            assert_eq!(theme.glyphs.callout, defaults.callout, "{name}");
+            assert_eq!(theme.glyphs.fold, defaults.fold, "{name}");
+        }
+        let width = |s: &str| unicode_width::UnicodeWidthStr::width(s);
+        for icon in &defaults.callout {
+            assert_eq!(width(icon), 2, "{icon}");
+        }
+        for mark in &defaults.fold {
+            assert_eq!(width(mark), 1, "{mark}");
+        }
+        let text = "[glyphs]\nfold = [\">\", \"v\"]\n[glyphs.callout]\ntip = \"*\"\nbug = \"\"\nnope = \"x\"\n";
+        let mut warnings = Vec::new();
+        let theme = load_str("t.toml", text, &mut warnings, 0).unwrap();
+        assert_eq!(warnings, ["t.toml:6:1: unknown callout kind \"nope\""]);
+        let g = &theme.glyphs;
+        assert_eq!(g.fold, [">", "v"]);
+        assert_eq!(g.callout[CalloutKind::Tip as usize], "*");
+        assert_eq!(g.callout[CalloutKind::Bug as usize], "");
+        assert_eq!(g.callout[CalloutKind::Note as usize], "📝");
     }
 
     #[test]

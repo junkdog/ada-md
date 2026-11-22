@@ -31,9 +31,12 @@ impl State {
             table_mode: self.table_mode,
             code_wrap: self.code_wrap,
             line_numbers: self.line_numbers,
+            properties: self.properties,
             keys: self.config.keys.clone(),
             // `S` saves neither keys nor links, and a session can't change the links
             links: Default::default(),
+            // nor the flavor, which no key changes
+            flavor: self.config.flavor,
         }
     }
 

@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub use roots::{RootedResolver, Roots, expand_home};
 
-use crate::doc::{AnchorId, AnchorKind, Doc, FootnoteId, LinkKind, LinkRef, slug};
+use crate::doc::{Anchor, AnchorId, AnchorKind, Doc, FootnoteId, LinkKind, LinkRef, slug};
 
 /// What a link points at, before touching the filesystem.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,7 +84,7 @@ fn split_frag(dest: &str) -> (&str, Option<&str>) {
 
 /// A URL scheme: a letter, then letters, digits, `+`, `-` or `.`, then `:`. Single letters are
 /// left alone, as they are more likely drive letters than schemes.
-fn scheme(dest: &str) -> Option<&str> {
+pub(crate) fn scheme(dest: &str) -> Option<&str> {
     let (scheme, _) = dest.split_once(':')?;
     let mut chars = scheme.chars();
     let ok = scheme.len() > 1
@@ -176,7 +176,7 @@ pub fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-fn has_extension(path: &Path, exts: &[&str]) -> bool {
+pub(crate) fn has_extension(path: &Path, exts: &[&str]) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| exts.iter().any(|x| e.eq_ignore_ascii_case(x)))
@@ -202,20 +202,73 @@ pub fn is_image(path: &Path) -> bool {
 }
 
 /// The anchor `frag` names in `doc`: a slug, then (for wiki links) the heading text,
-/// case-insensitive with whitespace collapsed, then the slug of `frag`.
+/// case-insensitive with whitespace collapsed, then the slug of `frag`, then Obsidian's path of
+/// headings, `A#B` naming a heading B under A (OBS-013). A `^id` names a block by its id alone
+/// (OBS-009), then ignoring case. Only the document's own anchors, not those of the notes
+/// transcluded into it (OBS-007).
 pub fn find_anchor(doc: &Doc, frag: &str) -> Option<AnchorId> {
-    let anchors = &doc.anchors;
-    let found = anchors.iter().position(|a| *a.slug == *frag).or_else(|| {
+    find_anchor_in(doc, frag, None)
+}
+
+/// [`find_anchor`] among the anchors of `note`, a note transcluded into `doc` (an index of
+/// [`Doc::embedded`]), or `None` for the document's own.
+pub fn find_anchor_in(doc: &Doc, frag: &str, note: Option<usize>) -> Option<AnchorId> {
+    let all = doc.embedded.is_empty();
+    let anchors = (doc.anchors.iter().enumerate())
+        .filter(|&(i, _)| all || doc.anchor_note(i as AnchorId) == note);
+    if let Some(id) = frag.strip_prefix('^') {
+        let mut blocks = anchors.filter(|(_, a)| matches!(a.kind, AnchorKind::Block { .. }));
+        let found = (blocks.clone().find(|(_, a)| *a.text == *id))
+            .or_else(|| blocks.find(|(_, a)| a.text.eq_ignore_ascii_case(id)));
+        return found.map(|(i, _)| i as AnchorId);
+    }
+    let mut found = anchors.clone().find(|(_, a)| *a.slug == *frag);
+    if found.is_none() {
         let key = slug::heading_key(frag);
-        anchors.iter().position(|a| {
+        found = anchors.clone().find(|(_, a)| {
             matches!(a.kind, AnchorKind::Heading(_)) && slug::heading_key(&a.text) == key
-        })
-    });
-    let found = found.or_else(|| {
+        });
+    }
+    if found.is_none() {
         let slug = slug::github(frag);
-        anchors.iter().position(|a| *a.slug == slug)
-    });
-    found.map(|a| a as AnchorId)
+        found = anchors.clone().find(|(_, a)| *a.slug == slug);
+    }
+    if found.is_none() && frag.contains('#') {
+        found = nested(anchors, frag);
+    }
+    found.map(|(i, _)| i as AnchorId)
+}
+
+/// The heading Obsidian's `A#B#C` names: a heading C whose headings above it, those of higher
+/// levels it falls under, include A and then B, each by its text as [`find_anchor`] matches it.
+fn nested<'a>(
+    anchors: impl Iterator<Item = (usize, &'a Anchor)>,
+    frag: &str,
+) -> Option<(usize, &'a Anchor)> {
+    let path: Vec<String> = (frag.split('#'))
+        .filter(|p| !p.trim().is_empty())
+        .map(slug::heading_key)
+        .collect();
+    let (last, above) = path.split_last()?;
+    // the headings the one being read falls under, by level
+    let mut open: Vec<(u8, String)> = Vec::new();
+    for (i, a) in anchors {
+        let AnchorKind::Heading(level) = a.kind else {
+            continue;
+        };
+        while open.last().is_some_and(|&(l, _)| l >= level) {
+            open.pop();
+        }
+        let key = slug::heading_key(&a.text);
+        if key == *last {
+            let mut keys = open.iter().map(|(_, k)| k);
+            if above.iter().all(|want| keys.any(|k| k == want)) {
+                return Some((i, a));
+            }
+        }
+        open.push((level, key));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -297,6 +350,25 @@ mod tests {
         assert_eq!(find_anchor(&doc, "Known Nondeterminism"), Some(1));
         assert_eq!(find_anchor(&doc, "Intro"), Some(0));
         assert_eq!(find_anchor(&doc, "missing"), None);
+    }
+
+    #[test]
+    fn a_path_of_headings_names_the_last_under_the_others() {
+        let doc = parse(
+            "# Setup\n\n## Linux\n\n### Notes\n\n## Windows\n\n### Notes\n\n# Usage\n\n## Notes\n",
+        );
+        let text =
+            |frag: &str| find_anchor(&doc, frag).map(|a| (a, &*doc.anchors[a as usize].text));
+        assert_eq!(text("Setup#Windows#Notes"), Some((4, "Notes")));
+        assert_eq!(text("Setup#Linux#Notes"), Some((2, "Notes")));
+        // a heading further up, skipping a level
+        assert_eq!(text("Setup#Notes"), Some((2, "Notes")));
+        assert_eq!(text("Usage#Notes"), Some((6, "Notes")));
+        assert_eq!(text("windows#notes"), Some((4, "Notes")));
+        // in the order written, and each under the one before
+        assert_eq!(text("Windows#Setup#Notes"), None);
+        assert_eq!(text("Usage#Windows#Notes"), None);
+        assert_eq!(text("Setup#Gone"), None);
     }
 
     #[test]

@@ -4,12 +4,12 @@ expression: frames.last().unwrap()
 ---
    Code
            ╭─ keys ─────────────────────────────────────────────────╮
-   rust    │   l               the list of links                    │
-   fn main(│                                                        │
-       prin│ View                                                   │
-       let │   t               tables: auto, grid, records          │ has to
-  ↪wrap whe│   s               sort a table on screen by a column   │
-   }       │   w               wrap code, or scroll it sideways     │
+   rust    │                                                        │
+   fn main(│ View                                                   │
+       prin│   t               tables: auto, grid, records          │
+       let │   s               sort a table on screen by a column   │ has to
+  ↪wrap whe│   w               wrap code, or scroll it sideways     │
+   }       │   p               show or hide a note's properties     │
            │   ←               scroll code left                     │
            │   →               scroll code right                    │
    kotlin  │   #               show or hide line numbers            │

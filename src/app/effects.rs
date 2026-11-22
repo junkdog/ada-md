@@ -13,6 +13,7 @@ use super::load;
 use super::watch::Watcher;
 use super::{Cmd, Computed, Msg};
 use crate::config;
+use crate::doc::{Vault, embed};
 use crate::filetype::{self, FileType};
 use crate::git;
 use crate::highlight::{self, Request};
@@ -28,7 +29,8 @@ pub struct Effects {
     rest: Option<(Box<dyn Read + Send>, Vec<u8>)>,
     /// The highlight worker's queue; without a worker, highlighting runs inline.
     highlight: Option<Sender<Request>>,
-    resolver: Box<dyn Resolver>,
+    /// Shared with the loader, which resolves a note's embeds with it (OBS-007).
+    resolver: Arc<dyn Resolver + Send + Sync>,
     /// Where git runs post their results; without it, git runs inline.
     git: Option<Sender<Msg>>,
     /// The terminal's image support, as the probe found it (or, replaying live, `Msg::Graphics`
@@ -53,7 +55,7 @@ impl Effects {
             stdin: Arc::new(Mutex::new(stdin)),
             rest: None,
             highlight: None,
-            resolver: Box::new(BuiltinResolver),
+            resolver: Arc::new(BuiltinResolver),
             git: None,
             encoder: None,
             images: None,
@@ -72,8 +74,8 @@ impl Effects {
     }
 
     /// Resolve links with `resolver` in place of the built-in rules.
-    pub fn set_resolver(&mut self, resolver: Box<dyn Resolver>) {
-        self.resolver = resolver;
+    pub fn set_resolver(&mut self, resolver: impl Resolver + Send + Sync + 'static) {
+        self.resolver = Arc::new(resolver);
     }
 
     /// Encode images with `encoder`: on a worker, once [`Effects::spawn_workers`] has run.
@@ -130,13 +132,16 @@ impl Effects {
                 // with nothing on screen there is nothing to answer meanwhile: read it here
                 let tx = match &self.loads {
                     Some(tx) if !wait => tx,
-                    _ => return Some(load_doc(&path, self.stdin().as_ref())),
+                    _ => return Some(load_doc(&path, self.stdin().as_ref(), &*self.resolver)),
                 };
-                let loader = self
-                    .loader
-                    .get_or_insert_with(|| load::spawn_worker(Arc::clone(&self.stdin), tx.clone()));
+                let loader = self.loader.get_or_insert_with(|| {
+                    let (stdin, resolver) = (Arc::clone(&self.stdin), Arc::clone(&self.resolver));
+                    load::spawn_worker(stdin, resolver, tx.clone())
+                });
                 match loader.send((path, prepare)) {
-                    Err(mpsc::SendError((path, _))) => Some(load_doc(&path, self.stdin().as_ref())),
+                    Err(mpsc::SendError((path, _))) => {
+                        Some(load_doc(&path, self.stdin().as_ref(), &*self.resolver))
+                    }
                     Ok(()) => None,
                 }
             }
@@ -153,15 +158,10 @@ impl Effects {
                 }
                 None
             }
-            Cmd::ResolveLinks {
+            Cmd::ResolveLinks { doc_gen, targets } => Some(Msg::LinksResolved {
                 doc_gen,
-                source,
-                targets,
-            } => Some(Msg::LinksResolved {
-                doc_gen,
-                resolved: targets
-                    .iter()
-                    .map(|t| self.resolver.resolve(&source, t))
+                resolved: (targets.iter())
+                    .map(|(source, t)| self.resolver.resolve(source, t))
                     .collect(),
             }),
             Cmd::OpenWithSystem(target) => {
@@ -199,9 +199,13 @@ impl Effects {
                 };
                 Some(job.run(self.encoder()))
             }
-            Cmd::Watch { path, mtime } => {
+            Cmd::Watch {
+                path,
+                mtime,
+                embeds,
+            } => {
                 if let Some(watcher) = &mut self.watcher {
-                    watcher.watch(path, mtime);
+                    watcher.watch(path, mtime, embeds);
                 }
                 None
             }
@@ -304,9 +308,33 @@ pub(crate) fn stdin_of(stdin: &Stdin) -> Option<Arc<str>> {
 }
 
 /// Read a document: `DocLoaded` with its text, or `DocFailed`. An image has no text, and a
-/// binary file fails.
-pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
-    load_doc_head(path, stdin, None)
+/// binary file fails. A note comes with the notes its embeds name, found by `resolver`, to be
+/// transcluded (OBS-007).
+pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>, resolver: &dyn Resolver) -> Msg {
+    match load_doc_head(path, stdin, None) {
+        Msg::DocLoaded {
+            path,
+            mtime,
+            text,
+            vault,
+            doc,
+            ..
+        } => {
+            let embeds = match FileType::by_path(&path) {
+                Some(FileType::Markdown) => embed::gather(&path, &text, resolver),
+                _ => Default::default(),
+            };
+            Msg::DocLoaded {
+                path,
+                mtime,
+                text,
+                vault,
+                embeds,
+                doc,
+            }
+        }
+        msg => msg,
+    }
 }
 
 /// How much of a code or text file a preview reads: its first `lines` lines, and no more than
@@ -318,13 +346,16 @@ pub struct Head {
 }
 
 /// [`load_doc`], reading only the `head` of a file that isn't markdown. A note is read whole: a
-/// link's reference definition or a footnote can come after everything that uses it.
+/// link's reference definition or a footnote can come after everything that uses it. A file
+/// that is or may be markdown comes with the Obsidian vault it's in (ADR-45).
 pub fn load_doc_head(path: &Path, stdin: Option<&Arc<str>>, head: Option<Head>) -> Msg {
     if path == Path::new("-") {
         return Msg::DocLoaded {
             path: path.to_owned(),
             mtime: None,
             text: stdin.cloned().unwrap_or_default(),
+            vault: Vault::None,
+            embeds: Default::default(),
             doc: Computed(None),
         };
     }
@@ -349,10 +380,17 @@ pub fn load_doc_head(path: &Path, stdin: Option<&Arc<str>>, head: Option<Head>) 
                 Ok(text) => text,
                 Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
             };
+            // only its name or only its text says it's markdown
+            let vault = match filetype {
+                Some(FileType::Markdown) | None => Vault::of(path),
+                Some(_) => Vault::None,
+            };
             Msg::DocLoaded {
                 path: path.to_owned(),
                 mtime,
                 text: text.into(),
+                vault,
+                embeds: Default::default(),
                 doc: Computed(None),
             }
         }

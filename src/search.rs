@@ -1,6 +1,7 @@
 //! Search (ADR-12, architecture §6). A regex runs over markup-free text built from the IR, so it
 //! never has to account for `**`, backticks or decorations. Link destinations, aliased wiki
-//! targets and image sources are searched too, as *hidden* units owned by a visible link.
+//! targets and image sources are searched too, as *hidden* units owned by a visible link, and
+//! typeset math's TeX as units *behind* the math it shows as (OBS-003).
 //!
 //! The text depends only on the Doc. Matches are projected onto rows and columns per layout, so
 //! they survive resize and table-mode changes.
@@ -10,7 +11,9 @@ use std::ops::Range;
 use regex::{Regex, RegexBuilder};
 use unicode_width::UnicodeWidthStr;
 
-use crate::doc::{Block, BlockKind, Doc, LinkId, LinkKind, UnitId, code_lines};
+use crate::doc::{
+    Block, BlockKind, CodeBlock, Doc, Inlines, LinkId, LinkKind, RunKind, UnitId, code_lines,
+};
 use crate::geom;
 use crate::layout::{self, Layout, RowKind, expand_tabs, wrap};
 use crate::theme::Glyphs;
@@ -24,6 +27,13 @@ pub enum UnitKind {
     /// Text that isn't on screen, such as a link's destination: matches show on its owner.
     Hidden {
         owner: LinkId,
+    },
+    /// The TeX of typeset math (OBS-003): matches show on bytes `start..end` of visible unit
+    /// `unit`, the math as it shows.
+    Behind {
+        unit: UnitId,
+        start: u32,
+        end: u32,
     },
 }
 
@@ -45,14 +55,28 @@ pub struct SearchMap {
 
 impl SearchMap {
     pub fn build(doc: &Doc, glyphs: &Glyphs) -> Self {
-        let mut texts = vec![String::new(); doc.unit_count as usize];
+        let mut texts = Texts {
+            units: vec![String::new(); doc.unit_count as usize],
+            math: Vec::new(),
+        };
         let footnotes = doc.footnotes.iter().map(|f| &f.blocks[..]);
         for blocks in std::iter::once(&doc.blocks[..]).chain(footnotes) {
             collect(blocks, doc, glyphs, &mut texts);
         }
         let mut map = SearchMap::default();
-        for text in &texts {
+        for text in &texts.units {
             map.push(text, UnitKind::Visible);
+        }
+        for (unit, id, range) in texts.math {
+            let Some(tex) = doc.math.get(id as usize) else {
+                continue;
+            };
+            let kind = UnitKind::Behind {
+                unit,
+                start: range.start,
+                end: range.end,
+            };
+            map.push(&wrap::clean(&tex.of(&doc.text).replace('\n', " ")), kind);
         }
         for (id, link) in doc.links.iter().enumerate() {
             let hidden = match link.kind {
@@ -116,40 +140,44 @@ impl SearchMap {
     }
 }
 
-fn collect(blocks: &[Block], doc: &Doc, glyphs: &Glyphs, texts: &mut [String]) {
-    fn put(texts: &mut [String], unit: UnitId, text: String) {
-        if let Some(slot) = texts.get_mut(unit as usize) {
+/// The texts [`collect`] gathers: each visible unit's, and where typeset math is in them.
+struct Texts {
+    units: Vec<String>,
+    /// The unit of each run of math, its [`crate::doc::MathId`], and its bytes in the unit.
+    math: Vec<(UnitId, u32, Range<u32>)>,
+}
+
+fn collect(blocks: &[Block], doc: &Doc, glyphs: &Glyphs, texts: &mut Texts) {
+    fn put(texts: &mut Texts, unit: UnitId, text: String) {
+        if let Some(slot) = texts.units.get_mut(unit as usize) {
             *slot = text;
         }
     }
+    // runs' text, and where their math is
+    fn put_runs(texts: &mut Texts, inlines: &Inlines, doc: &Doc, glyphs: &Glyphs) {
+        let runs = doc.runs(inlines);
+        if !runs.iter().any(|r| matches!(r.kind, RunKind::Math(_))) {
+            return put(texts, inlines.unit, wrap::unit_text(runs, doc, glyphs));
+        }
+        let (text, math) = wrap::unit_text_math(runs, doc, glyphs);
+        let unit = inlines.unit;
+        texts
+            .math
+            .extend(math.into_iter().map(|(id, r)| (unit, id, r)));
+        put(texts, unit, text);
+    }
     for block in blocks {
         match &block.kind {
-            BlockKind::Heading { inlines, .. } | BlockKind::Paragraph(inlines) => {
-                put(
-                    texts,
-                    inlines.unit,
-                    wrap::unit_text(doc.runs(inlines), doc, glyphs),
-                );
-            }
+            BlockKind::Heading { inlines, .. }
+            | BlockKind::Paragraph(inlines)
+            | BlockKind::Math(inlines) => put_runs(texts, inlines, doc, glyphs),
             BlockKind::Table(t) => {
                 // the header's cells, then each row's
                 for cell in &t.cells {
-                    put(
-                        texts,
-                        cell.unit,
-                        wrap::unit_text(doc.runs(cell), doc, glyphs),
-                    );
+                    put_runs(texts, cell, doc, glyphs);
                 }
             }
-            BlockKind::Code(code) => {
-                for (n, line) in code_lines(&code.text).enumerate() {
-                    put(
-                        texts,
-                        code.first_unit + n as UnitId,
-                        expand_tabs(line).into_owned(),
-                    );
-                }
-            }
+            BlockKind::Code(code) => code_units(code, &mut texts.units),
             BlockKind::Image { alt, unit, .. } => {
                 put(texts, *unit, wrap::clean(layout::image_alt(alt)));
             }
@@ -158,10 +186,45 @@ fn collect(blocks: &[Block], doc: &Doc, glyphs: &Glyphs, texts: &mut [String]) {
                     collect(&item.blocks, doc, glyphs, texts);
                 }
             }
-            BlockKind::Quote { blocks, .. } => collect(blocks, doc, glyphs, texts),
+            BlockKind::Quote { callout, blocks } => {
+                if let Some(c) = callout {
+                    put_runs(texts, &c.title, doc, glyphs);
+                }
+                collect(blocks, doc, glyphs, texts);
+            }
+            BlockKind::Embed(e) => {
+                put_runs(texts, &e.title, doc, glyphs);
+                collect(&e.blocks, doc, glyphs, texts);
+            }
+            BlockKind::Properties(p) => {
+                for row in &p.rows {
+                    put_runs(texts, &row.value, doc, glyphs);
+                }
+                code_units(&p.source, &mut texts.units);
+            }
             BlockKind::Rule | BlockKind::Html(_) | BlockKind::FootnoteDefs => {}
         }
     }
+}
+
+/// A code block's lines, a unit each.
+fn code_units(code: &CodeBlock, texts: &mut [String]) {
+    for (n, line) in code_lines(&code.text).enumerate() {
+        if let Some(slot) = texts.get_mut((code.first_unit + n as UnitId) as usize) {
+            *slot = expand_tabs(line).into_owned();
+        }
+    }
+}
+
+/// Bytes `a..b` of `text` without the [`NBSP`](crate::layout::wrap::NBSP)s at their ends.
+fn unpadded(text: &str, a: u32, b: u32) -> (u32, u32) {
+    let Some(t) = text.get(a as usize..b as usize) else {
+        return (a, b);
+    };
+    let pad = wrap::NBSP;
+    let lead = t.len() - t.trim_start_matches(pad).len();
+    let trail = t.len() - t.trim_end_matches(pad).len();
+    (a + lead as u32, (b - trail as u32).max(a + lead as u32))
 }
 
 /// A match: bytes `start..end` of a unit's text.
@@ -278,7 +341,12 @@ impl Projection {
         for (at, m) in matches.iter().enumerate() {
             let at = at as u32;
             match map.units.get(m.unit as usize).map(|u| u.kind) {
-                Some(UnitKind::Visible) => {
+                Some(kind @ (UnitKind::Visible | UnitKind::Behind { .. })) => {
+                    // a match in TeX shows on the whole of the math it typesets as
+                    let (m, hidden) = match kind {
+                        UnitKind::Behind { unit, start, end } => (Match { unit, start, end }, true),
+                        _ => (*m, false),
+                    };
                     let text = map.unit_text(m.unit);
                     // the unit's segments that start before the match ends, from the first
                     // whose reach passes its start
@@ -287,7 +355,11 @@ impl Projection {
                     let from = first + reach[first..end].partition_point(|&r| r <= m.start);
                     for &(_, i) in &by_unit[from..end] {
                         let seg = layout.search[i as usize];
-                        let (a, b) = (m.start.max(seg.start), m.end.min(seg.end));
+                        let (mut a, mut b) = (m.start.max(seg.start), m.end.min(seg.end));
+                        if hidden {
+                            // the math as it shows, not the padding that aligns its rows
+                            (a, b) = unpadded(text, a, b);
+                        }
                         if a >= b {
                             continue;
                         }
@@ -315,7 +387,7 @@ impl Projection {
                             cols: seg.col.saturating_add(width(a))
                                 ..seg.col.saturating_add(width(b)),
                             at,
-                            hidden: false,
+                            hidden,
                             window,
                         });
                     }
@@ -409,6 +481,7 @@ mod tests {
             bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
+            properties: Default::default(),
             images: None,
         }
     }
@@ -464,6 +537,13 @@ mod tests {
             "the heading has two spaces"
         );
         assert_eq!(found(md, "foo +bar", 80).len(), 4);
+    }
+
+    #[test]
+    fn callout_titles_are_found() {
+        let md = "> [!faq]- Are callouts foldable?\n> Yes, foldable.\n\n> [!tldr]\n> short\n";
+        assert_eq!(found(md, "foldable", 80), ["foldable", "foldable"]);
+        assert_eq!(found(md, "Tldr", 80), ["Tldr"]);
     }
 
     /// The binary search over a unit's segments finds what a scan of all of them finds, on every
@@ -542,6 +622,20 @@ mod tests {
         assert_eq!(found(md, "plain", 80), ["plain"], "no hidden twin");
         // the image block shows its source, but as a hidden unit it lands on the whole block
         assert_eq!(found(md, "cat", 80), ["[🖼 cat (img/cat.png)]", "cat"]);
+    }
+
+    /// Typeset math (OBS-003) is found by what it shows, and by its TeX: a match in the TeX
+    /// lights up the math it typesets as, the rows of its line in display math.
+    #[test]
+    fn typeset_math_is_found_by_its_tex_too() {
+        let md = "if $\\alpha \\le 1$ then\n\n$$\nA = \\begin{pmatrix} 1 \\\\ 2 \\end{pmatrix} \\\\\n\\beta\n$$\n";
+        assert_eq!(found(md, "α", 80), ["α"]);
+        assert_eq!(found(md, "alpha", 80), ["[α ≤ 1]"]);
+        // the matrix's line: both of its rows
+        assert_eq!(found(md, "begin", 80), ["[A = ⎛1⎞]|[⎝2⎠]"]);
+        assert_eq!(found(md, "beta", 80), ["[β]"]);
+        // TeX ada doesn't read is code, searched as written
+        assert_eq!(found("a $\\RR$ b\n", "RR", 80), ["RR"]);
     }
 
     #[test]

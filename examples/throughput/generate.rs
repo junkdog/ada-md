@@ -410,6 +410,7 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
                     add(n, LEVELS[usize::from(*level) - 1], 1);
                 }
                 BlockKind::Paragraph(_) => add(n, "paragraph", 1),
+                BlockKind::Math(_) => add(n, "math", 1),
                 BlockKind::List(list) => {
                     add(n, "list", 1);
                     for item in &list.items {
@@ -423,6 +424,10 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
                     add(n, "callout", usize::from(callout.is_some()));
                     walk(blocks, n);
                 }
+                BlockKind::Embed(e) => {
+                    add(n, "embed", 1);
+                    walk(&e.blocks, n);
+                }
                 BlockKind::Code(code) => {
                     add(n, "code", 1);
                     add(n, "code-bytes", code.text.len());
@@ -432,6 +437,7 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
                 BlockKind::Rule => add(n, "rule", 1),
                 BlockKind::Html(_) => add(n, "html", 1),
                 BlockKind::FootnoteDefs => add(n, "footnote-section", 1),
+                BlockKind::Properties(p) => add(n, "property", p.rows.len()),
             }
         }
     }

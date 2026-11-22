@@ -1,22 +1,48 @@
 //! Where a text's lines start, and how many lines a code block has (PAR-003). Every document's
-//! whole text passes through [`line_starts`] once, and every code block's through
+//! whole text passes through [`line_starts`] once (a markdown note's through
+//! [`line_starts_and_marks`]), and every code block's through
 //! [`code_line_count`], so neither tests a byte at a time.
 
 /// The byte offset of the start of each line.
 pub fn line_starts(text: &str) -> Vec<u32> {
+    starts_and::<false>(text).0
+}
+
+/// [`line_starts`], and where each run of two or more `=` has its second: a markdown note's
+/// highlights (OBS-005) are looked for only on lines with one. The newlines' pass takes them as
+/// it goes, a compare a 32 bytes where there's no `=`: a pass of their own cost long lines' parse
+/// 15% (0.28 instructions a byte).
+pub fn line_starts_and_marks(text: &str) -> (Vec<u32>, Vec<u32>) {
+    starts_and::<true>(text)
+}
+
+fn starts_and<const MARKS: bool>(text: &str) -> (Vec<u32>, Vec<u32>) {
     let mut starts = vec![0];
+    let mut marks = Vec::new();
     #[cfg(target_arch = "x86_64")]
-    let pushed = avx2::push(text.as_bytes(), &mut starts);
+    let pushed = avx2::push::<MARKS>(text.as_bytes(), &mut starts, &mut marks);
     #[cfg(not(target_arch = "x86_64"))]
     let pushed = false;
     if !pushed {
         push_by_memchr(text.as_bytes(), &mut starts);
+        if MARKS {
+            push_marks_by_memchr(text.as_bytes(), &mut marks);
+        }
     }
     // a final newline starts no line
     if starts.len() > 1 && starts.last() == Some(&(text.len() as u32)) {
         starts.pop();
     }
-    starts
+    (starts, marks)
+}
+
+/// Pushes where each run of two or more `=` in `bytes` has its second, where [`avx2`] can't.
+fn push_marks_by_memchr(bytes: &[u8], marks: &mut Vec<u32>) {
+    marks.extend(
+        memchr::memmem::find_iter(bytes, b"==")
+            .filter(|&p| p == 0 || bytes[p - 1] != b'=')
+            .map(|p| p as u32 + 1),
+    );
 }
 
 /// Pushes the start of the line after each newline in `bytes`, where [`avx2`] can't.
@@ -45,22 +71,30 @@ mod avx2 {
     /// Positions written a step.
     const STEP: usize = 4;
 
-    /// Pushes the start of the line after each newline in `bytes`; `false`, pushing nothing,
-    /// when the CPU lacks AVX2, POPCNT or BMI1 (every CPU with AVX2 has the other two).
-    pub fn push(bytes: &[u8], starts: &mut Vec<u32>) -> bool {
+    /// Pushes the start of the line after each newline in `bytes`, and with `MARKS` where each
+    /// run of two or more `=` has its second; `false`, pushing nothing, when the CPU lacks AVX2,
+    /// POPCNT or BMI1 (every CPU with AVX2 has the other two).
+    pub fn push<const MARKS: bool>(
+        bytes: &[u8],
+        starts: &mut Vec<u32>,
+        marks: &mut Vec<u32>,
+    ) -> bool {
         let ok = is_x86_feature_detected!("avx2")
             && is_x86_feature_detected!("popcnt")
             && is_x86_feature_detected!("bmi1");
         if ok {
             // SAFETY: the CPU has every feature `push_starts` enables
-            unsafe { push_starts(bytes, starts) };
+            unsafe { push_starts::<MARKS>(bytes, starts, marks) };
         }
         ok
     }
 
     #[target_feature(enable = "avx2,popcnt,bmi1")]
-    fn push_starts(bytes: &[u8], starts: &mut Vec<u32>) {
+    fn push_starts<const MARKS: bool>(bytes: &[u8], starts: &mut Vec<u32>, marks: &mut Vec<u32>) {
         let nl = _mm256_set1_epi8(b'\n' as i8);
+        let eq = _mm256_set1_epi8(b'=' as i8);
+        // the last chunk's `=`s, for a run going on into the next
+        let mut prev = 0u64;
         let (chunks, rest) = bytes.as_chunks::<64>();
         // room reserved once per 64 chunks, the most newlines they hold, and a step's spill
         for (g, group) in chunks.chunks(64).enumerate() {
@@ -78,6 +112,24 @@ mod avx2 {
                         _mm256_loadu_si256(p.add(32).cast()),
                     )
                 };
+                if MARKS {
+                    let (l, h) = (_mm256_cmpeq_epi8(lo, eq), _mm256_cmpeq_epi8(hi, eq));
+                    let any = _mm256_or_si256(l, h);
+                    if _mm256_testz_si256(any, any) == 0 {
+                        let m = u64::from(_mm256_movemask_epi8(l) as u32)
+                            | u64::from(_mm256_movemask_epi8(h) as u32) << 32;
+                        // a `=` after a `=` that has none before it
+                        let mut second = m & (m << 1 | prev >> 63) & !(m << 2 | prev >> 62);
+                        let base = ((g * 64 + k) * 64) as u32;
+                        while second != 0 {
+                            marks.push(base + second.trailing_zeros());
+                            second &= second - 1;
+                        }
+                        prev = m;
+                    } else {
+                        prev = 0;
+                    }
+                }
                 let lo = _mm256_movemask_epi8(_mm256_cmpeq_epi8(lo, nl)) as u32;
                 let hi = _mm256_movemask_epi8(_mm256_cmpeq_epi8(hi, nl)) as u32;
                 let mut mask = u64::from(lo) | u64::from(hi) << 32;
@@ -104,6 +156,13 @@ mod avx2 {
         let base = chunks.len() * 64;
         for (i, _) in rest.iter().enumerate().filter(|&(_, &b)| b == b'\n') {
             starts.push((base + i) as u32 + 1);
+        }
+        if MARKS {
+            for q in base.max(1)..bytes.len() {
+                if bytes[q] == b'=' && bytes[q - 1] == b'=' && (q < 2 || bytes[q - 2] != b'=') {
+                    marks.push(q as u32);
+                }
+            }
         }
     }
 }
@@ -171,6 +230,57 @@ mod tests {
                 all.push(text.len() as u32);
             }
             assert_eq!(starts, all, "{text:?}");
+        }
+    }
+
+    /// Where each run of two `=` or more has its second, a byte at a time.
+    fn marks_by_byte(text: &str) -> Vec<u32> {
+        let b = text.as_bytes();
+        (1..b.len())
+            .filter(|&q| b[q] == b'=' && b[q - 1] == b'=' && (q < 2 || b[q - 2] != b'='))
+            .map(|q| q as u32)
+            .collect()
+    }
+
+    #[test]
+    fn marks_match_a_byte_at_a_time() {
+        let mut texts = texts();
+        let mut seed = 0x4f42_5330_3035_u64;
+        for len in [
+            1, 2, 3, 62, 63, 64, 65, 66, 127, 128, 129, 4095, 4096, 4097, 4160, 9000,
+        ] {
+            // `=` runs of every length across every chunk boundary, then `=` at random
+            for every in [2, 3, 5, 61, 64, 67] {
+                texts.push(
+                    (0..len)
+                        .map(|i| if i % every == 0 { 'x' } else { '=' })
+                        .collect(),
+                );
+            }
+            for density in [2, 3, 9] {
+                texts.push(
+                    (0..len)
+                        .map(|_| {
+                            seed ^= seed << 13;
+                            seed ^= seed >> 7;
+                            seed ^= seed << 17;
+                            match seed % density {
+                                0 => '\n',
+                                1 => 'y',
+                                _ => '=',
+                            }
+                        })
+                        .collect(),
+                );
+            }
+        }
+        for text in texts {
+            let (starts, marks) = line_starts_and_marks(&text);
+            assert_eq!(starts, starts_by_byte(&text), "{text:?}");
+            assert_eq!(marks, marks_by_byte(&text), "{text:?}");
+            let mut by_memchr = Vec::new();
+            push_marks_by_memchr(text.as_bytes(), &mut by_memchr);
+            assert_eq!(by_memchr, marks_by_byte(&text), "{text:?}");
         }
     }
 

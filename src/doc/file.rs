@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use super::lines::{code_line_count, line_starts};
-use super::{Block, BlockKind, CodeBlock, Doc, LineRange, LinkKind, LinkRef, UnitId, content_hash};
+use super::{
+    Block, BlockKind, CodeBlock, Doc, ImageSize, LineRange, LinkKind, LinkRef, UnitId, content_hash,
+};
 
 /// A whole file of code in `lang`, or of plain text when there is none. A mermaid file draws
 /// its diagram, as a mermaid block in a note does.
@@ -90,6 +92,7 @@ pub fn image(name: &str) -> Doc {
             title: "".into(),
             kind: LinkKind::Image,
             src_line: 0,
+            size: ImageSize::NONE,
         }],
         line_starts: vec![0],
         unit_count: 1,

@@ -7,7 +7,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::style::{Color, Kind, Modifier, Style};
 
-use crate::doc::{Callout, InlineStyle};
+use crate::doc::{CalloutKind, InlineStyle, Task};
 use crate::highlight::{SyntaxTheme, Tint, rule_style};
 
 pub use load::{BUILTIN, load, load_str, load_user};
@@ -41,6 +41,8 @@ style_keys! {
     Emph => "inline.emph",
     Strong => "inline.strong",
     Strike => "inline.strike",
+    Highlight => "inline.highlight",
+    Tag => "inline.tag",
     CodeInline => "inline.code",
     Link => "inline.link",
     LinkFocused => "inline.link_focused",
@@ -54,6 +56,8 @@ style_keys! {
     CalloutImportant => "block.callout_important",
     CalloutWarning => "block.callout_warning",
     CalloutCaution => "block.callout_caution",
+    CalloutSuccess => "block.callout_success",
+    CalloutQuote => "block.callout_quote",
     CodeBlock => "block.code",
     CodeText => "block.code_text",
     CodeLabel => "block.code_label",
@@ -66,12 +70,17 @@ style_keys! {
     ListNumber => "block.list_number",
     TaskDone => "block.task_done",
     TaskOpen => "block.task_open",
+    TaskActive => "block.task_active",
+    TaskImportant => "block.task_important",
+    TaskOther => "block.task_other",
     Rule => "block.rule",
     TableBorder => "block.table_border",
     TableHeader => "block.table_header",
     TableRowAlt => "block.table_row_alt",
     FootnoteLabel => "block.footnote_label",
     Html => "block.html",
+    PropertyKey => "block.property_key",
+    PropertyValue => "block.property_value",
     ImageFrame => "block.image_frame",
     DiagramLine => "block.diagram_line",
     DiagramActor => "block.diagram_actor",
@@ -135,13 +144,20 @@ impl StyleKey {
         }
     }
 
-    pub fn callout(callout: Callout) -> StyleKey {
-        match callout {
-            Callout::Note => StyleKey::CalloutNote,
-            Callout::Tip => StyleKey::CalloutTip,
-            Callout::Important => StyleKey::CalloutImportant,
-            Callout::Warning => StyleKey::CalloutWarning,
-            Callout::Caution => StyleKey::CalloutCaution,
+    /// A callout's title style: one per color Obsidian gives its kinds (blue, cyan, green,
+    /// orange, red, purple and gray), GitHub's five keeping theirs.
+    pub fn callout(kind: CalloutKind) -> StyleKey {
+        match kind {
+            CalloutKind::Note | CalloutKind::Info | CalloutKind::Todo => StyleKey::CalloutNote,
+            CalloutKind::Abstract | CalloutKind::Tip => StyleKey::CalloutTip,
+            CalloutKind::Success => StyleKey::CalloutSuccess,
+            CalloutKind::Question | CalloutKind::Warning => StyleKey::CalloutWarning,
+            CalloutKind::Failure
+            | CalloutKind::Danger
+            | CalloutKind::Bug
+            | CalloutKind::Caution => StyleKey::CalloutCaution,
+            CalloutKind::Example | CalloutKind::Important => StyleKey::CalloutImportant,
+            CalloutKind::Quote => StyleKey::CalloutQuote,
         }
     }
 
@@ -149,6 +165,9 @@ impl StyleKey {
     fn parent(self) -> Option<StyleKey> {
         match self {
             StyleKey::CodeText => Some(StyleKey::CodeBlock),
+            // a note's properties, dim: its keys as raw HTML is, its values as a quote's text
+            StyleKey::PropertyKey => Some(StyleKey::Html),
+            StyleKey::PropertyValue => Some(StyleKey::Quote),
             StyleKey::ImageFrame => Some(StyleKey::TableBorder),
             StyleKey::DiagramLine => Some(StyleKey::TableBorder),
             StyleKey::DiagramActor => Some(StyleKey::TableHeader),
@@ -156,9 +175,16 @@ impl StyleKey {
             StyleKey::DiagramNote => Some(StyleKey::Quote),
             StyleKey::DiagramFrame => Some(StyleKey::CodeLabel),
             StyleKey::DiagramNumber => Some(StyleKey::ListNumber),
+            StyleKey::CalloutSuccess => Some(StyleKey::CalloutTip),
+            // Obsidian's task statuses (OBS-012): in progress as a warning, important as a
+            // caution, the rest as a note, each callout's color
+            StyleKey::TaskActive => Some(StyleKey::CalloutWarning),
+            StyleKey::TaskImportant => Some(StyleKey::CalloutCaution),
+            StyleKey::TaskOther => Some(StyleKey::CalloutNote),
+            StyleKey::CalloutQuote => Some(StyleKey::Quote),
             StyleKey::DiagramBar => Some(StyleKey::CalloutNote),
             StyleKey::DiagramActive => Some(StyleKey::CalloutWarning),
-            StyleKey::DiagramDone => Some(StyleKey::CalloutTip),
+            StyleKey::DiagramDone => Some(StyleKey::CalloutSuccess),
             StyleKey::DiagramCrit => Some(StyleKey::CalloutCaution),
             StyleKey::DiagramGrid => Some(StyleKey::TableBorder),
             StyleKey::DiagramType
@@ -222,12 +248,20 @@ pub struct Glyphs {
     pub table_border: TableBorder,
     /// `[done, open]` task boxes.
     pub task: [String; 2],
+    /// The boxes of Obsidian's task statuses (OBS-012), by [`Task::STATUSES`]' order.
+    pub task_status: [String; Task::STATUSES.len()],
     pub wrap_mark: String,
     /// `[left, right]` marks for code clipped at the edges in no-wrap mode.
     pub code_clip: [String; 2],
     /// `[ascending, descending]` marks on the header of the column a table is sorted by.
     pub sort_mark: [String; 2],
     pub image: String,
+    /// Before an embedded note or file, shown as a link to it (`![[note]]`).
+    pub embed: String,
+    /// Before a callout's title, by [`CalloutKind`] (OBS-002): an emoji, in its own colors.
+    pub callout: [String; CalloutKind::ALL.len()],
+    /// `[open, folded]` after the title of a callout that folds.
+    pub fold: [String; 2],
     /// Gutter marks, in the order of the `Gutter*` style keys.
     pub gutter: [String; 6],
 }
@@ -243,12 +277,74 @@ impl Default for Glyphs {
             rule: "─".into(),
             table_border: TableBorder::Rounded,
             task: ["[x] ".into(), "[ ] ".into()],
+            task_status: Task::STATUSES.map(|c| default_task_status(c).into()),
             wrap_mark: "↪".into(),
             code_clip: ["‹".into(), "›".into()],
             sort_mark: ["▲".into(), "▼".into()],
             image: "🖼 ".into(),
+            embed: "↳ ".into(),
+            callout: CalloutKind::ALL.map(|k| default_callout_icon(k).into()),
+            fold: ["▾".into(), "▸".into()],
             gutter: Default::default(),
         }
+    }
+}
+
+/// The box of a task status (OBS-012): a mark one column wide in the brackets, as `[✓]` is, so
+/// every task's text starts in one column; Minimal's marks where a text symbol has one.
+fn default_task_status(status: char) -> &'static str {
+    match status {
+        '/' => "[◐] ",
+        '-' => "[–] ",
+        '>' => "[→] ",
+        '<' => "[←] ",
+        '*' => "[★] ",
+        '!' => "[!] ",
+        '?' => "[?] ",
+        _ => "[ ] ",
+    }
+}
+
+impl Glyphs {
+    /// A task's box, and its style.
+    pub fn task_box(&self, task: Task) -> (&str, StyleKey) {
+        match task {
+            Task::Done => (&self.task[0], StyleKey::TaskDone),
+            Task::Open => (&self.task[1], StyleKey::TaskOpen),
+            Task::Status(c) => {
+                let at = Task::STATUSES.iter().position(|&s| s == c).unwrap_or(0);
+                let key = match c {
+                    '/' => StyleKey::TaskActive,
+                    '!' => StyleKey::TaskImportant,
+                    '-' => StyleKey::TaskOpen,
+                    _ => StyleKey::TaskOther,
+                };
+                (&self.task_status[at], key)
+            }
+        }
+    }
+}
+
+/// A callout's icon: an emoji, two columns wide, after Obsidian's (Lucide) icons and GitHub's for its
+/// own two. Emoji in their presentation form: a symbol with a text form (`⚠`, `ℹ`, `☑`) takes U+FE0F,
+/// since terminals draw the bare one narrow and badly.
+fn default_callout_icon(kind: CalloutKind) -> &'static str {
+    match kind {
+        CalloutKind::Note => "📝",
+        CalloutKind::Abstract => "📋",
+        CalloutKind::Info => "ℹ\u{fe0f}",
+        CalloutKind::Todo => "☑\u{fe0f}",
+        CalloutKind::Tip => "🔥",
+        CalloutKind::Success => "✅",
+        CalloutKind::Question => "❓",
+        CalloutKind::Warning => "⚠\u{fe0f}",
+        CalloutKind::Failure => "❌",
+        CalloutKind::Danger => "⚡",
+        CalloutKind::Bug => "🐛",
+        CalloutKind::Example => "📑",
+        CalloutKind::Quote => "💬",
+        CalloutKind::Important => "❗",
+        CalloutKind::Caution => "🛑",
     }
 }
 
@@ -469,12 +565,27 @@ impl Theme {
         }
     }
 
-    /// A key's style on top of the document style, and of its parent's.
+    /// The marks a theme leaves unset, which a theme from before them (1.1's, a user's without
+    /// `extends`) doesn't know: an `==highlight==`, whose `==` go, reversed, and a `#tag` as the
+    /// theme's inline code, a pill. Inline marks patch their own key, not their parents', so
+    /// these can't come from [`StyleKey::parent`].
+    pub(crate) fn derive_marks(&mut self) {
+        let unset = |s: &Style| *s == Style::new();
+        if unset(&self.styles[StyleKey::Highlight as usize]) {
+            self.styles[StyleKey::Highlight as usize] =
+                Style::new().add_modifier(Modifier::REVERSED);
+        }
+        if unset(&self.styles[StyleKey::Tag as usize]) {
+            self.styles[StyleKey::Tag as usize] = self.styles[StyleKey::CodeInline as usize];
+        }
+    }
+
+    /// A key's style on top of its parent's, theirs on top of theirs, and so on to the document
+    /// style.
     pub fn style(&self, key: StyleKey) -> Style {
-        let base = self.styles[StyleKey::Text as usize];
         let base = match key.parent() {
-            Some(parent) => base.patch(self.styles[parent as usize]),
-            None => base,
+            Some(parent) => self.style(parent),
+            None => self.styles[StyleKey::Text as usize],
         };
         base.patch(self.styles[key as usize])
     }
@@ -487,6 +598,8 @@ impl Theme {
             (InlineStyle::EMPH, StyleKey::Emph),
             (InlineStyle::STRONG, StyleKey::Strong),
             (InlineStyle::STRIKE, StyleKey::Strike),
+            (InlineStyle::HIGHLIGHT, StyleKey::Highlight),
+            (InlineStyle::TAG, StyleKey::Tag),
             (InlineStyle::STATIC, StyleKey::DiagramStatic),
             (InlineStyle::ABSTRACT, StyleKey::DiagramAbstract),
         ] {
@@ -708,6 +821,44 @@ mod tests {
         let ansi = "[block]\ncode = { bg = \"black\" }\n[syntax]\n\"markup.inserted\" = { fg = \"green\" }\n";
         let theme = load_str("ansi", ansi, &mut Vec::new(), 0).unwrap();
         assert_eq!(theme.tint(Tint::Inserted), Style::new());
+    }
+
+    /// A theme that predates `==highlights==` and `#tags` still sets them apart from the text:
+    /// the highlight reversed, the tag as inline code; one that sets them, or extends one that
+    /// does, keeps its own.
+    #[test]
+    fn highlights_and_tags_show_in_a_theme_without_them() {
+        let old = "[inline]\ncode = { fg = \"#ff0000\", bg = \"#202020\" }\n";
+        let theme = load_str("old", old, &mut Vec::new(), 0).unwrap();
+        let text = theme.span_style(StyleKey::Text, InlineStyle::NONE, false);
+        let marked = theme.span_style(StyleKey::Text, InlineStyle::HIGHLIGHT, false);
+        assert!(
+            marked.add_modifier.contains(Modifier::REVERSED),
+            "{marked:?}"
+        );
+        let tag = theme.span_style(StyleKey::Text, InlineStyle::TAG, false);
+        assert_ne!(tag, text);
+        assert_eq!(tag.bg, Some(Color::rgb(0x20, 0x20, 0x20)));
+        for designed in Theme::builtins() {
+            let h = designed.styles[StyleKey::Highlight as usize];
+            assert!(
+                !h.add_modifier.contains(Modifier::REVERSED),
+                "{}",
+                designed.name
+            );
+        }
+        let extends = "extends = \"gruvbox-dark\"\n";
+        let theme = load_str("extends", extends, &mut Vec::new(), 0).unwrap();
+        let (_, own) = BUILTIN.iter().find(|(n, _)| *n == "gruvbox-dark").unwrap();
+        let gruvbox = load_str("gruvbox-dark", own, &mut Vec::new(), 0).unwrap();
+        assert_eq!(
+            theme.styles[StyleKey::Tag as usize],
+            gruvbox.styles[StyleKey::Tag as usize]
+        );
+        assert_ne!(
+            gruvbox.styles[StyleKey::Tag as usize],
+            gruvbox.styles[StyleKey::CodeInline as usize]
+        );
     }
 
     /// The settings popup's slots, in every built-in with and without its background: values

@@ -74,6 +74,9 @@ pub struct Outline {
     pub light: bool,
 }
 
+/// The [`OutlineEntry::id`] of a note's title from its properties, which has no anchor.
+pub const TITLE: u32 = u32::MAX;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutlineEntry<'a> {
     /// The heading's anchor, the link, the theme's index, how to sort a table (see
@@ -379,13 +382,15 @@ impl State {
         let m = search.matches.get(search.current? as usize)?;
         let doc = self.doc.as_ref()?;
         let map = doc.search_map.as_ref()?;
-        let UnitKind::Hidden { owner } = map.units.get(m.unit as usize)?.kind else {
-            return None;
-        };
-        let kind = match doc.doc.links.get(owner as usize)?.kind {
-            LinkKind::Image => "image",
-            LinkKind::Wiki { .. } => "wiki",
-            _ => "link",
+        let kind = match map.units.get(m.unit as usize)?.kind {
+            UnitKind::Hidden { owner } => match doc.doc.links.get(owner as usize)?.kind {
+                LinkKind::Image => "image",
+                LinkKind::Wiki { .. } => "wiki",
+                _ => "link",
+            },
+            // typeset math's TeX (OBS-003)
+            UnitKind::Behind { .. } => "tex",
+            UnitKind::Visible => return None,
         };
         Some((
             kind,
@@ -452,11 +457,18 @@ impl State {
                     })
                     .collect()
             }
-            (Listing::Headings, Some(doc)) => doc
-                .layout
-                .headings
-                .iter()
-                .filter_map(|h| {
+            // a note without an H1 is headed by its properties' title (ADR-46), at the top
+            (Listing::Headings, Some(doc)) => (doc.doc.title())
+                .map(|title| OutlineEntry {
+                    id: TITLE,
+                    level: 1,
+                    row: 0,
+                    text: Cow::Borrowed(title),
+                    dest: None,
+                    broken: false,
+                })
+                .into_iter()
+                .chain(doc.layout.headings.iter().filter_map(|h| {
                     Some(OutlineEntry {
                         id: h.anchor,
                         level: h.level,
@@ -465,7 +477,7 @@ impl State {
                         dest: None,
                         broken: false,
                     })
-                })
+                }))
                 .collect(),
             (Listing::Links, Some(doc)) => link_entries(doc),
             (Listing::Columns(None), Some(_)) => Vec::new(),
