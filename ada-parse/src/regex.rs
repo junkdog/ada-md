@@ -6,7 +6,7 @@
 //! The kinds carry the scopes of bat's `Regular Expressions (Javascript)` (anchors, back
 //! references, quantifiers, groups and assertions, character classes and their sets, escapes),
 //! with a few of its own for what JavaScript lacks (inline options, atomic groups, `\Q…\E`).
-//! Ten dialects ([`Dialect`]):
+//! Eleven dialects ([`Dialect`]):
 //! - **Java's** (`java.util.regex`, Kotlin's too) adds possessive quantifiers, `(?>…)`,
 //!   `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
 //!   `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
@@ -33,6 +33,12 @@
 //!   in a class a character, `\k<name>` and `\g<name>` (with `'…'`, numbers and levels),
 //!   `\h\H` (hex digits), `\R\X\K`, `\A\G\Z\z`, `\p{^Alpha}` (braces only), Ruby's
 //!   escapes (`\xH`, `\u{H H}`, `\cX`, `\C-x`, `\M-x`, octal); no `\Q…\E`.
+//! - **Perl's** (its `m//`, `qr//`, `s///`, X-170): Ruby's reading where Onigmo follows Perl
+//!   (`(?'name'`, `(?#…)`, `(?(cond)…)`, `[:alpha:]`, `]` first a character, `\p{^L}`), with
+//!   Perl's own: `\Q…\E`, `\pL`, `\g{N}`, `\g{-1}`, `\gN`, `\k{name}`, `(?&name)`, `(?R)`,
+//!   `(?1)`, `(?P<name>`, `(?P=name)`, `(?P>name)`, `(?|…)`, `(?^…)`, `(*VERB)`, its flags
+//!   (`adlupimnsx`), `\v` and `\N` classes, `\x{…}`, `\o{…}`, `\N{…}`; no nested class and no
+//!   absent operator.
 //! - **Python's** (`re`, 3.11 on): `(?P<name>…)` and `(?P=name)`, `(?#…)` comments, `(?(1)…)` and
 //!   `(?(name)…)` conditionals, `(?>…)` and possessive quantifiers, `(?aiLmsux-imsx)` and
 //!   `(?aiLmsux-imsx:…)`, `]` first in a class a character; no nested class, no `\p`, no `\Q…\E`.
@@ -119,6 +125,8 @@ pub(crate) enum Dialect {
     Bre,
     /// Python's `re`.
     Python,
+    /// Perl's.
+    Perl,
 }
 
 macro_rules! leaves {
@@ -378,6 +386,15 @@ impl Scan<'_, '_, '_, '_> {
         self.host.dialect == Dialect::Python
     }
 
+    fn perl(&self) -> bool {
+        self.host.dialect == Dialect::Perl
+    }
+
+    /// Ruby's or Perl's: what Onigmo took from Perl.
+    fn onig(&self) -> bool {
+        matches!(self.host.dialect, Dialect::Ruby | Dialect::Perl)
+    }
+
     /// POSIX's, extended or basic.
     fn posix(&self) -> bool {
         matches!(self.host.dialect, Dialect::Ere | Dialect::Bre)
@@ -403,7 +420,12 @@ impl Scan<'_, '_, '_, '_> {
     fn possessive(&self) -> bool {
         matches!(
             self.host.dialect,
-            Dialect::Java | Dialect::Ecma | Dialect::Swift | Dialect::Ruby | Dialect::Python
+            Dialect::Java
+                | Dialect::Ecma
+                | Dialect::Swift
+                | Dialect::Ruby
+                | Dialect::Python
+                | Dialect::Perl
         )
     }
 
@@ -582,7 +604,17 @@ impl Scan<'_, '_, '_, '_> {
                 s.st += 1;
             }
         };
+        if self.perl()
+            && let Some(r) = self.perl_verb(p, e)
+        {
+            return r;
+        }
         if let Some(q) = self.is(e, b'?').filter(|_| !self.posix()) {
+            if self.perl()
+                && let Some(r) = self.perl_group(p, e, q)
+            {
+                return r;
+            }
             let next = self.unit(q).filter(|u| !u.host).map(|u| u.c);
             let assertion = match next {
                 Some(b'=') => Some((q + 1, L::LookAhead)),
@@ -605,7 +637,7 @@ impl Scan<'_, '_, '_, '_> {
                     open(self);
                     return self.tok(e, q + 1, L::NoCapture);
                 }
-                Some(b'>') if self.javaish() || self.dotnet() || self.ruby() || self.python() => {
+                Some(b'>') if self.javaish() || self.dotnet() || self.onig() || self.python() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     return self.tok(e, q + 1, L::Atomic);
@@ -624,7 +656,7 @@ impl Scan<'_, '_, '_, '_> {
                     // `(?<name>`, and RE2's, Rust's, Swift's and Python's `(?P<name>`
                     let lt = if next == Some(b'P') {
                         self.is(q, b'P')
-                            .filter(|_| self.re2() || self.swift() || self.python())
+                            .filter(|_| self.re2() || self.swift() || self.python() || self.perl())
                     } else {
                         Some(q)
                     };
@@ -640,8 +672,8 @@ impl Scan<'_, '_, '_, '_> {
                         }
                     }
                 }
-                // Ruby's `(?'name'`
-                Some(b'\'') if self.ruby() => {
+                // Ruby's and Perl's `(?'name'`
+                Some(b'\'') if self.onig() => {
                     if let Some(s) = self.is(q, b'\'')
                         && let Some(r) = self.named(p, e, q, s, b'\'')
                     {
@@ -654,10 +686,11 @@ impl Scan<'_, '_, '_, '_> {
                     open(self);
                     return self.tok(e, q + 1, L::Absent);
                 }
-                // Ruby's `(?#…)`
-                Some(b'#') if self.ruby() => return self.net_comment(p, q),
-                // Ruby's `(?(1)`, `(?(<name>)`, `(?('name')`; else `(?(`, a condition
-                Some(b'(') if self.ruby() => {
+                // Ruby's and Perl's `(?#…)`
+                Some(b'#') if self.onig() => return self.net_comment(p, q),
+                // Ruby's and Perl's `(?(1)`, `(?(<name>)`, `(?('name')`, Perl's `(?(DEFINE)`,
+                // `(?(R1)`; else `(?(`, a condition
+                Some(b'(') if self.onig() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     if let Some(r) = self.is(q, b'(') {
@@ -721,6 +754,7 @@ impl Scan<'_, '_, '_, '_> {
                         Dialect::Swift => b"iJmnsUxwDPSWy",
                         Dialect::Ruby => b"imxadu",
                         Dialect::Python => b"aiLmsux",
+                        Dialect::Perl => b"adlupimnsx",
                         _ => b"idmsuxU",
                     };
                     let flag = |c: u8| flags.contains(&c);
@@ -781,7 +815,7 @@ impl Scan<'_, '_, '_, '_> {
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
             ),
-            Dialect::Swift | Dialect::Ruby | Dialect::Python => (
+            Dialect::Swift | Dialect::Ruby | Dialect::Python | Dialect::Perl => (
                 |c| c.is_ascii_alphabetic() || matches!(c, b'_' | 0x80..),
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
             ),
@@ -859,7 +893,7 @@ impl Scan<'_, '_, '_, '_> {
         // character
         match self
             .is(e, b']')
-            .filter(|_| self.re2() || self.netish() || self.ruby() || self.posix() || self.python())
+            .filter(|_| self.re2() || self.netish() || self.onig() || self.posix() || self.python())
         {
             Some(n) => n,
             None => e,
@@ -895,7 +929,7 @@ impl Scan<'_, '_, '_, '_> {
                 }
                 r
             }
-            b'[' if (self.re2() || self.swift() || self.ruby())
+            b'[' if (self.re2() || self.swift() || self.onig())
                 && let Some(q) = self.is(e, b':').and_then(|c| self.posix_class(c)) =>
             {
                 self.tok(p, q, L::PosixClass)
@@ -959,10 +993,12 @@ impl Scan<'_, '_, '_, '_> {
             if !v.host && v.c == b'\\' && !s.posix() {
                 let Some(w) = s.unit(v.end) else {
                     // ECMAScript: a `\` at the line's end is a character
-                    return (!s.javaish() && !s.ruby()).then_some((v.end, None));
+                    return (!s.javaish() && !s.onig()).then_some((v.end, None));
                 };
                 let classes: &[u8] = if s.javaish() {
                     b"wWsSdDhHvV"
+                } else if s.perl() {
+                    b"wWsSdDhHvVN"
                 } else if s.ruby() {
                     b"wWsSdDhH"
                 } else {
@@ -973,6 +1009,8 @@ impl Scan<'_, '_, '_, '_> {
                 }
                 let e = if w.host {
                     w.end
+                } else if s.perl() {
+                    s.perl_escape(v.end, w.c, w.end)
                 } else if s.ruby() {
                     s.ruby_escape(v.end, w.c, w.end)
                 } else if s.python() {
@@ -1061,6 +1099,9 @@ impl Scan<'_, '_, '_, '_> {
         }
         if self.dotnet() {
             return self.backslash_net(p, e);
+        }
+        if self.perl() {
+            return self.backslash_perl(p, e);
         }
         if self.ruby() {
             return self.backslash_ruby(p, e);
@@ -1549,6 +1590,201 @@ impl Scan<'_, '_, '_, '_> {
         }
     }
 
+    /// Perl's escape at `p` to `e` (its `\`): anchors (`\b{wb}` too), back references
+    /// (`\1`, `\g{-1}`, `\g2`, `\k<name>`, `\k'name'`, `\k{name}`), class escapes, `\Q…\E`,
+    /// properties, Perl's escapes.
+    fn backslash_perl(&mut self, p: usize, e: usize) -> usize {
+        let Some(u) = self.unit(e) else {
+            return self.tok(p, e, L::Escape);
+        };
+        if u.host {
+            return self.tok(p, u.end, L::Escape);
+        }
+        let n = u.end;
+        let in_set = self.st & SET != 0;
+        match u.c {
+            b'b' | b'B' if !in_set && self.b.get(n) == Some(&b'{') => {
+                // `\b{wb}`
+                match self
+                    .is(n, b'{')
+                    .and_then(|o| self.group_name(o))
+                    .and_then(|t| self.is(t, b'}'))
+                {
+                    Some(c) => self.tok(p, c, L::Anchor),
+                    None => self.tok(p, n, L::Anchor),
+                }
+            }
+            b'b' | b'B' | b'A' | b'G' | b'Z' | b'z' | b'K' if !in_set => self.tok(p, n, L::Anchor),
+            b'1'..=b'9' if !in_set => {
+                let mut q = n;
+                while q < self.b.len() && self.b[q].is_ascii_digit() {
+                    q += 1;
+                }
+                self.tok(p, q, L::BackReference)
+            }
+            b'g' if !in_set => {
+                // `\g{N}`, `\g{-N}`, `\g{name}`, `\gN`, `\g-N`
+                let (s, close) = match self.is(n, b'{') {
+                    Some(o) => (o, true),
+                    None => (n, false),
+                };
+                let d = s + usize::from(self.b.get(s) == Some(&b'-'));
+                let mut t = d;
+                while t < self.b.len() && self.b[t].is_ascii_digit() && !self.host_stop(t) {
+                    t += 1;
+                }
+                if t == d && close {
+                    t = self.group_name(d).unwrap_or(d);
+                }
+                if t > d {
+                    if !close {
+                        return self.tok(p, t, L::BackReference);
+                    }
+                    if let Some(c) = self.is(t, b'}') {
+                        self.tok(p, n, L::BackReference);
+                        self.tok(n, s, L::NamedBegin);
+                        self.tok(s, t, L::BackReferenceName);
+                        return self.tok(t, c, L::NamedEnd);
+                    }
+                }
+                self.tok(p, n, L::Escape)
+            }
+            b'k' if !in_set => {
+                let close = match self.unit(n).filter(|v| !v.host).map(|v| v.c) {
+                    Some(b'<') => b'>',
+                    Some(b'\'') => b'\'',
+                    Some(b'{') => b'}',
+                    _ => return self.tok(p, n, L::Escape),
+                };
+                if let Some(t) = self.group_name(n + 1)
+                    && let Some(g) = self.is(t, close)
+                {
+                    self.tok(p, n, L::BackReference);
+                    self.tok(n, n + 1, L::NamedBegin);
+                    self.tok(n + 1, t, L::BackReferenceName);
+                    return self.tok(t, g, L::NamedEnd);
+                }
+                self.tok(p, n, L::Escape)
+            }
+            b'w' | b'W' | b's' | b'S' | b'd' | b'D' | b'h' | b'H' | b'v' | b'V' => {
+                self.tok(p, n, L::ClassEscape)
+            }
+            b'N' if self.b.get(n) != Some(&b'{') => self.tok(p, n, L::ClassEscape),
+            b'R' | b'X' if !in_set => self.tok(p, n, L::ClassEscape),
+            b'p' | b'P' => self.property(p, n),
+            b'Q' => {
+                self.st |= QUOTE;
+                self.tok(p, n, L::Escape)
+            }
+            c => {
+                let q = self.perl_escape(e, c, n);
+                self.tok(p, q, L::Escape)
+            }
+        }
+    }
+
+    /// Where Perl's escape ends, its character `c` at `e` to `n`: `\x{…}`, `\xHH`, `\o{…}`,
+    /// `\N{…}`, up to three octal digits, `\cX` take more.
+    fn perl_escape(&self, e: usize, c: u8, n: usize) -> usize {
+        let b = self.b;
+        let hex = |q: usize| q < b.len() && b[q].is_ascii_hexdigit();
+        match c {
+            b'x' | b'o' | b'N' if b.get(n) == Some(&b'{') => {
+                let mut q = n + 1;
+                while q < b.len() && b[q] != b'}' && !self.host_stop(q) {
+                    q += 1;
+                }
+                if b.get(q) == Some(&b'}') { q + 1 } else { n }
+            }
+            b'x' if hex(n) => n + 1 + usize::from(hex(n + 1)),
+            b'0'..=b'7' => {
+                let mut q = n;
+                while q < e + 3 && q < b.len() && matches!(b[q], b'0'..=b'7') {
+                    q += 1;
+                }
+                q
+            }
+            b'c' => (n + b.get(n).map_or(0, |&d| char_len(d))).min(b.len()),
+            _ => n,
+        }
+    }
+
+    /// Perl's groups past what Onigmo has, `(` at `p` to `e`, its `?` to `q`: a recursion
+    /// (`(?&name)`, `(?P>name)`, `(?R)`, `(?1)`, `(?-1)`, `(?+1)`), a reference (`(?P=name)`),
+    /// a branch reset (`(?|`), caret flags (`(?^i:`, `(?^)`). Where it ends, if it's one.
+    fn perl_group(&mut self, p: usize, e: usize, q: usize) -> Option<usize> {
+        let next = self.unit(q).filter(|u| !u.host).map(|u| u.c)?;
+        let reference = |s: &mut Self, name_at: usize, t: usize| -> Option<usize> {
+            let c = s.is(t, b')')?;
+            s.tok(p, name_at, L::BackReference);
+            s.tok(name_at, t, L::BackReferenceName);
+            Some(s.tok(t, c, L::BackReference))
+        };
+        match next {
+            b'&' => {
+                let t = self.group_name(q + 1)?;
+                reference(self, q + 1, t)
+            }
+            b'P' if matches!(self.b.get(q + 1), Some(b'>' | b'=')) => {
+                let t = self.group_name(q + 2)?;
+                reference(self, q + 2, t)
+            }
+            b'R' | b'0'..=b'9' | b'-' | b'+' => {
+                let mut t = q + 1;
+                if next != b'R' {
+                    while t < self.b.len() && self.b[t].is_ascii_digit() {
+                        t += 1;
+                    }
+                    if matches!(next, b'-' | b'+') && t == q + 1 {
+                        return None;
+                    }
+                }
+                reference(self, q, t)
+            }
+            b'|' => {
+                self.tok(p, e, L::GroupBegin);
+                if self.st & DEPTH < DEPTH {
+                    self.st += 1;
+                }
+                Some(self.tok(e, q + 1, L::NoCapture))
+            }
+            b'^' => {
+                let mut t = q + 1;
+                while t < self.b.len() && b"adlupimnsx".contains(&self.b[t]) {
+                    t += 1;
+                }
+                if let Some(c) = self.is(t, b')') {
+                    self.tok(p, e, L::GroupBegin);
+                    self.tok(e, t, L::Options);
+                    return Some(self.tok(t, c, L::GroupEnd));
+                }
+                let c = self.is(t, b':')?;
+                self.tok(p, e, L::GroupBegin);
+                if self.st & DEPTH < DEPTH {
+                    self.st += 1;
+                }
+                self.tok(e, t, L::Options);
+                Some(self.tok(t, c, L::NoCapture))
+            }
+            _ => None,
+        }
+    }
+
+    /// Perl's backtracking verb, `(` at `p` to `e` before `*` and a capital: `(*FAIL)`,
+    /// `(*SKIP)`, `(*MARK:name)`. Where it ends, if it's one.
+    fn perl_verb(&mut self, p: usize, e: usize) -> Option<usize> {
+        let s = self.is(e, b'*')?;
+        if !self.b.get(s).is_some_and(u8::is_ascii_uppercase) {
+            return None;
+        }
+        let mut t = s;
+        while t < self.b.len() && self.b[t] != b')' && !self.host_stop(t) {
+            t += 1;
+        }
+        let c = self.is(t, b')')?;
+        Some(self.tok(p, c, L::Anchor))
+    }
+
     /// The character a `\cX`, `\C-X` or `\M-X` applies to, from `q`: one character, or an
     /// escape of these again (`\M-\C-x`), or `\\`. Where it ends.
     fn control_end(&self, q: usize) -> usize {
@@ -1656,7 +1892,7 @@ impl Scan<'_, '_, '_, '_> {
             // RE2's, Swift's and Ruby's `\p{^Greek}`
             let neg = self
                 .is(o, b'^')
-                .filter(|_| self.re2() || self.swift() || self.ruby());
+                .filter(|_| self.re2() || self.swift() || self.onig());
             let k0 = neg.unwrap_or(o);
             let k = name(self, k0);
             if k > k0 {
@@ -1733,6 +1969,49 @@ mod tests {
     }
 
     /// `text`'s tokens as a regex of `dialect` in a cooked (or raw) string, `(text, scopes)`.
+    /// Perl's dialect (X-170): Onigmo's reading where it follows Perl, Perl's own groups,
+    /// references and escapes, `\Q…\E`, no nested class.
+    #[test]
+    fn perl_dialect() {
+        let t = lex_in(
+            r"(?<STR_PAT>a)(?&STR_PAT)(?(DEFINE)x)(?|a|b)(?^i:c)(*FAIL)\g{-1}\g2\k{STR_PAT}\Q.*\E[[a]\pL\x{263A}(?#note)(?1)\b{wb}\N",
+            false,
+            Dialect::Perl,
+        );
+        has(&t, "STR_PAT", "entity.name.other.group.regexp");
+        has(&t, "STR_PAT", "variable.other.group.regexp");
+        has(&t, "DEFINE", "variable.other.group.regexp");
+        has(&t, "?|", "punctuation.definition.group.no-capture.regexp");
+        has(&t, "?^i", "keyword.other.option-toggle.regexp");
+        has(&t, "(*FAIL)", "keyword.control.anchor.regexp");
+        has(&t, "-1", "variable.other.group.regexp");
+        has(&t, r"\g2", "keyword.other.back-reference.regexp");
+        has(&t, r"\Q", "constant.character.escape.backslash.regexp");
+        has(
+            &t,
+            "[",
+            "constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp",
+        );
+        has(
+            &t,
+            r"\p",
+            "constant.other.character-class.escape.unicode-property.regexp",
+        );
+        has(&t, "L", "support.constant.unicode-property.regexp");
+        has(
+            &t,
+            r"\x{263A}",
+            "constant.character.escape.backslash.regexp",
+        );
+        has(&t, "note", "comment.block.regexp");
+        has(&t, r"\b{wb}", "keyword.control.anchor.regexp");
+        has(
+            &t,
+            r"\N",
+            "constant.other.character-class.escape.backslash.regexp",
+        );
+    }
+
     fn lex_in(text: &str, cooked: bool, dialect: Dialect) -> Vec<(&str, String)> {
         // a Java string's end and escapes; a JavaScript literal's `/`
         let java = dialect == Dialect::Java;

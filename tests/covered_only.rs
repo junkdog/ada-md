@@ -345,7 +345,7 @@ fn covered_languages_highlight_and_the_others_are_named() {
     let syntax = highlight::SyntaxTheme::new(&Theme::builtin().syntax);
     for (name, file, first) in [
         ("Erlang", "x.erl", None),
-        ("Perl", "x.pl", Some("#!/usr/bin/perl -w")),
+        ("Julia", "x.jl", Some("#!/usr/bin/env julia")),
         ("Crystal", "x.cr", Some("#!/usr/bin/env crystal")),
         ("Git Log", "x.gitlog", Some("commit 0123456789abcdef")),
     ] {

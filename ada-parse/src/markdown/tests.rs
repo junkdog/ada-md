@@ -1,9 +1,6 @@
 //! Markdown's scanner (X-189): its readings, a fence's language on the run path and the state
 //! it carries, the span and run paths leaving the same state, and linear time on long lines.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use super::*;
 use crate::tests::marked;
 
@@ -20,86 +17,9 @@ fn with(lines: &[&'static str], leaf: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// A theme that keeps every language's kinds apart, its guests' too: each kind its own rule,
-/// named by its language and kind.
-struct Rec {
-    lang: Lang,
-    table: Vec<Rule>,
-    names: Rc<RefCell<Vec<(Lang, u16)>>>,
-    guests: Vec<Rec>,
-}
-
-impl Rec {
-    fn new(lang: Lang, names: Rc<RefCell<Vec<(Lang, u16)>>>) -> Self {
-        Rec {
-            lang,
-            table: Vec::new(),
-            names,
-            guests: Vec::new(),
-        }
-    }
-}
-
-impl Rules for Rec {
-    fn table(&self) -> &[Rule] {
-        &self.table
-    }
-
-    fn resolve(&mut self, kind: u16) -> Rule {
-        let mut names = self.names.borrow_mut();
-        let id = names.len() as u16;
-        names.push((self.lang, kind));
-        let k = usize::from(kind);
-        if k >= self.table.len() {
-            self.table.resize(k + 1, Rule(Rule::UNSET));
-        }
-        self.table[k] = Rule(id);
-        Rule(id)
-    }
-
-    fn guest(&mut self, lang: Lang, f: &mut dyn FnMut(&mut dyn Rules)) -> bool {
-        let i = match self.guests.iter().position(|g| g.lang == lang) {
-            Some(i) => i,
-            None => {
-                self.guests.push(Rec::new(lang, Rc::clone(&self.names)));
-                self.guests.len() - 1
-            }
-        };
-        f(&mut self.guests[i]);
-        true
-    }
-}
-
-/// `lines` on the run path with a theme that keeps guests: each colored run's text, its
-/// language and its scopes' last. The span path is run beside it, and must leave the same state.
+/// `lines` on the run path with a theme that keeps guests ([`crate::tests::guest_runs`]).
 fn runs(lines: &[&str]) -> Vec<(String, Lang, String)> {
-    let names = Rc::new(RefCell::new(Vec::new()));
-    let mut rec = Rec::new(Lang::Markdown, Rc::clone(&names));
-    let (mut st, mut st2) = (State::default(), State::default());
-    let (mut spans, mut runs) = (Vec::new(), Vec::new());
-    let mut out = Vec::new();
-    for l in lines {
-        runs.clear();
-        crate::lex_runs(Lang::Markdown, l, &mut st, &mut spans, &mut rec, &mut runs);
-        crate::lex(Lang::Markdown, l, &mut st2, &mut spans);
-        assert_eq!(st, st2, "{l:?}: the run and span paths' states");
-        let mut at = 0;
-        for r in &runs {
-            let e = r.end as usize;
-            assert!(e > at && e <= l.len(), "{l:?}: {runs:?}");
-            if r.rule.0 != Rule::NONE {
-                let (lang, kind) = names.borrow()[usize::from(r.rule.0)];
-                let scopes = lang.scopes(kind);
-                let leaf = scopes
-                    .last()
-                    .and_then(|s| s.rsplit(' ').next())
-                    .unwrap_or("");
-                out.push((l[at..e].to_owned(), lang, leaf.to_owned()));
-            }
-            at = e;
-        }
-    }
-    out
+    crate::tests::guest_runs(Lang::Markdown, lines)
 }
 
 #[test]

@@ -52,7 +52,7 @@ cargo run -p ada-parse --example incremental
 - **Code:** assembly (x86 and x86-64, ARM, RISC-V, MIPS, Z80, 6502, 68k), bash, C, C++, C#,
   Clojure, CSS, SCSS, Dart, Elixir, Go, Groovy, Haskell (and literate), HTML, Java, JavaScript,
   Kotlin, Lisp (Common Lisp, Emacs Lisp, Scheme, Racket), Lua, Nix, Objective-C, Objective-C++,
-  PHP, PowerShell, Python, Ruby, Rust, Scala, SQL, Swift, TypeScript, TSX.
+  Perl, PHP, PowerShell, Python, Ruby, Rust, Scala, SQL, Swift, TypeScript, TSX.
 - **Config and data:** CMake (and its cache, and `configure_file` templates), crontab, diff,
   Dockerfile, `.env`, fstab, Git's own files (config, ignore, attributes, mailmap, link), INI, Java
   properties, JSON, logs, Makefile, nginx, OpenSSH's `ssh_config`, `sshd_config` and

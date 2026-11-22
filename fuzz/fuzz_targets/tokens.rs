@@ -33,8 +33,9 @@ use libfuzzer_sys::fuzz_target;
 /// Ruby's X-100; Terraform's X-102; Scala's X-137; Haskell's and Literate Haskell's X-136;
 /// Groovy's X-135; Elixir's X-138; CSS's X-125; Nix's X-103; Diff's X-163; x86's and ARM's
 /// assembly X-171; RISC-V's, MIPS's, Z80's and 6502's X-181; 68k's X-183; Dart's X-169; man pages'
-/// X-188; markdown's X-189, its fences' code on rules that keep guests checked too: [`Guests`]).
-const RUN_SCANS: [Lang; 64] = [
+/// X-188; markdown's X-189, its fences' code on rules that keep guests checked too: [`Guests`];
+/// Perl's X-170).
+const RUN_SCANS: [Lang; 65] = [
     Lang::Bash,
     Lang::Makefile,
     Lang::Scss,
@@ -56,6 +57,7 @@ const RUN_SCANS: [Lang; 64] = [
     Lang::Scala,
     Lang::Groovy,
     Lang::Dart,
+    Lang::Perl,
     Lang::Elixir,
     Lang::Haskell,
     Lang::LiterateHaskell,
@@ -131,7 +133,8 @@ impl Rules for Lazy {
 }
 
 /// [`Lazy`] with every guest language's kinds on a table of its own (X-189: a markdown fence's
-/// code on its language's scanner, written on the host's runs).
+/// code on its language's scanner, written on the host's runs; X-191: Perl's here-documents and
+/// POD regions in HTML, CSS, JavaScript, JSON or XML, written among Perl's own lexemes).
 struct Guests(Lazy, Vec<(Lang, Lazy)>);
 
 impl Rules for Guests {
@@ -226,7 +229,7 @@ fuzz_target!(|data: &[u8]| {
     let mut guested: Vec<_> = on
         .iter()
         .copied()
-        .filter(|&l| l == Lang::Markdown)
+        .filter(|&l| matches!(l, Lang::Markdown | Lang::Perl))
         .map(|l| {
             (
                 l,

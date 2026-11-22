@@ -558,6 +558,82 @@ fn dart() {
     readings("dart", Lang::Dart, text);
 }
 
+/// Perl's readings (X-170, a scanner of ada's own): a hashbang, `use` statements (versions,
+/// import lists, `use constant` across lines), a package with a version and a block, subs with
+/// signatures, a prototype and attributes, `/` as a divide and a regex by what came before, `//`,
+/// quote-like operators on any delimiter (nesting brackets, across lines, `s{…}{…}` with a
+/// comment between, `tr`, flags, `s///e`'s code), interpolation in strings (subscripts, `->`
+/// chains, `${…}`, `@{[…]}`, `$@`), placeholders, here-documents (`<<~`, two on a line, a
+/// quoted label, SQL's and HTML's), SQL in DBI's calls, regexes in Perl's dialect with `/x`
+/// comments, special variables, dereferences and postfix ones, labels, `format`, POD with
+/// formatting codes across lines, `__END__`'s text. The departures from bat's grammar are
+/// pinned in ada-parse's `perl` tests.
+#[test]
+fn perl() {
+    let text = concat!(
+        "#!/usr/bin/env perl\n",
+        "use strict;\n",
+        "use v5.36;\n",
+        "use List::Util qw(first max);\n",
+        "use constant {\n",
+        "    PI   => 4 * atan2(1, 1),\n",
+        "    DEBUG => $ENV{DEBUG} // 0,\n",
+        "};\n",
+        "package My::Shape 1.02 {\n",
+        "    sub new ($class, %args) { return bless { %args }, $class }\n",
+        "    sub area :lvalue ($self) { $self->{w} * $self->{h} / 2 }\n",
+        "    sub legacy($$;@) { my ($a, $b, @rest) = @_; $a <=> $b }\n",
+        "}\n",
+        "my @lines = grep { !/^\\s*#/ } <STDIN>;\n",
+        "my $half = PI / 2; my $n = shift // 10; $n /= 2;\n",
+        "my %h = (q => 1, s => 2, y => 3); $h{s}{y} = $h{q} + 1;\n",
+        "my @w = qw(alpha beta\n",
+        "           gamma);\n",
+        "(my $t = $s) =~ s{(\\d+)}  # the digits\n",
+        "    {$1 * 2}ge;\n",
+        "$t =~ tr/a-z/A-Z/; my $c = $t =~ y/A//;\n",
+        "my $re = qr{\n",
+        "    ^ (?<name> [A-Za-z_]\\w* )   # a name\n",
+        "    \\s* = \\s* (\\S+) $\n",
+        "}x;\n",
+        "printf \"%-10s %5.2f %%\\n\", $name, $value;\n",
+        "print \"Hi $user->{name}, item $items[0] of @{[ scalar @items ]}: ${\\ $obj->count } $@\\n\";\n",
+        "print 'It\\'s literal $not \\n', \"\\x{263A}\\N{U+263A}\\t\\e\";\n",
+        "print <<~EOT, <<'RAW';\n",
+        "    Dear $name,\n",
+        "    EOT\n",
+        "No $interpolation here\n",
+        "RAW\n",
+        "my $sth = $dbh->prepare(\"SELECT id, name FROM users WHERE age > ?\");\n",
+        "$dbh->do(<<SQL);\n",
+        "UPDATE users SET seen = NOW() -- touch\n",
+        "SQL\n",
+        "my $html = <<HTML;\n",
+        "<p>$name</p>\n",
+        "HTML\n",
+        "my @l = $r->@*; my $last = $#{$r}; local $_ = ${^MATCH}; our @ISA = ('Base');\n",
+        "LINE: while (my $line = <$fh>) { next LINE if $line =~ m#^\\##; last }\n",
+        "open(my $fh, '<', $file) or die \"Can't open $file: $!\";\n",
+        "print STDERR -e $file ? 'yes' : 'no', \"\\n\" if defined &main::foo;\n",
+        "format STDOUT =\n",
+        "@<<<<<<< @>>>>>\n",
+        "$name,   $value\n",
+        ".\n",
+        "=head1 NAME\n",
+        "\n",
+        "My::Shape - B<shapes> with C<< $s->area >> and I<a wrapped\n",
+        "code> E<gt> L<perlpod>\n",
+        "\n",
+        "    verbatim B<code>\n",
+        "\n",
+        "=cut\n",
+        "1;\n",
+        "__END__\n",
+        "data, not code: / ' \"\n",
+    );
+    readings("perl", Lang::Perl, text);
+}
+
 /// Elixir's readings (X-138, a scanner of ada's own): a hashbang, a module's head, `@moduledoc`
 /// and `@doc` (a heredoc, a `~S` one, a string, `false`), attributes, `use`/`import`/`alias`,
 /// function heads with guards, defaults and `do:`, a head across lines, a protocol's head without

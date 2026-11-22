@@ -1,0 +1,678 @@
+# Perl: ada-parse/tests/readings.rs, perl
+   1 | #!/usr/bin/env perl
+       "#" comment.line.number-sign.perl punctuation.definition.comment.perl
+       "!/usr/bin/env perl" comment.line.number-sign.perl
+   2 | use strict;
+       "use" keyword.control.import.use.perl
+       " " meta.preprocessor.use.perl
+       "strict" meta.preprocessor.use.perl entity.name.namespace.perl
+       ";" punctuation.terminator.statement.perl
+   3 | use v5.36;
+       "use" keyword.control.import.use.perl
+       " " meta.preprocessor.use.perl
+       "v" constant.numeric.version.perl punctuation.definition.version.perl
+       "5" constant.numeric.version.perl
+       "." constant.numeric.version.perl punctuation.separator.decimal.perl
+       "36" constant.numeric.version.perl
+       ";" punctuation.terminator.statement.perl
+   4 | use List::Util qw(first max);
+       "use" keyword.control.import.use.perl
+       " " meta.preprocessor.use.perl
+       "List" meta.preprocessor.use.perl entity.name.namespace.perl
+       "::" punctuation.accessor.double-colon.perl
+       "Util" meta.preprocessor.use.perl entity.name.namespace.perl
+       " " meta.preprocessor.use.perl
+       "qw" support.function.perl
+       "(" punctuation.section.parens.begin.perl
+       "first max" string.unquoted.perl
+       ")" punctuation.section.parens.end.perl
+       ";" punctuation.terminator.statement.perl
+   5 | use constant {
+       "use" keyword.control.import.use.perl
+       " " meta.preprocessor.use.perl
+       "constant" meta.preprocessor.use.perl entity.name.namespace.perl
+       " " meta.preprocessor.use.perl
+       "{" punctuation.section.block.begin.perl
+   6 |     PI   => 4 * atan2(1, 1),
+       "    " meta.preprocessor.use.perl
+       "PI" constant.other.key.perl
+       "   " meta.preprocessor.use.perl
+       "=>" punctuation.separator.key-value.perl
+       " " meta.preprocessor.use.perl
+       "4" constant.numeric.integer.decimal.perl
+       " " meta.preprocessor.use.perl
+       "*" keyword.operator.arithmetic.perl
+       " " meta.preprocessor.use.perl
+       "atan2" support.function.perl
+       "(" punctuation.section.group.begin.perl
+       "1" constant.numeric.integer.decimal.perl
+       "," punctuation.separator.sequence.perl
+       " " meta.preprocessor.use.perl
+       "1" constant.numeric.integer.decimal.perl
+       ")" punctuation.section.group.end.perl
+       "," punctuation.separator.sequence.perl
+   7 |     DEBUG => $ENV{DEBUG} // 0,
+       "    " meta.preprocessor.use.perl
+       "DEBUG" constant.other.key.perl
+       " " meta.preprocessor.use.perl
+       "=>" punctuation.separator.key-value.perl
+       " " meta.preprocessor.use.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "ENV" variable.language.perl
+       "{" punctuation.section.item-access.begin.perl
+       "DEBUG" constant.other.key.perl
+       "}" punctuation.section.item-access.end.perl
+       " " meta.preprocessor.use.perl
+       "//" keyword.operator.logical.perl
+       " " meta.preprocessor.use.perl
+       "0" constant.numeric.integer.decimal.perl
+       "," punctuation.separator.sequence.perl
+   8 | };
+       "}" punctuation.section.block.end.perl
+       ";" punctuation.terminator.statement.perl
+   9 | package My::Shape 1.02 {
+       "package" storage.type.namespace.perl keyword.declaration.namespace.perl
+       "My" entity.name.namespace.perl
+       "::" punctuation.accessor.double-colon.perl
+       "Shape" entity.name.namespace.perl
+       "1" constant.numeric.version.perl
+       "." constant.numeric.version.perl punctuation.separator.decimal.perl
+       "02" constant.numeric.version.perl
+       "{" punctuation.section.block.begin.perl
+  10 |     sub new ($class, %args) { return bless { %args }, $class }
+       "sub" storage.type.function.perl keyword.declaration.function.perl
+       "new" entity.name.function.perl
+       "(" punctuation.section.parameters.begin.perl
+       "$class" variable.parameter.perl
+       "," punctuation.separator.sequence.perl
+       "%args" variable.parameter.perl
+       ")" punctuation.section.parameters.end.perl
+       "{" punctuation.section.block.begin.perl
+       "return" keyword.control.flow.return.perl
+       "bless" support.function.perl
+       "{" punctuation.section.block.begin.perl
+       "%" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "args" variable.other.readwrite.perl
+       "}" punctuation.section.block.end.perl
+       "," punctuation.separator.sequence.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "class" variable.other.readwrite.perl
+       "}" punctuation.section.block.end.perl
+  11 |     sub area :lvalue ($self) { $self->{w} * $self->{h} / 2 }
+       "sub" storage.type.function.perl keyword.declaration.function.perl
+       "area" entity.name.function.perl
+       ":" punctuation.definition.annotation.perl
+       "lvalue" variable.annotation.attribute.perl
+       "(" punctuation.section.parameters.begin.perl
+       "$self" variable.parameter.perl
+       ")" punctuation.section.parameters.end.perl
+       "{" punctuation.section.block.begin.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "self" variable.other.readwrite.perl
+       "->" punctuation.accessor.arrow.perl
+       "{" punctuation.section.item-access.begin.perl
+       "w" constant.other.key.perl
+       "}" punctuation.section.item-access.end.perl
+       "*" keyword.operator.arithmetic.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "self" variable.other.readwrite.perl
+       "->" punctuation.accessor.arrow.perl
+       "{" punctuation.section.item-access.begin.perl
+       "h" constant.other.key.perl
+       "}" punctuation.section.item-access.end.perl
+       "/" keyword.operator.arithmetic.perl
+       "2" constant.numeric.integer.decimal.perl
+       "}" punctuation.section.block.end.perl
+  12 |     sub legacy($$;@) { my ($a, $b, @rest) = @_; $a <=> $b }
+       "sub" storage.type.function.perl keyword.declaration.function.perl
+       "legacy" entity.name.function.perl
+       "(" punctuation.section.parameters.begin.perl
+       "$$" variable.parameter.perl
+       ";" punctuation.separator.sequence.perl
+       "@" variable.parameter.perl
+       ")" punctuation.section.parameters.end.perl
+       "{" punctuation.section.block.begin.perl
+       "my" storage.type.variable.perl
+       "(" punctuation.section.group.begin.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "a" variable.language.perl
+       "," punctuation.separator.sequence.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "b" variable.language.perl
+       "," punctuation.separator.sequence.perl
+       "@" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "rest" variable.other.readwrite.perl
+       ")" punctuation.section.group.end.perl
+       "=" keyword.operator.assignment.perl
+       "@" variable.language.perl punctuation.definition.variable.perl
+       "_" variable.language.perl
+       ";" punctuation.terminator.statement.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "a" variable.language.perl
+       "<=>" keyword.operator.comparison.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "b" variable.language.perl
+       "}" punctuation.section.block.end.perl
+  13 | }
+       "}" punctuation.section.block.end.perl
+  14 | my @lines = grep { !/^\s*#/ } <STDIN>;
+       "my" storage.type.variable.perl
+       "@" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "lines" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "grep" support.function.perl
+       "{" punctuation.section.block.begin.perl
+       "!" keyword.operator.logical.perl
+       "/" punctuation.section.generic.begin.perl
+       "^" string.regexp.perl keyword.control.anchor.regexp
+       "\\s" string.regexp.perl constant.other.character-class.escape.backslash.regexp
+       "*" string.regexp.perl keyword.operator.quantifier.regexp
+       "#" string.regexp.perl
+       "/" punctuation.section.generic.end.perl
+       "}" punctuation.section.block.end.perl
+       "<" string.quoted.angle.perl punctuation.definition.string.begin.perl
+       "STDIN" string.quoted.angle.perl
+       ">" string.quoted.angle.perl punctuation.definition.string.end.perl
+       ";" punctuation.terminator.statement.perl
+  15 | my $half = PI / 2; my $n = shift // 10; $n /= 2;
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "half" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "PI" constant.other.perl
+       "/" keyword.operator.arithmetic.perl
+       "2" constant.numeric.integer.decimal.perl
+       ";" punctuation.terminator.statement.perl
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "n" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "shift" support.function.perl
+       "//" keyword.operator.logical.perl
+       "10" constant.numeric.integer.decimal.perl
+       ";" punctuation.terminator.statement.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "n" variable.other.readwrite.perl
+       "/=" keyword.operator.assignment.perl
+       "2" constant.numeric.integer.decimal.perl
+       ";" punctuation.terminator.statement.perl
+  16 | my %h = (q => 1, s => 2, y => 3); $h{s}{y} = $h{q} + 1;
+       "my" storage.type.variable.perl
+       "%" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "h" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "(" punctuation.section.group.begin.perl
+       "q" constant.other.key.perl
+       "=>" punctuation.separator.key-value.perl
+       "1" constant.numeric.integer.decimal.perl
+       "," punctuation.separator.sequence.perl
+       "s" constant.other.key.perl
+       "=>" punctuation.separator.key-value.perl
+       "2" constant.numeric.integer.decimal.perl
+       "," punctuation.separator.sequence.perl
+       "y" constant.other.key.perl
+       "=>" punctuation.separator.key-value.perl
+       "3" constant.numeric.integer.decimal.perl
+       ")" punctuation.section.group.end.perl
+       ";" punctuation.terminator.statement.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "h" variable.other.readwrite.perl
+       "{" punctuation.section.item-access.begin.perl
+       "s" constant.other.key.perl
+       "}" punctuation.section.item-access.end.perl
+       "{" punctuation.section.item-access.begin.perl
+       "y" constant.other.key.perl
+       "}" punctuation.section.item-access.end.perl
+       "=" keyword.operator.assignment.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "h" variable.other.readwrite.perl
+       "{" punctuation.section.item-access.begin.perl
+       "q" constant.other.key.perl
+       "}" punctuation.section.item-access.end.perl
+       "+" keyword.operator.arithmetic.perl
+       "1" constant.numeric.integer.decimal.perl
+       ";" punctuation.terminator.statement.perl
+  17 | my @w = qw(alpha beta
+       "my" storage.type.variable.perl
+       "@" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "w" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "qw" support.function.perl
+       "(" punctuation.section.parens.begin.perl
+       "alpha beta" string.unquoted.perl
+  18 |            gamma);
+       "           gamma" string.unquoted.perl
+       ")" punctuation.section.parens.end.perl
+       ";" punctuation.terminator.statement.perl
+  19 | (my $t = $s) =~ s{(\d+)}  # the digits
+       "(" punctuation.section.group.begin.perl
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "t" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "s" variable.other.readwrite.perl
+       ")" punctuation.section.group.end.perl
+       "=~" keyword.operator.binary.perl
+       "s" support.function.perl
+       "{" punctuation.section.braces.begin.perl
+       "(" string.regexp.perl punctuation.definition.group.begin.regexp
+       "\\d" string.regexp.perl constant.other.character-class.escape.backslash.regexp
+       "+" string.regexp.perl keyword.operator.quantifier.regexp
+       ")" string.regexp.perl punctuation.definition.group.end.regexp
+       "}" punctuation.section.braces.end.perl
+       "#" comment.line.number-sign.perl punctuation.definition.comment.perl
+       " the digits" comment.line.number-sign.perl
+  20 |     {$1 * 2}ge;
+       "{" punctuation.section.braces.begin.perl
+       "$" variable.language.regexp.match-group.perl punctuation.definition.variable.perl
+       "1" variable.language.regexp.match-group.perl
+       "*" keyword.operator.arithmetic.perl
+       "2" constant.numeric.integer.decimal.perl
+       "}" punctuation.section.braces.end.perl
+       "ge" constant.language.flags.regexp.perl
+       ";" punctuation.terminator.statement.perl
+  21 | $t =~ tr/a-z/A-Z/; my $c = $t =~ y/A//;
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "t" variable.other.readwrite.perl
+       "=~" keyword.operator.binary.perl
+       "tr" support.function.perl
+       "/" punctuation.section.generic.begin.perl
+       "a-z" string.unquoted.perl
+       "/" punctuation.separator.sequence.perl
+       "A-Z" string.unquoted.perl
+       "/" punctuation.section.generic.end.perl
+       ";" punctuation.terminator.statement.perl
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "c" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "t" variable.other.readwrite.perl
+       "=~" keyword.operator.binary.perl
+       "y" support.function.perl
+       "/" punctuation.section.generic.begin.perl
+       "A" string.unquoted.perl
+       "/" punctuation.separator.sequence.perl
+       "/" punctuation.section.generic.end.perl
+       ";" punctuation.terminator.statement.perl
+  22 | my $re = qr{
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "re" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "qr" support.function.perl
+       "{" punctuation.section.braces.begin.perl
+  23 |     ^ (?<name> [A-Za-z_]\w* )   # a name
+       "    " string.regexp.perl
+       "^" string.regexp.perl keyword.control.anchor.regexp
+       " " string.regexp.perl
+       "(" string.regexp.perl punctuation.definition.group.begin.regexp
+       "?" string.regexp.perl punctuation.definition.group.begin.regexp
+       "<" string.regexp.perl punctuation.definition.group.named.begin.regexp
+       "name" string.regexp.perl entity.name.other.group.regexp
+       ">" string.regexp.perl punctuation.definition.group.named.end.regexp
+       " " string.regexp.perl
+       "[" string.regexp.perl constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "A" string.regexp.perl constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.regexp.perl constant.other.character-class.set.regexp constant.other.character-class.range.regexp punctuation.definition.range.regexp
+       "Z" string.regexp.perl constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "a" string.regexp.perl constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.regexp.perl constant.other.character-class.set.regexp constant.other.character-class.range.regexp punctuation.definition.range.regexp
+       "z" string.regexp.perl constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "_" string.regexp.perl constant.other.character-class.set.regexp
+       "]" string.regexp.perl constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
+       "\\w" string.regexp.perl constant.other.character-class.escape.backslash.regexp
+       "*" string.regexp.perl keyword.operator.quantifier.regexp
+       " " string.regexp.perl
+       ")" string.regexp.perl punctuation.definition.group.end.regexp
+       "   " string.regexp.perl
+       "# a name" string.regexp.perl comment.line.number-sign.regexp
+  24 |     \s* = \s* (\S+) $
+       "    " string.regexp.perl
+       "\\s" string.regexp.perl constant.other.character-class.escape.backslash.regexp
+       "*" string.regexp.perl keyword.operator.quantifier.regexp
+       " = " string.regexp.perl
+       "\\s" string.regexp.perl constant.other.character-class.escape.backslash.regexp
+       "*" string.regexp.perl keyword.operator.quantifier.regexp
+       " " string.regexp.perl
+       "(" string.regexp.perl punctuation.definition.group.begin.regexp
+       "\\S" string.regexp.perl constant.other.character-class.escape.backslash.regexp
+       "+" string.regexp.perl keyword.operator.quantifier.regexp
+       ")" string.regexp.perl punctuation.definition.group.end.regexp
+       " " string.regexp.perl
+       "$" string.regexp.perl keyword.control.anchor.regexp
+  25 | }x;
+       "}" punctuation.section.braces.end.perl
+       "x" constant.language.flags.regexp.perl
+       ";" punctuation.terminator.statement.perl
+  26 | printf "%-10s %5.2f %%\n", $name, $value;
+       "printf" support.function.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.begin.perl
+       "%" string.quoted.double.perl constant.other.placeholder.perl punctuation.definition.placeholder.perl
+       "-10s" string.quoted.double.perl constant.other.placeholder.perl
+       " " string.quoted.double.perl
+       "%" string.quoted.double.perl constant.other.placeholder.perl punctuation.definition.placeholder.perl
+       "5" string.quoted.double.perl constant.other.placeholder.perl
+       "." string.quoted.double.perl constant.other.placeholder.perl punctuation.separator.decimal.perl
+       "2f" string.quoted.double.perl constant.other.placeholder.perl
+       " " string.quoted.double.perl
+       "%%\\n" string.quoted.double.perl constant.character.escape.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.end.perl
+       "," punctuation.separator.sequence.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "name" variable.other.readwrite.perl
+       "," punctuation.separator.sequence.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "value" variable.other.readwrite.perl
+       ";" punctuation.terminator.statement.perl
+  27 | print "Hi $user->{name}, item $items[0] of @{[ scalar @items ]}: ${\ $obj->count } $@\n";
+       "print" support.function.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.begin.perl
+       "Hi " string.quoted.double.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "user" variable.other.readwrite.perl
+       "->" punctuation.accessor.arrow.perl
+       "{" punctuation.section.item-access.begin.perl
+       "name" constant.other.key.perl
+       "}" punctuation.section.item-access.end.perl
+       ", item " string.quoted.double.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "items" variable.other.readwrite.perl
+       "[" punctuation.section.item-access.begin.perl
+       "0" constant.numeric.integer.decimal.perl
+       "]" punctuation.section.item-access.end.perl
+       " of " string.quoted.double.perl
+       "@" keyword.operator.dereference.perl
+       "{" punctuation.definition.variable.begin.perl
+       "[" punctuation.section.brackets.begin.perl
+       "scalar" support.function.perl
+       "@" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "items" variable.other.readwrite.perl
+       "]" punctuation.section.brackets.end.perl
+       "}" punctuation.definition.variable.end.perl
+       ": " string.quoted.double.perl
+       "$" keyword.operator.dereference.perl
+       "{" punctuation.definition.variable.begin.perl
+       "\\" keyword.operator.reference.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "obj" variable.other.readwrite.perl
+       "->" punctuation.accessor.arrow.perl
+       "count" variable.function.member.perl
+       "}" punctuation.definition.variable.end.perl
+       " " string.quoted.double.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "@" variable.language.perl
+       "\\n" string.quoted.double.perl constant.character.escape.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.end.perl
+       ";" punctuation.terminator.statement.perl
+  28 | print 'It\'s literal $not \n', "\x{263A}\N{U+263A}\t\e";
+       "print" support.function.perl
+       "'" string.quoted.single.perl punctuation.definition.string.begin.perl
+       "It" string.quoted.single.perl
+       "\\'" string.quoted.single.perl constant.character.escape.perl
+       "s literal $not \\n" string.quoted.single.perl
+       "'" string.quoted.single.perl punctuation.definition.string.end.perl
+       "," punctuation.separator.sequence.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.begin.perl
+       "\\x{263A}\\N{U+263A}\\t\\e" string.quoted.double.perl constant.character.escape.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.end.perl
+       ";" punctuation.terminator.statement.perl
+  29 | print <<~EOT, <<'RAW';
+       "print" support.function.perl
+       "<<~" keyword.operator.heredoc.perl
+       "EOT" meta.tag.heredoc.perl entity.name.tag.heredoc.plain.perl
+       "," punctuation.separator.sequence.perl
+       "<<" keyword.operator.heredoc.perl
+       "'" meta.tag.heredoc.perl punctuation.definition.tag.begin.perl
+       "RAW" meta.tag.heredoc.perl entity.name.tag.heredoc.plain.perl
+       "'" meta.tag.heredoc.perl punctuation.definition.tag.end.perl
+       ";" punctuation.terminator.statement.perl
+  30 |     Dear $name,
+       "    Dear " string.unquoted.heredoc.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "name" variable.other.readwrite.perl
+       "," string.unquoted.heredoc.perl
+  31 |     EOT
+       "EOT" meta.tag.heredoc.perl entity.name.tag.heredoc.plain.perl
+  32 | No $interpolation here
+       "No $interpolation here" string.unquoted.heredoc.perl
+  33 | RAW
+       "RAW" meta.tag.heredoc.perl entity.name.tag.heredoc.plain.perl
+  34 | my $sth = $dbh->prepare("SELECT id, name FROM users WHERE age > ?");
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "sth" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "dbh" variable.other.readwrite.perl
+       "->" punctuation.accessor.arrow.perl
+       "prepare" variable.function.member.perl
+       "(" punctuation.section.group.begin.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.begin.perl
+       "SELECT" string.quoted.double.perl keyword.other.DML.sql
+       " id, name " string.quoted.double.perl
+       "FROM" string.quoted.double.perl keyword.other.DML.sql
+       " users " string.quoted.double.perl
+       "WHERE" string.quoted.double.perl keyword.other.DML.sql
+       " age " string.quoted.double.perl
+       ">" string.quoted.double.perl keyword.operator.comparison.sql
+       " " string.quoted.double.perl
+       "?" string.quoted.double.perl constant.other.placeholder.sql
+       "\"" string.quoted.double.perl punctuation.definition.string.end.perl
+       ")" punctuation.section.group.end.perl
+       ";" punctuation.terminator.statement.perl
+  35 | $dbh->do(<<SQL);
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "dbh" variable.other.readwrite.perl
+       "->" punctuation.accessor.arrow.perl
+       "do" variable.function.member.perl
+       "(" punctuation.section.group.begin.perl
+       "<<" keyword.operator.heredoc.perl
+       "SQL" meta.tag.heredoc.perl entity.name.tag.heredoc.sql.perl
+       ")" punctuation.section.group.end.perl
+       ";" punctuation.terminator.statement.perl
+  36 | UPDATE users SET seen = NOW() -- touch
+       "UPDATE" meta.embedded.perl keyword.other.DML.sql
+       "SET" meta.embedded.perl keyword.other.DML.sql
+       "=" meta.embedded.perl keyword.operator.comparison.sql
+       "NOW" meta.embedded.perl support.function.scalar.sql
+       "(" meta.embedded.perl meta.block.sql punctuation.section.scope.begin.sql
+       ")" meta.embedded.perl meta.block.sql punctuation.section.scope.end.sql
+       "--" meta.embedded.perl comment.line.double-dash.sql punctuation.definition.comment.sql
+       " touch" meta.embedded.perl comment.line.double-dash.sql
+  37 | SQL
+       "SQL" meta.tag.heredoc.perl entity.name.tag.heredoc.sql.perl
+  38 | my $html = <<HTML;
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "html" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "<<" keyword.operator.heredoc.perl
+       "HTML" meta.tag.heredoc.perl entity.name.tag.heredoc.html.perl
+       ";" punctuation.terminator.statement.perl
+  39 | <p>$name</p>
+       "<p>" meta.embedded.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "name" variable.other.readwrite.perl
+       "</p>" meta.embedded.perl
+  40 | HTML
+       "HTML" meta.tag.heredoc.perl entity.name.tag.heredoc.html.perl
+  41 | my @l = $r->@*; my $last = $#{$r}; local $_ = ${^MATCH}; our @ISA = ('Base');
+       "my" storage.type.variable.perl
+       "@" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "l" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "r" variable.other.readwrite.perl
+       "->" punctuation.accessor.arrow.perl
+       "@*" keyword.operator.dereference.perl
+       ";" punctuation.terminator.statement.perl
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "last" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "$#" keyword.operator.dereference.perl
+       "{" punctuation.definition.variable.begin.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "r" variable.other.readwrite.perl
+       "}" punctuation.definition.variable.end.perl
+       ";" punctuation.terminator.statement.perl
+       "local" storage.type.variable.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "_" variable.language.perl
+       "=" keyword.operator.assignment.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "{^MATCH}" variable.language.perl
+       ";" punctuation.terminator.statement.perl
+       "our" storage.type.variable.perl
+       "@" variable.language.perl punctuation.definition.variable.perl
+       "ISA" variable.language.perl
+       "=" keyword.operator.assignment.perl
+       "(" punctuation.section.group.begin.perl
+       "'" string.quoted.single.perl punctuation.definition.string.begin.perl
+       "Base" string.quoted.single.perl
+       "'" string.quoted.single.perl punctuation.definition.string.end.perl
+       ")" punctuation.section.group.end.perl
+       ";" punctuation.terminator.statement.perl
+  42 | LINE: while (my $line = <$fh>) { next LINE if $line =~ m#^\##; last }
+       "LINE" entity.name.label.perl
+       ":" punctuation.separator.perl
+       "while" keyword.control.loop.while.perl
+       "(" punctuation.section.group.begin.perl
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "line" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+       "<" string.quoted.angle.perl punctuation.definition.string.begin.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "fh" variable.other.readwrite.perl
+       ">" string.quoted.angle.perl punctuation.definition.string.end.perl
+       ")" punctuation.section.group.end.perl
+       "{" punctuation.section.block.begin.perl
+       "next" keyword.control.flow.next.perl
+       "LINE" variable.label.perl
+       "if" keyword.control.conditional.if.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "line" variable.other.readwrite.perl
+       "=~" keyword.operator.binary.perl
+       "m" support.function.perl
+       "#" punctuation.section.generic.begin.perl
+       "^" string.regexp.perl keyword.control.anchor.regexp
+       "\\#" string.regexp.perl constant.character.escape.backslash.regexp
+       "#" punctuation.section.generic.end.perl
+       ";" punctuation.terminator.statement.perl
+       "last" keyword.control.flow.last.perl
+       "}" punctuation.section.block.end.perl
+  43 | open(my $fh, '<', $file) or die "Can't open $file: $!";
+       "open" support.function.perl
+       "(" punctuation.section.group.begin.perl
+       "my" storage.type.variable.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "fh" variable.other.readwrite.perl
+       "," punctuation.separator.sequence.perl
+       "'" string.quoted.single.perl punctuation.definition.string.begin.perl
+       "<" string.quoted.single.perl
+       "'" string.quoted.single.perl punctuation.definition.string.end.perl
+       "," punctuation.separator.sequence.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "file" variable.other.readwrite.perl
+       ")" punctuation.section.group.end.perl
+       "or" keyword.operator.logical.perl
+       "die" keyword.control.flow.die.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.begin.perl
+       "Can't open " string.quoted.double.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "file" variable.other.readwrite.perl
+       ": " string.quoted.double.perl
+       "$" variable.language.perl punctuation.definition.variable.perl
+       "!" variable.language.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.end.perl
+       ";" punctuation.terminator.statement.perl
+  44 | print STDERR -e $file ? 'yes' : 'no', "\n" if defined &main::foo;
+       "print" support.function.perl
+       "STDERR" constant.language.filehandle.perl
+       "-e" keyword.operator.filetest.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "file" variable.other.readwrite.perl
+       "?" keyword.operator.logical.perl
+       "'" string.quoted.single.perl punctuation.definition.string.begin.perl
+       "yes" string.quoted.single.perl
+       "'" string.quoted.single.perl punctuation.definition.string.end.perl
+       ":" keyword.operator.logical.perl
+       "'" string.quoted.single.perl punctuation.definition.string.begin.perl
+       "no" string.quoted.single.perl
+       "'" string.quoted.single.perl punctuation.definition.string.end.perl
+       "," punctuation.separator.sequence.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.begin.perl
+       "\\n" string.quoted.double.perl constant.character.escape.perl
+       "\"" string.quoted.double.perl punctuation.definition.string.end.perl
+       "if" keyword.control.conditional.if.perl
+       "defined" support.function.perl
+       "&" keyword.operator.dereference.perl
+       "main" variable.namespace.perl
+       "::" punctuation.accessor.double-colon.perl
+       "foo" variable.function.perl
+       ";" punctuation.terminator.statement.perl
+  45 | format STDOUT =
+       "format" storage.type.format.perl
+       "STDOUT" variable.other.readwrite.perl
+       "=" keyword.operator.assignment.perl
+  46 | @<<<<<<< @>>>>>
+       "@" string.unquoted.perl constant.other.placeholder.text.perl punctuation.definition.placeholder.begin.perl
+       "<<<<<<<" string.unquoted.perl constant.other.placeholder.text.perl
+       " " string.unquoted.perl
+       "@" string.unquoted.perl constant.other.placeholder.text.perl punctuation.definition.placeholder.begin.perl
+       ">>>>>" string.unquoted.perl constant.other.placeholder.text.perl
+  47 | $name,   $value
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "name" variable.other.readwrite.perl
+       ",   " string.unquoted.perl
+       "$" variable.other.readwrite.perl punctuation.definition.variable.perl
+       "value" variable.other.readwrite.perl
+  48 | .
+       "." punctuation.terminator.format.perl
+  49 | =head1 NAME
+       "=head1" comment.block.documentation.perl entity.name.tag.pod.perl
+       " NAME" comment.block.documentation.perl markup.heading.perl
+  50 | 
+  51 | My::Shape - B<shapes> with C<< $s->area >> and I<a wrapped
+       "My::Shape - " comment.block.documentation.perl
+       "B" comment.block.documentation.perl entity.name.tag.bold.perl
+       "<" comment.block.documentation.perl punctuation.definition.tag.begin.perl
+       "shapes" comment.block.documentation.perl markup.bold.perl
+       ">" comment.block.documentation.perl punctuation.definition.tag.end.perl
+       " with " comment.block.documentation.perl
+       "C" comment.block.documentation.perl entity.name.tag.code.perl
+       "<<" comment.block.documentation.perl punctuation.definition.tag.begin.perl
+       " $s->area " comment.block.documentation.perl markup.quote.perl
+       ">>" comment.block.documentation.perl punctuation.definition.tag.end.perl
+       " and " comment.block.documentation.perl
+       "I" comment.block.documentation.perl entity.name.tag.italic.perl
+       "<" comment.block.documentation.perl punctuation.definition.tag.begin.perl
+       "a wrapped" comment.block.documentation.perl markup.italic.perl
+  52 | code> E<gt> L<perlpod>
+       "code" comment.block.documentation.perl markup.italic.perl
+       ">" comment.block.documentation.perl punctuation.definition.tag.end.perl
+       " " comment.block.documentation.perl
+       "E" comment.block.documentation.perl entity.name.tag.escaped.perl
+       "<" comment.block.documentation.perl punctuation.definition.tag.begin.perl
+       "gt" comment.block.documentation.perl constant.character.escape.perl
+       ">" comment.block.documentation.perl punctuation.definition.tag.end.perl
+       " " comment.block.documentation.perl
+       "L" comment.block.documentation.perl entity.name.tag.link.perl
+       "<" comment.block.documentation.perl punctuation.definition.tag.begin.perl
+       "perlpod" comment.block.documentation.perl markup.underline.link.perl
+       ">" comment.block.documentation.perl punctuation.definition.tag.end.perl
+  53 | 
+  54 |     verbatim B<code>
+       "    verbatim B<code>" comment.block.documentation.perl
+  55 | 
+  56 | =cut
+       "=cut" comment.block.documentation.perl entity.name.tag.pod.perl
+  57 | 1;
+       "1" constant.numeric.integer.decimal.perl
+       ";" punctuation.terminator.statement.perl
+  58 | __END__
+       "__END__" constant.language.perl
+  59 | data, not code: / ' "

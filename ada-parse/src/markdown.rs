@@ -26,11 +26,10 @@
 //! after a delimiter row (bat colors every `|`); seven `#`s no heading; a markdown fence's code
 //! markdown; bat's list item that runs on past its paragraph not followed.
 
-use std::cell::RefCell;
 use std::mem::MaybeUninit;
 
-use crate::emit::{Push, Rule, Rules, Run, Runs, Sink};
-use crate::{Lang, Out, Span, State};
+use crate::emit::{Push, Runs, Sink};
+use crate::{Lang, Out, State};
 
 // ---- the kinds: a leaf in the low six bits, the context it sits in above ----
 
@@ -613,30 +612,6 @@ fn skip_plain(t: &[u8], mut p: usize) -> usize {
         p += 1;
     }
     p
-}
-
-/// A fence's language's scratch: spans and runs, when the code is lexed only for its state.
-#[derive(Default)]
-struct Scratch {
-    spans: Vec<Span>,
-    runs: Vec<Run>,
-}
-
-std::thread_local! {
-    static SCRATCH: RefCell<Scratch> = RefCell::new(Scratch::default());
-}
-
-/// Rules that color nothing: a fence's code lexed for its state alone.
-struct Plain;
-
-impl Rules for Plain {
-    fn table(&self) -> &[Rule] {
-        &[]
-    }
-
-    fn resolve(&mut self, _: u16) -> Rule {
-        Rule(Rule::NONE)
-    }
 }
 
 /// HTML's block-level tag names (CommonMark's sixth kind of HTML block), lowercase.
@@ -1285,10 +1260,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
         }
         if !kept {
-            let mut s = SCRATCH.with(|c| std::mem::take(&mut *c.borrow_mut()));
-            crate::lex_runs(lang, text, &mut g, &mut s.spans, &mut Plain, &mut s.runs);
-            s.runs.clear();
-            SCRATCH.with(|c| *c.borrow_mut() = s);
+            crate::lex_state(lang, text, &mut g);
             if raw != TEXT {
                 self.put(at, n, raw);
             }

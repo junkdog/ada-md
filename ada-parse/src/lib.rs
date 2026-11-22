@@ -69,6 +69,7 @@ mod markdown;
 mod matcher;
 mod nginx;
 mod nix;
+mod perl;
 mod php;
 mod pkgconfig;
 mod powershell;
@@ -262,6 +263,34 @@ pub fn lex_runs(
     }
     scanner::<false>(lang)(line, state, spans);
     emit::runs_of(line.len(), spans, &mut emit::Table::new(rules), runs);
+}
+
+/// `text`, a line of `lang`, lexed from `state` for the state it leaves alone, its runs
+/// dropped: a guest's line on a sink that doesn't write its runs, so that both sinks leave the
+/// same state (X-189's fences, X-191's Perl here-documents and POD regions). On the run copy, as
+/// the run sink lexes it, so a host holds no span copy of its guests.
+pub(crate) fn lex_state(lang: Lang, text: &str, state: &mut State) {
+    /// Rules that color nothing.
+    struct Plain;
+
+    impl Rules for Plain {
+        fn table(&self) -> &[Rule] {
+            &[]
+        }
+
+        fn resolve(&mut self, _: u16) -> Rule {
+            Rule(Rule::NONE)
+        }
+    }
+
+    std::thread_local! {
+        static SCRATCH: std::cell::RefCell<(Vec<Span>, Vec<Run>)> =
+            const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
+    }
+    let (mut spans, mut runs) = SCRATCH.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    lex_runs(lang, text, state, &mut spans, &mut Plain, &mut runs);
+    runs.clear();
+    SCRATCH.with(|c| *c.borrow_mut() = (spans, runs));
 }
 
 /// Lex up to `max` of `text`'s lines from `state`, each as [`lex`] lexes it, calling `each`
@@ -629,6 +658,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Scala => (scala::block_runs, scala::line_runs),
         Lang::Groovy => (groovy::block_runs, groovy::line_runs),
         Lang::Dart => (dart::block_runs, dart::line_runs),
+        Lang::Perl => (perl::block_runs, perl::line_runs),
         Lang::Haskell => (haskell::block_runs, haskell::line_runs),
         Lang::LiterateHaskell => (haskell::lhs::block_runs, haskell::lhs::line_runs),
         Lang::Elixir => (elixir::block_runs, elixir::line_runs),
@@ -682,6 +712,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Scala if SPANS => scala::block,
         Lang::Groovy if SPANS => groovy::block,
         Lang::Dart if SPANS => dart::block,
+        Lang::Perl if SPANS => perl::block,
         Lang::Haskell if SPANS => haskell::block,
         Lang::LiterateHaskell if SPANS => haskell::lhs::block,
         Lang::Elixir if SPANS => elixir::block,
@@ -976,6 +1007,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Groovy => out!(groovy::line),
         Lang::Dart if !SPANS => |_, _, _| unreachable!("Dart's runs come from its own scan"),
         Lang::Dart => out!(dart::line),
+        Lang::Perl if !SPANS => |_, _, _| unreachable!("Perl's runs come from its own scan"),
+        Lang::Perl => out!(perl::line),
         Lang::Haskell if !SPANS => |_, _, _| unreachable!("Haskell's runs come from its own scan"),
         Lang::Haskell => out!(haskell::line),
         Lang::LiterateHaskell if !SPANS => {
@@ -1122,7 +1155,93 @@ fn trim_end(b: &[u8], from: usize, mut end: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::*;
+
+    /// A theme that keeps every language's kinds apart, its guests' too: each kind its own rule,
+    /// named by its language and kind.
+    pub struct Rec {
+        lang: Lang,
+        table: Vec<Rule>,
+        names: Rc<RefCell<Vec<(Lang, u16)>>>,
+        guests: Vec<Rec>,
+    }
+
+    impl Rec {
+        pub fn new(lang: Lang, names: Rc<RefCell<Vec<(Lang, u16)>>>) -> Self {
+            Rec {
+                lang,
+                table: Vec::new(),
+                names,
+                guests: Vec::new(),
+            }
+        }
+    }
+
+    impl Rules for Rec {
+        fn table(&self) -> &[Rule] {
+            &self.table
+        }
+
+        fn resolve(&mut self, kind: u16) -> Rule {
+            let mut names = self.names.borrow_mut();
+            let id = names.len() as u16;
+            names.push((self.lang, kind));
+            let k = usize::from(kind);
+            if k >= self.table.len() {
+                self.table.resize(k + 1, Rule(Rule::UNSET));
+            }
+            self.table[k] = Rule(id);
+            Rule(id)
+        }
+
+        fn guest(&mut self, lang: Lang, f: &mut dyn FnMut(&mut dyn Rules)) -> bool {
+            let i = match self.guests.iter().position(|g| g.lang == lang) {
+                Some(i) => i,
+                None => {
+                    self.guests.push(Rec::new(lang, Rc::clone(&self.names)));
+                    self.guests.len() - 1
+                }
+            };
+            f(&mut self.guests[i]);
+            true
+        }
+    }
+
+    /// `lines` of `lang` on the run path with a theme that keeps guests ([`Rec`]): each colored
+    /// run's text, its language and its scopes' last. The span path is run beside it, and must
+    /// leave the same state (X-189's fences, X-191's Perl bodies).
+    pub fn guest_runs(lang: Lang, lines: &[&str]) -> Vec<(String, Lang, String)> {
+        let names = Rc::new(RefCell::new(Vec::new()));
+        let mut rec = Rec::new(lang, Rc::clone(&names));
+        let (mut st, mut st2) = (State::default(), State::default());
+        let (mut spans, mut runs) = (Vec::new(), Vec::new());
+        let mut out = Vec::new();
+        for l in lines {
+            runs.clear();
+            crate::lex_runs(lang, l, &mut st, &mut spans, &mut rec, &mut runs);
+            crate::lex(lang, l, &mut st2, &mut spans);
+            assert_eq!(st, st2, "{l:?}: the run and span paths' states");
+            let mut at = 0;
+            for r in &runs {
+                let e = r.end as usize;
+                assert!(e > at && e <= l.len(), "{l:?}: {runs:?}");
+                if r.rule.0 != Rule::NONE {
+                    let (lang, kind) = names.borrow()[usize::from(r.rule.0)];
+                    let scopes = lang.scopes(kind);
+                    let leaf = scopes
+                        .last()
+                        .and_then(|s| s.rsplit(' ').next())
+                        .unwrap_or("");
+                    out.push((l[at..e].to_owned(), lang, leaf.to_owned()));
+                }
+                at = e;
+            }
+        }
+        out
+    }
 
     /// The marked pieces of `lines` in `lang`, as `(text, scopes)`, after checking the spans'
     /// order.

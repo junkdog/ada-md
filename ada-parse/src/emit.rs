@@ -193,6 +193,21 @@ pub(crate) trait Sink: Copy {
             self.merge_call(out, at, q, gap);
         }
     }
+
+    /// The run sink's [`Sink::side_lex`] for a language whose kinds don't fit in the host's
+    /// (X-191: Perl's here-documents in HTML, CSS, JavaScript, JSON or XML): `lex` handed
+    /// `lang`'s own rules ([`Rules::guest`]) and `side`'s runs, to push the line's runs from its
+    /// start as for a line of its own, which [`Sink::side_write`] (its gap
+    /// [`Side::NO_GAP`]) then writes range by range among the host's lexemes; `true`. `false`,
+    /// `lex` not called, where the rules keep none for it, or on a span sink.
+    fn side_guest(
+        &mut self,
+        _side: &mut Side,
+        _lang: crate::Lang,
+        _lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>),
+    ) -> bool {
+        false
+    }
 }
 
 /// A line's lexemes of an embedded language, lexed apart from its host's
@@ -1010,6 +1025,21 @@ impl Sink for Runs<'_> {
         (side.next, side.start) = (i, s as u32);
         // past the side's runs (a line with none colored, or after its last): the gap's
         self.merge_rule(at, q, g);
+    }
+
+    #[inline(never)]
+    fn side_guest(
+        &mut self,
+        side: &mut Side,
+        lang: crate::Lang,
+        lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>),
+    ) -> bool {
+        side.runs.clear();
+        // SAFETY: the rules outlive the sink, and nothing else holds them while the guest lexes
+        let kept = unsafe { (*self.t.rules).guest(lang, &mut |own| lex(own, &mut side.runs)) };
+        self.t.reload();
+        (side.next, side.start) = (0, 0);
+        kept
     }
 }
 

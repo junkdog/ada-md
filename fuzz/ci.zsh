@@ -74,6 +74,9 @@ LANGS=(
   dart 2255 7
   # X-188: from its first corpus's cmin (2026-11-21, after its 300 s smoke)
   manpage 5124 1
+  # X-170, X-191: Perl, from its cmin after X-191's 300 s smoke (2026-11-22: its HTML, CSS, JavaScript,
+  # JSON and XML bodies and the guest pass on the run path; X-170's corpus had reached 5,955 edges)
+  perl 16080 27
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done

@@ -136,6 +136,8 @@ pub enum Lang {
     Groovy,
     /// bat's `Dart` (X-169).
     Dart,
+    /// bat's `Perl` (X-170).
+    Perl,
     /// bat's `Haskell`.
     Haskell,
     /// bat's `Literate Haskell`: prose around Haskell's code (Bird tracks, `\begin{code}`,
@@ -505,6 +507,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::Scala, &["scala", "sbt", "sc"]),
     (Lang::Groovy, &["groovy", "gvy", "gradle", "jenkinsfile"]),
     (Lang::Dart, &["dart"]),
+    (Lang::Perl, &["pl", "pm", "pmc", "pod", "t"]),
     (Lang::Haskell, &["hs"]),
     (Lang::LiterateHaskell, &["lhs"]),
     (Lang::Elixir, &["ex", "exs"]),
@@ -619,6 +622,7 @@ impl Lang {
         Lang::Scala,
         Lang::Groovy,
         Lang::Dart,
+        Lang::Perl,
         Lang::Haskell,
         Lang::LiterateHaskell,
         Lang::Elixir,
@@ -697,6 +701,7 @@ impl Lang {
             Lang::Scala => "Scala",
             Lang::Groovy => "Groovy",
             Lang::Dart => "Dart",
+            Lang::Perl => "Perl",
             Lang::Haskell => "Haskell",
             Lang::LiterateHaskell => "Literate Haskell",
             Lang::Elixir => "Elixir",
@@ -785,6 +790,7 @@ impl Lang {
             Lang::Scala => "source.scala",
             Lang::Groovy => "source.groovy",
             Lang::Dart => "source.dart",
+            Lang::Perl => "source.perl",
             Lang::Haskell => "source.haskell",
             Lang::LiterateHaskell => "text.tex.latex.haskell",
             Lang::Elixir => "source.elixir",
@@ -856,6 +862,7 @@ impl Lang {
             Lang::Scala => crate::scala::scopes(kind),
             Lang::Groovy => crate::groovy::scopes(kind),
             Lang::Dart => crate::dart::scopes(kind),
+            Lang::Perl => crate::perl::scopes(kind),
             Lang::Haskell | Lang::LiterateHaskell => crate::haskell::scopes(kind),
             Lang::Elixir => crate::elixir::scopes(kind),
             Lang::Ruby => crate::ruby::scopes(kind),
@@ -1343,7 +1350,12 @@ const FIRST_LINES: &[FirstLineRegex] = &[
         |line| Some(is_php_line(line)),
     ),
     // (?xi: ^\#! .* \bperl\b | ^\# \s* -\*- [^*]* perl [^*]* -\*-)
-    may("Perl", |t| t.has_ci("perl")),
+    decided(
+        "Perl",
+        Lang::Perl,
+        |t| t.has_ci("perl"),
+        |line| Some(is_perl_line(&line.to_ascii_lowercase())),
+    ),
     // ^#!\s*/.*\bpython(\d(\.\d)?)?\b
     decided(
         "Python",
@@ -1761,6 +1773,15 @@ fn is_make_line(lower: &str) -> bool {
     modeline(lower, |text| text.contains("makefile"))
 }
 
+/// Perl's first line, lowercase: `#!` and the word `perl` after it, or a `-*- perl -*-`
+/// modeline.
+fn is_perl_line(lower: &str) -> bool {
+    if lower.starts_with("#!") {
+        return has_word(lower, 2, "perl");
+    }
+    modeline(lower, |text| text.contains("perl"))
+}
+
 /// Ruby's first line, lowercase: `#!` and the word `ruby` or `jruby` after it, or a
 /// `# -*- … ruby … -*-` modeline.
 /// bat's `^#!/.*\b(?:elixirc?|iex)`: a hashbang naming `elixir`, `elixirc` or `iex` at a word's
@@ -1977,7 +1998,7 @@ mod tests {
         for line in lines {
             assert_eq!(Lang::first_line(line), FirstLine::None, "{line}");
         }
-        assert_eq!(Lang::first_line("#!/usr/bin/env perl"), FirstLine::Ask);
+        assert_eq!(Lang::first_line("#!/usr/bin/env escript"), FirstLine::Ask);
         // ignoring case, the Kelvin sign is a `k` and `ſ` an `s`
         assert_eq!(Lang::first_line("#!/usr/bin/ma\u{212a}e"), FirstLine::Ask);
         assert_eq!(

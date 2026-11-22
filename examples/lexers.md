@@ -1232,6 +1232,39 @@ NS_ASSUME_NONNULL_END
 @end
 ```
 
+## Perl
+
+```perl
+use strict;
+use v5.36;
+
+package Greeter 1.0;
+
+=head1 NAME
+
+Greeter - greets users, stored and searched; see L<DBI> and C<greet()>.
+
+=cut
+
+sub new ($class, %args) { return bless { name => 'World', %args }, $class }
+
+sub greeting ($self, $times = 1) {
+    my $name = $self->{name} =~ s/^\s+|\s+$//gr;
+    return "Hello, \U$name\E! " x $times . sprintf('(%d)', length $name);
+}
+
+sub find_users ($dbh, $age) {
+    my $rows = $dbh->selectall_arrayref(
+        'SELECT name FROM users WHERE age > ? ORDER BY name', {}, $age);
+    return map { $_->[0] } @$rows;
+}
+
+my @emails = grep { /^(\w+)@(\w+)\.com$/ } qw(ada@example.com bob@invalid);
+print <<~EOT;
+    Valid: @emails
+    EOT
+```
+
 ## PHP
 
 ```php
