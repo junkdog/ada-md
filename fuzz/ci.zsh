@@ -77,6 +77,11 @@ LANGS=(
   # X-170, X-191: Perl, from its cmin after X-191's 300 s smoke (2026-11-22: its HTML, CSS, JavaScript,
   # JSON and XML bodies and the guest pass on the run path; X-170's corpus had reached 5,955 edges)
   perl 16080 27
+  # X-190: markdown, from its first corpus's cmin (2026-11-22, X-189's seeding and 300 s smoke: 52,100 edges).
+  # A fence's code runs on its language's scanner, so 47 K of those edges are other rows' code: its weight is
+  # the 4,733 outside the other languages' modules (markdown.rs, the shared code, core), or its worker would be
+  # markdown's alone, one lane of the runner's four
+  markdown 4733 36
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done
