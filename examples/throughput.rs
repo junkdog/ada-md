@@ -1,6 +1,7 @@
 //! Throughput in source bytes a second (BEN-009; ada-throughput in the vault): markdown as a
-//! whole (B2's documents), each syntax on its own (generated documents), and ada's own lexers,
-//! stage by stage, each beside the ceiling kernels for that input. Every cell is the median of
+//! whole (B2's documents, and the vault's notes as CommonMark and in Obsidian's dialect), each
+//! syntax on its own (generated documents or notes, 1.2's in the dialect that has them: BEN-019),
+//! and ada's own lexers, stage by stage, each beside the ceiling kernels for that input. Every cell is the median of
 //! its samples of this thread's CPU time, wall time, cycles and instructions, a JSON line on
 //! stdout; progress goes to stderr. Linux only: the counters are `perf_event_open(2)`'s, and
 //! `perf_event_paranoid` must be 1.
@@ -12,7 +13,7 @@
 //! cargo build --release --example throughput
 //! taskset -c 2 target/release/examples/throughput ~/b2/corpus > cells.jsonl
 //! taskset -c 2 target/release/examples/throughput ~/b2/corpus --only xl,prose --samples 5
-//! taskset -c 2 target/release/examples/throughput ~/b2/corpus --vault ~/opt/birb-vault --only vault
+//! taskset -c 2 target/release/examples/throughput ~/b2/corpus --vault ~/opt/birb-vault --only vault,vault-obsidian
 //! # one stage alone, to profile it
 //! taskset -c 2 target/release/examples/throughput ~/b2/corpus --only tables --stages layout --samples 100
 //! ```
@@ -48,7 +49,7 @@ mod linux {
     use std::time::{Duration, Instant};
     use std::{env, fs, process, thread};
 
-    use ada::doc::{self, Block, BlockKind, Doc};
+    use ada::doc::{Block, BlockKind, Doc};
     use ada::highlight::{self, SyntaxTheme};
     use ada::layout::{self, LayoutParams, TableMode};
     use ada::print;
@@ -59,7 +60,7 @@ mod linux {
     use crate::ceilings::{self, Set};
     use crate::common::cpu;
     use crate::counters::{self, Counters};
-    use crate::generate;
+    use crate::generate::{self, Read};
 
     /// Samples a cell; each sample repeats the call until it takes about [`SAMPLE`].
     const SAMPLES: usize = 15;
@@ -76,9 +77,9 @@ mod linux {
     /// B2's print width.
     const WIDTH: u16 = 100;
 
-    /// The markdown inputs: B2's documents, then the generated ones. The vault, when given,
-    /// comes after them.
-    const MARKDOWN: [(&str, Option<&str>); 18] = [
+    /// The markdown inputs: B2's documents, then the generated ones, 1.2's last (BEN-019). The
+    /// vault, when given, comes after them, as CommonMark and then in Obsidian's dialect.
+    const MARKDOWN: [(&str, Option<&str>); 25] = [
         ("s", Some("s.md")),
         ("m", Some("m.md")),
         ("l", Some("l.md")),
@@ -97,6 +98,13 @@ mod linux {
         ("fences", None),
         ("html", None),
         ("long-lines", None),
+        ("math", None),
+        ("prices", None),
+        ("properties", None),
+        ("tags", None),
+        ("highlights", None),
+        ("comments", None),
+        ("embeds", None),
     ];
 
     /// ada's own lexers: id, input file, language, the format's set for C1.
@@ -296,8 +304,10 @@ mod linux {
         bytes: usize,
         /// The generator's version, for a generated input.
         version: Option<u32>,
-        /// How many notes, for the vault.
+        /// How many notes, for the vault and generated notes.
         notes: Option<usize>,
+        /// The dialect a markdown input's texts are read in; empty for a lexer's.
+        dialect: &'a str,
         hash: u64,
     }
 
@@ -311,6 +321,9 @@ mod linux {
         }
         if let Some(n) = input.notes {
             write!(line, ",\"notes\":{n}").unwrap();
+        }
+        if !input.dialect.is_empty() {
+            write!(line, ",\"dialect\":\"{}\"", input.dialect).unwrap();
         }
         write!(
             line,
@@ -330,16 +343,20 @@ mod linux {
     }
 
     /// The code blocks as `txt`, so print doesn't highlight: highlighting is the lexers' and
-    /// ada-highlighting's, and runs on a thread of its own the counters don't see.
+    /// ada-highlighting's, and runs on a thread of its own the counters don't see. Front
+    /// matter's source too: print highlights it though it shows the rows at the commits before
+    /// PRN-006, which `run.zsh` measures with this harness, so every commit's cell is the same.
     fn plain(doc: &mut Doc) {
         fn walk(blocks: &mut [Block]) {
             for block in blocks {
                 match &mut block.kind {
                     BlockKind::Code(code) => code.lang = Some("txt".into()),
+                    BlockKind::Properties(p) => p.source.lang = Some("txt".into()),
                     BlockKind::List(list) => {
                         list.items.iter_mut().for_each(|i| walk(&mut i.blocks));
                     }
                     BlockKind::Quote { blocks, .. } => walk(blocks),
+                    BlockKind::Embed(e) => walk(&mut e.blocks),
                     _ => {}
                 }
             }
@@ -414,12 +431,17 @@ mod linux {
             }
         }
 
-        /// An input's cells over each of `texts` in turn, one document or the vault's notes: the
-        /// ceilings, pulldown-cmark's HTML renderer, and ada's stages. A call's result is the
-        /// results for every text, freed after the sample.
-        fn cells(&self, input: &Input, texts: &[String], params: LayoutParams) {
+        /// An input's cells over each of `texts` in turn, one document or notes, each read as
+        /// `read` says: the ceilings, pulldown-cmark's HTML renderer, and ada's stages. A call's
+        /// result is the results for every text, freed after the sample.
+        fn cells(&self, input: &Input, texts: &[&str], read: &Read, params: LayoutParams) {
             let theme = self.theme;
-            let bytes = || texts.iter().map(String::as_bytes);
+            let bytes = || texts.iter().map(|t| t.as_bytes());
+            let parse = || {
+                (texts.iter().enumerate())
+                    .map(|(i, t)| read.parse(i, t))
+                    .collect::<Vec<_>>()
+            };
             self.cell(input, "c0", "", || {
                 bytes().map(ceilings::read).fold(0, u64::wrapping_add)
             });
@@ -434,13 +456,9 @@ mod linux {
             self.cell(input, "html", "", || {
                 texts.iter().map(|t| ceilings::html(t)).collect::<Vec<_>>()
             });
-            self.cell(input, "parse", "", || {
-                texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
-            });
+            self.cell(input, "parse", "", parse);
             if self.args.stage("drop") {
-                let (s, short) = measure_drop(self.counters, self.samples, || {
-                    texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
-                });
+                let (s, short) = measure_drop(self.counters, self.samples, parse);
                 if short {
                     eprintln!(
                         "  {}: a drop sample under {} µs ({} reps)",
@@ -463,7 +481,7 @@ mod linux {
                 return;
             }
 
-            let docs: Vec<Doc> = texts.iter().map(|t| doc::parse(t)).collect();
+            let docs = parse();
             let runs: Vec<&str> = docs.iter().flat_map(ceilings::text_of).collect();
             let words = ceilings::Text::new(&runs);
             let extra = format!(",\"text_bytes\":{}", words.len());
@@ -482,7 +500,7 @@ mod linux {
                 return;
             }
 
-            let mut docs: Vec<Doc> = texts.iter().map(|t| doc::parse(t)).collect();
+            let mut docs = parse();
             docs.iter_mut().for_each(plain);
             let render = || {
                 docs.iter()
@@ -546,13 +564,31 @@ mod linux {
         };
 
         for (id, file) in MARKDOWN.into_iter().filter(|(id, _)| wanted(id)) {
-            let (text, group, version) = match file {
-                Some(file) => (read(&args.corpus, file), "whole", None),
+            let g = match file {
+                Some(_) => None,
                 None => {
                     let g = generate::by_id(id).expect("a generator");
-                    g.check(&doc::parse(&g.text))
+                    let texts = g.texts();
+                    let docs: Vec<Doc> = (texts.iter().enumerate())
+                        .map(|(i, t)| g.read.parse(i, t))
+                        .collect();
+                    g.check(&docs)
                         .unwrap_or_else(|e| fail(&format!("generator {id}: {e}")));
-                    (g.text, "syntax", Some(g.version))
+                    Some(g)
+                }
+            };
+            let whole;
+            let (text, texts, reader, group, version) = match &g {
+                Some(g) => (&g.text, g.texts(), &g.read, "syntax", Some(g.version)),
+                None => {
+                    whole = read(&args.corpus, file.expect("a file"));
+                    (
+                        &whole,
+                        vec![whole.as_str()],
+                        &Read::COMMONMARK,
+                        "whole",
+                        None,
+                    )
                 }
             };
             let input = Input {
@@ -560,10 +596,14 @@ mod linux {
                 group,
                 bytes: text.len(),
                 version,
-                notes: None,
+                notes: (texts.len() > 1).then_some(texts.len()),
+                dialect: reader.dialect(),
                 hash: generate::fnv1a(text.as_bytes()),
             };
-            eprintln!("{id}: {} bytes", text.len());
+            match input.notes {
+                Some(n) => eprintln!("{id}: {n} notes, {} bytes", text.len()),
+                None => eprintln!("{id}: {} bytes", text.len()),
+            }
             // the distribution under pressure: a grid however wide, not record cards
             let params = match id {
                 "table-wide" => LayoutParams {
@@ -572,22 +612,33 @@ mod linux {
                 },
                 _ => params,
             };
-            markdown.cells(&input, &[text], params);
+            markdown.cells(&input, &texts, reader, params);
         }
 
-        if let Some(dir) = args.vault.as_deref().filter(|_| wanted("vault")) {
+        // the vault as CommonMark, the series since BEN-009, then as a vault of Obsidian's
+        // reads it (its embeds links: transcluding is the embeds row's)
+        let vaults = [
+            ("vault", Read::COMMONMARK),
+            ("vault-obsidian", Read::OBSIDIAN),
+        ];
+        let vaults: Vec<_> = vaults.into_iter().filter(|(id, _)| wanted(id)).collect();
+        if let Some(dir) = args.vault.as_deref().filter(|_| !vaults.is_empty()) {
             let texts = notes(dir);
             let all = texts.concat();
-            let input = Input {
-                id: "vault",
-                group: "whole",
-                bytes: all.len(),
-                version: None,
-                notes: Some(texts.len()),
-                hash: generate::fnv1a(all.as_bytes()),
-            };
-            eprintln!("vault: {} notes, {} bytes", texts.len(), all.len());
-            markdown.cells(&input, &texts, params);
+            let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+            for (id, reader) in &vaults {
+                let input = Input {
+                    id,
+                    group: "whole",
+                    bytes: all.len(),
+                    version: None,
+                    notes: Some(texts.len()),
+                    dialect: reader.dialect(),
+                    hash: generate::fnv1a(all.as_bytes()),
+                };
+                eprintln!("{id}: {} notes, {} bytes", texts.len(), all.len());
+                markdown.cells(&input, &texts, reader, params);
+            }
         }
 
         let syntax_theme = SyntaxTheme::new(&theme.syntax);
@@ -601,6 +652,7 @@ mod linux {
                 bytes: text.len(),
                 version: None,
                 notes: None,
+                dialect: "",
                 hash: generate::fnv1a(text.as_bytes()),
             };
             eprintln!("{id}: {} bytes", text.len());

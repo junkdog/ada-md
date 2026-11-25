@@ -3,6 +3,68 @@
 The important changes in each release of ada, newest first. A release includes the changes of the pre-releases
 before it.
 
+## [1.2.0](https://github.com/junkdog/ada-md/compare/v1.1.0..v1.2.0) (unreleased)
+
+ada 1.2 reads an Obsidian vault as Obsidian shows it, and pages git and man in place of delta and less: diffs and
+`git blame` in their files' languages. 73 languages on ada-parse's lexers, up from 61.
+<!-- 1.2 release, item 5: add "at 1.1's speed or better" to the lead only if the bar is measured as met. -->
+
+### Obsidian vaults
+
+- A note under a `.obsidian` folder reads in Obsidian's flavor: a single newline breaks the line, unless the vault
+  turns on strict line breaks; `%%comments%%` are hidden, `#tags` are drawn as pills and a block's `^id` is hidden.
+  `--flavor`, or `flavor` under `[markdown]`, reads every note one way, `commonmark` or `obsidian`, stdin too.
+- Callouts: GitHub's five kinds and Obsidian's thirteen with their aliases, titles with markup, nesting; one that
+  folds shows `▾` and starts open.
+- Math in any note, `$…$` and `$$…$$`, typeset as Unicode text: `\mathbb{R}` as ℝ, scripts, fractions, display
+  math centered with its rows aligned on `&`, matrices and cases drawn tall. Search finds it by what it shows and by
+  its TeX. A price, $5 or $10, stays text.
+- An embed alone in its paragraph, `![[note]]`, `![[note#Heading]]` or `![[note#^id]]`, draws that note, the
+  heading's section or the block in place under its link, and reloads when that note changes.
+- Front matter, YAML or TOML, shows as the note's properties: a dim row for each key, `tags` as tags, `[[links]]`
+  to follow. `p` hides them, and `properties = "source"` shows the front matter as written. A `title` heads the
+  outline of a note without an H1.
+- Links find a note by the `aliases` in its front matter, a heading under another (`[[note#A#B]]`) and a block
+  (`[[note#^id]]`); a markdown link's path is found from the vault's root too, as Obsidian's absolute link format
+  writes it.
+- `==highlights==` on the theme's highlight color, in any flavor; the task statuses of Obsidian's themes and the
+  Tasks plugin (`[/]`, `[-]`, `[>]`, `[<]`, `[!]`, `[?]`, `[*]`) as task boxes of their own; `![[cat.png|200]]`
+  caps the image at 200 pixels across; an Excalidraw drawing shows its text without the plugin's data.
+
+### A pager for git and man
+
+- `git config --global core.pager 'ada -F'`: diffs in their files' languages, context and combined diffs too,
+  changed words picked out, `n` `N` between files and commits and `o` listing them. `git blame` in the file's
+  language. `--color-only` is git's `interactive.diffFilter`.
+- `-F` prints and exits when the text fits on the screen, as `less -F` does.
+- `MANPAGER='ada -F'`: man pages highlighted from `man`'s own output, C in their synopses, and `o` lists their
+  sections.
+- Piped text in its own colors keeps them (`ls -l --color=always | ada`), but a diff, which ada highlights itself;
+  `-l ansi` keeps any input's.
+
+### Highlighting
+
+- Dart, with SQL and regexes in its strings.
+- Perl, its regexes in Perl's dialect and its here-documents' code in their languages.
+- Assembly: x86 and x86-64, ARM, RISC-V, MIPS, Z80, 6502 and 68k.
+- Git's config files, and markdown as source, each fence's code in its language: a note in a diff or `git blame`.
+
+### Changes
+
+- In an Obsidian vault, single line breaks, `%%comments%%`, tags and block ids follow Obsidian; `--flavor
+  commonmark` reads a note as 1.1 did.
+- Front matter shows as property rows instead of a code block; `properties = "source"` shows it as 1.1 did.
+- A theme from before 1.2 gets highlights (reversed) and tags (its inline code's style) derived.
+- A code file in the viewer drops the code block's label and closing rows, as `--print` did in 1.1.
+
+### Fixes
+
+- `e` in vim, neovim, gvim, mvim and `view` opens with ada's top line at the top of the window, not partway down.
+- A cell both bold and dim shows bold, in every frame, on a terminal with one intensity (WezTerm).
+<!-- 1.2 release, item 1: Dependabot's #9 (unicode-width 0.2.3, Unicode 18's widths), if users see it change. -->
+
+<!-- 1.2 release, item 5: a Performance section from the bar's measurements against v1.1.0, if there's a win to state. -->
+
 ## [1.1.0](https://github.com/junkdog/ada-md/compare/v1.0.0..v1.1.0) (2026-11-18)
 
 ada 1.1 runs on Windows, and highlights code with lexers of its own: 61 languages on ada-parse's scanners, for most

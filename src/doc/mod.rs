@@ -22,7 +22,7 @@ use crate::diagram::Diagram;
 pub use embed::{Embed, Embedded, Embeds};
 pub use fence::language as fence_language;
 pub use flavor::{Dialect, Flavor, Vault};
-pub use parse::{parse, parse_as, parse_with};
+pub use parse::{options, parse, parse_as, parse_with};
 
 pub type LinkId = u32;
 pub type AnchorId = u32;
@@ -724,6 +724,25 @@ impl Doc {
             }
         });
         out.into_iter().flatten().collect()
+    }
+
+    /// The code blocks a layout shows as code, the ones print highlights: every fenced block,
+    /// and the note's own front matter when `as_written` says it shows as written (as
+    /// [`crate::layout::PropertiesMode::as_written`] does). An embedded note's never shows.
+    /// Before, any note with front matter cost print a highlight thread and a YAML highlight
+    /// (PRN-006). In source order, not indexed by id as [`Doc::code_blocks`] is.
+    pub fn shown_code(&self, as_written: impl Fn(&Properties) -> bool) -> Vec<&CodeBlock> {
+        let own = self
+            .properties()
+            .filter(|&p| as_written(p))
+            .map(|p| p.source.id);
+        let mut out = Vec::new();
+        self.each_block(&mut |block| match &block.kind {
+            BlockKind::Code(code) => out.push(code),
+            BlockKind::Properties(p) if Some(p.source.id) == own => out.push(&p.source),
+            _ => {}
+        });
+        out
     }
 
     /// The tables, indexed by [`Table::id`].

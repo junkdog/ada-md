@@ -3,8 +3,8 @@
 
 use std::hint::black_box;
 
-use ada::doc::{BlockKind, Doc, Inlines};
-use pulldown_cmark::{Options, Parser, html};
+use ada::doc::{self, BlockKind, Doc, Inlines};
+use pulldown_cmark::{Parser, html};
 use unicode_width::UnicodeWidthStr;
 
 /// C0: the input summed as `u64` words, once. Nothing that reads its input beats it.
@@ -206,22 +206,12 @@ pub fn widths(text: &Text) -> (usize, usize) {
     (width, breaks)
 }
 
-/// `doc::parse`'s options, which its module keeps private: keep the two the same.
-pub fn options() -> Options {
-    Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_GFM
-        | Options::ENABLE_WIKILINKS
-        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-}
-
-/// C2: pulldown-cmark's events with ada's options and offsets, and no IR. ada's parse can't beat
-/// it while it keeps pulldown-cmark.
+/// C2: pulldown-cmark's events with ada's options ([`doc::options`], BEN-019) and offsets, and no
+/// IR, over the text as written. ada's parse can't beat it while it keeps pulldown-cmark. (ada's
+/// own reads past a note's front matter and, in Obsidian's dialect, without its `%%` comments.)
 pub fn events(text: &str) -> usize {
     let mut n = 0;
-    for event in Parser::new_ext(text, options()).into_offset_iter() {
+    for event in Parser::new_ext(text, doc::options()).into_offset_iter() {
         black_box(&event);
         n += 1;
     }
@@ -232,6 +222,6 @@ pub fn events(text: &str) -> usize {
 /// full renderer, not a ceiling.
 pub fn html(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 3 / 2);
-    html::push_html(&mut out, Parser::new_ext(text, options()));
+    html::push_html(&mut out, Parser::new_ext(text, doc::options()));
     out
 }

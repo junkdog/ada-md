@@ -46,7 +46,7 @@ a session into a bug report.
 
 ## Performance
 
-ada is measured against nine other terminal markdown viewers, five of them interactive, and bat,
+ada is measured against twelve other terminal markdown viewers, eight of them interactive, and bat,
 on wall time, CPU and memory, and leads on nearly every measurement:
 
 - **Reading:** first paint, scrolling, search, resize and reload, from a short note to a 2 MB one.
@@ -323,7 +323,7 @@ are reported with the file, line and column.
 
 Code and config files (`main.rs`, `Cargo.lock`, `Makefile`, `.zshrc`, or a `#!` first line) are
 highlighted, with the git gutter, search, `e` and `--line` working on their lines. ada's own lexers
-cover 70 languages, plus SQL and regexes inside other languages' strings; the other languages bat
+cover 73 languages, plus SQL and regexes inside other languages' strings; the other languages bat
 knows open plain, as does other text. Binary files aren't shown. The lexers are a library on
 crates.io, [ada-parse](https://crates.io/crates/ada-parse), versioned with ada.
 

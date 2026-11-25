@@ -122,8 +122,29 @@ impl Selectors {
     /// The selectors of `rules`, rule `i` the `i`th; a rule whose selectors don't parse (a
     /// scope of over eight atoms) is left out.
     pub fn new<'a>(rules: impl IntoIterator<Item = &'a str>) -> Self {
+        Self::of(rules.into_iter().enumerate())
+    }
+
+    /// [`Selectors::new`] of only the rules that may match a stack whose scopes each begin with
+    /// one of `firsts`' atoms, rule `i` still the `i`th. A selector matches through the scopes of
+    /// its path, each a prefix of one of the stack's, so a rule naming none of `firsts` matches
+    /// only by a path of empty scopes, or of none: the rest are left out unparsed (PRN-008: a
+    /// theme's diff tints look up two stacks).
+    pub fn for_firsts<'a>(rules: impl IntoIterator<Item = &'a str>, firsts: &[&str]) -> Self {
+        let may_match = |rule: &str| {
+            firsts.iter().any(|f| rule.contains(f))
+                || rule.split([',', '|']).any(|sel| {
+                    let path = sel.split(" -").next().unwrap_or_default();
+                    path.chars().all(|c| c == '.' || c.is_whitespace())
+                })
+        };
+        Self::of(rules.into_iter().enumerate().filter(|(_, r)| may_match(r)))
+    }
+
+    /// The selectors of `rules`, each with its index.
+    fn of<'a>(rules: impl IntoIterator<Item = (usize, &'a str)>) -> Self {
         let mut out = Selectors::default();
-        for (i, rule) in rules.into_iter().enumerate() {
+        for (i, rule) in rules {
             let Some(selectors) = rule
                 .split([',', '|'])
                 .map(Selector::parse)
@@ -237,5 +258,46 @@ mod tests {
         assert_eq!(rule(&rules, "source string"), 1);
         // trailing dots and blanks are trimmed, as syntect trims them
         assert_eq!(rule(&["string. "], "source string.quoted"), 0);
+    }
+
+    /// `for_firsts` leaves out only rules that can't match: on every built-in theme's rules, and
+    /// on selectors of empty scopes or of no path, which match any stack, each stack takes the
+    /// rule it takes among all of them.
+    #[test]
+    fn rules_for_some_firsts_pick_as_all_rules_do() {
+        let mut themes: Vec<Vec<String>> = crate::theme::Theme::builtins()
+            .iter()
+            .map(|t| t.syntax.iter().map(|(s, _)| s.clone()).collect())
+            .collect();
+        let corners = [
+            "keyword",
+            " - comment",
+            "markup.inserted",
+            "x, . ",
+            "a .",
+            "source",
+        ];
+        themes.push(corners.map(String::from).to_vec());
+        themes.push(corners[..3].iter().copied().map(String::from).collect());
+        let stacks = [
+            "source.diff markup.inserted.diff",
+            "source.diff markup.deleted.diff",
+            "source.diff comment.line",
+            "text.plain",
+        ];
+        for rules in &themes {
+            let all = Selectors::new(rules.iter().map(String::as_str));
+            for stack in stacks {
+                let stack: Vec<&str> = stack.split_whitespace().collect();
+                let firsts: Vec<&str> =
+                    stack.iter().map(|s| s.split('.').next().unwrap()).collect();
+                let some = Selectors::for_firsts(rules.iter().map(String::as_str), &firsts);
+                assert_eq!(
+                    some.rule(&stack),
+                    all.rule(&stack),
+                    "{stack:?} in {rules:?}"
+                );
+            }
+        }
     }
 }

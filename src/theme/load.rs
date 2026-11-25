@@ -126,7 +126,29 @@ fn resolve(name: &str, warnings: &mut Vec<String>, depth: u32) -> Result<Theme, 
         return Err(format!("theme \"{name}\": the `extends` chain is too deep"));
     }
     let (file, text) = find(name)?;
-    load_str(&file, &text, warnings, depth)
+    // a dark built-in is compiled in, its TOML parsed only by the test that checks it (PRN-008)
+    let compiled = file
+        .strip_prefix("builtin:")
+        .and_then(super::compiled::theme);
+    let mut theme = match compiled {
+        Some(theme) => theme,
+        None => of_text(&file, &text, warnings, depth)?,
+    };
+    if depth == 0 {
+        theme.derive();
+    }
+    Ok(theme)
+}
+
+/// A built-in theme by its name in [`BUILTIN`] and its TOML, as [`load`] gives it.
+pub(crate) fn builtin(name: &str, text: &str) -> Theme {
+    let mut theme = match super::compiled::theme(name) {
+        Some(theme) => theme,
+        None => of_text(&format!("builtin:{name}"), text, &mut Vec::new(), 0)
+            .expect("the built-in themes are valid"),
+    };
+    theme.derive();
+    theme
 }
 
 fn find(name: &str) -> Result<(String, Cow<'static, str>), String> {
@@ -162,6 +184,21 @@ pub fn load_str(
     warnings: &mut Vec<String>,
     depth: u32,
 ) -> Result<Theme, String> {
+    let mut theme = of_text(file, text, warnings, depth)?;
+    if depth == 0 {
+        theme.derive();
+    }
+    Ok(theme)
+}
+
+/// [`load_str`] without the passes a whole theme takes ([`Theme::derive`]): what an `extends`
+/// builds on, and what a compiled built-in holds.
+pub(crate) fn of_text(
+    file: &str,
+    text: &str,
+    warnings: &mut Vec<String>,
+    depth: u32,
+) -> Result<Theme, String> {
     let root = toml_walk::parse(file, text)?;
     let root = root.get_ref();
     let mut cx = Cx {
@@ -177,11 +214,6 @@ pub fn load_str(
         None => Theme::empty(),
     };
     apply(&mut theme, root, &mut cx)?;
-    // from the theme as a whole, the one it extends under it (X-174)
-    if depth == 0 {
-        theme.derive_tints();
-        theme.derive_marks();
-    }
     Ok(theme)
 }
 

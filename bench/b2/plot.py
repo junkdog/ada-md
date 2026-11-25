@@ -24,7 +24,7 @@ if os.path.exists(f"{S}/ada-ref") and len(others.split()) != 2:
     sys.exit("plot: these are an ada-only rerun's records: set B2_OTHERS='COMMIT DATE', the full run the other "
              "tools' cells are from")
 # treemd HEAD rather than 0.9.1: it is the faster of the two, and 0.9.1's search lands on the wrong row
-VIEWERS = ["ada", "leaf", "mdfried", "mdtui", "treemd-head", "glow"]
+VIEWERS = ["ada", "leaf", "mdfried", "mdtui", "treemd-head", "glow", "basalt", "ekphos", "emeraldian"]
 PANELS = [("first paint", "first", 1), ("CPU per line scroll", "line CPU", 1), ("search", "search", 1),
           ("resize, cold", "resize", 1), ("held page-down CPU", "burst CPU", 1), ("peak RSS", "rss", 1)]
 PRINTERS = ["ada", "leaf", "mdcat", "rich", "mcat", "glow", "bat", "lowdown"]

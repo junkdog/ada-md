@@ -319,9 +319,30 @@ impl Projection {
         // the unit's every segment for every match was quadratic: a paragraph has a segment a
         // row (fuzz round 10: 1.6 KB at one column took 3.1 s).
         // Sorted as (unit, start) packed in one key beside the segment's index, so neither the
-        // sort nor the searches look a segment up.
+        // sort nor the searches look a segment up. Only the segments of units a match is in:
+        // sorting all of them was half of a warm search on a 2 MB note (SRCH-003).
         let key = |unit: UnitId, at: u32| (u64::from(unit) << 32) | u64::from(at);
+        let mut wanted = vec![0u64; map.units.len().div_ceil(64)];
+        let mut hidden_matches = false;
+        for m in matches {
+            let unit = match map.units.get(m.unit as usize).map(|u| u.kind) {
+                Some(UnitKind::Visible) => m.unit,
+                Some(UnitKind::Behind { unit, .. }) => unit,
+                Some(UnitKind::Hidden { .. }) => {
+                    hidden_matches = true;
+                    continue;
+                }
+                None => continue,
+            };
+            if let Some(w) = wanted.get_mut(unit as usize / 64) {
+                *w |= 1 << (unit % 64);
+            }
+        }
+        let is_wanted = |unit: UnitId| {
+            (wanted.get(unit as usize / 64)).is_some_and(|w| w & (1 << (unit % 64)) != 0)
+        };
         let mut by_unit: Vec<(u64, u32)> = (layout.search.iter().enumerate())
+            .filter(|(_, s)| is_wanted(s.unit))
             .map(|(i, s)| (key(s.unit, s.start), i as u32))
             .collect();
         by_unit.sort_unstable();
@@ -331,8 +352,12 @@ impl Projection {
             let same = k > 0 && by_unit[k - 1].0 >> 32 == at >> 32;
             reach.push(if same { reach[k - 1].max(end) } else { end });
         }
-        let mut by_link: Vec<u32> = (0..layout.hits.len() as u32).collect();
-        by_link.sort_by_key(|&i| layout.hits[i as usize].link);
+        // the link hits by link, for matches in links' hidden text, when there are any
+        let mut by_link: Vec<u32> = Vec::new();
+        if hidden_matches {
+            by_link.extend(0..layout.hits.len() as u32);
+            by_link.sort_by_key(|&i| layout.hits[i as usize].link);
+        }
         let nowrap = !layout.params.code_wrap;
 
         let mut cells = Vec::new();

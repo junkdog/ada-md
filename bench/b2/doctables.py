@@ -14,9 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the 
 import timeouts
 
 S = os.environ.get("B2_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "root")
-V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow"]
+V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow", "basalt", "ekphos", "emeraldian"]
 NAME = {"ada": "**ada**", "treemd": "treemd 0.9.1", "treemd-head": "treemd HEAD", "leaf": "leaf", "mdfried": "mdfried",
-        "mdtui": "md-tui", "glow": "glow"}
+        "mdtui": "md-tui", "glow": "glow", "basalt": "basalt", "ekphos": "ekphos", "emeraldian": "emeraldian"}
 DOCS = ["s", "m", "l", "xl"]
 runs = defaultdict(list)
 for line in open(f"{S}/b2/all.jsonl"):

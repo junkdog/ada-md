@@ -9,7 +9,7 @@ for l in open(f"{S}/b2/all.jsonl"):
     r = json.loads(l)
     v, d = r["name"].rsplit("-", 1)
     runs[(v, d)].append(r)
-V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow"]
+V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow", "basalt", "ekphos", "emeraldian"]
 # BEN-003 (2026-11-03): first paint, end, search and reload rank on when the screen's text is final, if every record
 # has those times (doctables.py says why)
 FRAME = os.environ.get("B2_RANK") == "frame" and bool(runs) and all("first_frame_ms" in r for rs in runs.values() for r in rs)

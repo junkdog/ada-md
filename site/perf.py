@@ -58,6 +58,7 @@ MISSING = [("search", "glow", None, "has no search"),
            (None, "mdtui", "XL", "never finished parsing"),
            ("resize, cold", "mdtui", None, "re-parses for seconds"),
            ("search", "mdfried", "XL", "match off-screen"),
+           ("search", "basalt", None, "searches the whole vault only"),
            ("mermaid, gantt charts", "mmdflux", None, "draws no gantt charts"),
            ("mermaid, class diagrams", "mermaid-text", None, "fails on two of the three")]
 MISSING += [(None, "mcat", f, "plays a GIF as a video, without end")
@@ -281,7 +282,7 @@ def proof():
     text = open(f"{PLOTS}/interactive.dat").read()
     first, total = re.search(r"ada first in (\d+) of (\d+)", text).groups()
     others = len(re.search(r"^# doc (.*)$", text, re.M)[1].split()) - 1
-    words = {4: "four", 5: "five", 6: "six", 7: "seven"}
+    words = {4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven"}
     return (f'<p class="proof"><a href="#performance">First in {first} of {total} measurements</a> against '
             f'{words.get(others, others)} other terminal viewers, on time, CPU and memory.</p>')
 

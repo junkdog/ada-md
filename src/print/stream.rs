@@ -238,29 +238,28 @@ fn line_too_long() -> io::Error {
 /// Where the next piece of `buf` ends: on the newline that ends its `lines`th line, or else the
 /// last newline in its first `piece` bytes, or else the first one after them (`scanned` bytes
 /// past them are known to hold none). Never on the first byte, which would make a piece of a
-/// lone empty line. `None` until `buf` holds a piece.
+/// lone empty line. `None` until `buf` holds a piece. The newlines are found by memchr's vector
+/// search: a byte at a time, the reader's scans were 14% of a log's print's instructions, on
+/// the one thread that feeds the rest, which waited on it (HL-011).
 fn cut(buf: &[u8], scanned: usize, limits: Limits) -> Option<usize> {
     let head = &buf[..buf.len().min(limits.piece)];
-    let mut last = None;
-    let newlines = head.iter().enumerate().filter(|&(_, &b)| b == b'\n');
-    for (n, (i, _)) in newlines.enumerate() {
-        // at the first byte only with `lines` 1, which the fuzzer sets: take the next newline
-        if n + 1 >= limits.lines && i > 0 {
-            return Some(i);
-        }
-        last = Some(i);
+    let mut newlines = memchr::memchr_iter(b'\n', head);
+    // at the first byte only with `lines` 1, which the fuzzer sets: take the next newline
+    let nth = match newlines.nth(limits.lines - 1) {
+        Some(0) => newlines.next(),
+        nth => nth,
+    };
+    if nth.is_some() {
+        return nth;
     }
     if buf.len() < limits.piece {
         return None;
     }
-    if let Some(c) = last.filter(|&c| c > 0) {
+    if let Some(c) = memchr::memrchr(b'\n', head).filter(|&c| c > 0) {
         return Some(c);
     }
     let from = scanned.max(limits.piece);
-    buf[from..]
-        .iter()
-        .position(|&b| b == b'\n')
-        .map(|c| from + c)
+    memchr::memchr(b'\n', &buf[from..]).map(|c| from + c)
 }
 
 /// A run of whole lines of the input.
@@ -349,7 +348,7 @@ impl Stream {
                 self.lines
             },
         };
-        let workers = thread::available_parallelism().map_or(1, |n| n.get().min(8));
+        let workers = crate::cores();
         app::arenas(workers);
         // pieces read and not yet written: bounds the memory
         let in_flight = 2 * workers;
@@ -486,7 +485,7 @@ fn read_pieces(
             text,
         };
         index += 1;
-        let newlines = p.text.bytes().filter(|&b| b == b'\n').count();
+        let newlines = memchr::memchr_iter(b'\n', p.text.as_bytes()).count();
         line = u32::try_from(newlines)
             .ok()
             .and_then(|n| line.checked_add(n))

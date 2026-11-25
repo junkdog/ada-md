@@ -942,6 +942,7 @@ impl State {
                 };
                 if let Some(old) = self.doc.as_ref().filter(|d| d.path == doc.path) {
                     doc.keep_sorts(old, glyphs, params);
+                    doc.keep_links(old);
                 }
                 cmds.extend(nav::resolve_cmd(&doc));
                 doc
@@ -1118,10 +1119,13 @@ impl State {
             .map(|&b| (b, true))
             .chain(rest.map(|b| (b, false)))
         {
-            let Some(code) = blocks.get(block as usize) else {
+            // the layout's key: a block it didn't lay out has none, as front matter shown as
+            // rows and an embedded note's (PRN-006); `highlight_visible` asks once one shows
+            let key = doc.layout.code.get(block as usize).and_then(|c| c.key);
+            let (Some(code), Some(key)) = (blocks.get(block as usize), key) else {
                 continue;
             };
-            let (Some(key), Some(lang)) = (highlight::key(code), &code.lang) else {
+            let Some(lang) = &code.lang else {
                 continue;
             };
             if !self.highlights.wants(key) {
@@ -1152,7 +1156,8 @@ impl State {
         cmds
     }
 
-    /// Move blocks that scrolled into view to the front of the worker's queue.
+    /// Move blocks that scrolled into view to the front of the worker's queue, and ask for one
+    /// never asked for: front matter that `p` or the settings show as written (PRN-006).
     fn highlight_visible(&mut self) -> Vec<Cmd> {
         let Some(doc) = &self.doc else {
             return Vec::new();
@@ -1162,6 +1167,9 @@ impl State {
             let Some(key) = doc.layout.code.get(block as usize).and_then(|c| c.key) else {
                 continue;
             };
+            if self.highlights.wants(key) {
+                self.highlights.request(key);
+            }
             if self.highlights.urge(key) {
                 cmds.extend(self.job(doc, block, key, true));
             }
@@ -1753,6 +1761,48 @@ mod tests {
         state
     }
 
+    /// Front matter shown as rows isn't highlighted; shown as written, it is, asked for once it
+    /// shows (PRN-006).
+    #[test]
+    fn properties_are_highlighted_only_as_written() {
+        let jobs = |cmds: &[Cmd]| {
+            (cmds.iter())
+                .filter_map(|c| match c {
+                    Cmd::Highlight(job) => Some(job.lang.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut state = State::new(Theme::builtin(), Config::default());
+        update(
+            &mut state,
+            Msg::Init {
+                size: Size { w: 60, h: 20 },
+            },
+        );
+        let cmds = update(
+            &mut state,
+            Msg::DocLoaded {
+                path: "t.md".into(),
+                mtime: None,
+                text: "---\ntags: [a]\n---\n# Note\n\n```sh\nls\n```\n".into(),
+                vault: Vault::None,
+                embeds: Default::default(),
+                doc: Computed(None),
+            },
+        );
+        assert_eq!(jobs(&cmds), ["sh"]);
+        state.config.properties = PropertiesMode::Source;
+        update(&mut state, Msg::ToggleProperties);
+        let cmds = update(&mut state, Msg::ToggleProperties);
+        assert_eq!(state.properties, PropertiesMode::Source);
+        assert_eq!(jobs(&cmds), ["yaml"]);
+        // asked for once: hidden and shown again, it's pending or done
+        update(&mut state, Msg::ToggleProperties);
+        let cmds = update(&mut state, Msg::ToggleProperties);
+        assert_eq!(jobs(&cmds), Vec::<String>::new());
+    }
+
     /// `p` hides a note's properties and shows them again, as the config shows them; with the
     /// config hiding them, as rows. A title heads the heading path of a note without an H1.
     #[test]
@@ -2337,6 +2387,49 @@ mod tests {
 
     fn path(state: &State) -> &str {
         state.doc.as_ref().unwrap().path.to_str().unwrap()
+    }
+
+    /// RLD-002: a reload starts each link to a target the old document had where the
+    /// resolver's answer left it, so its frame shows them as they were; a new target waits,
+    /// and the resolver is asked again for every one, to correct a file that came or went.
+    #[test]
+    fn a_reload_keeps_its_links_answers_until_the_resolvers() {
+        let mut state = walker();
+        let edited = format!("{}\nand [c](c.md) too\n", linked());
+        let cmds = load_at(&mut state, "a.md", &edited);
+        let doc = state.doc.as_ref().unwrap();
+        let state_of = |dest: &str| {
+            let id = doc.doc.links.iter().position(|l| *l.dest == *dest);
+            &doc.links[id.unwrap_or_else(|| panic!("no link to {dest}"))]
+        };
+        assert_eq!(
+            *state_of("b.md#part-two"),
+            LinkState::Doc {
+                path: "b.md".into(),
+                frag: Some("part-two".into())
+            }
+        );
+        assert_eq!(
+            *state_of("gone"),
+            LinkState::Broken("no such file: gone.md".into())
+        );
+        assert_eq!(*state_of("c.md"), LinkState::Pending);
+        let asked = cmds.iter().find_map(|c| match c {
+            Cmd::ResolveLinks { targets, .. } => Some(targets.len()),
+            _ => None,
+        });
+        assert_eq!(asked, Some(3));
+
+        // another file of the same name starts from nothing
+        let cmds = load_at(&mut state, "sub/a.md", &edited);
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::ResolveLinks { .. })));
+        let doc = state.doc.as_ref().unwrap();
+        let pending = doc
+            .links
+            .iter()
+            .filter(|s| **s == LinkState::Pending)
+            .count();
+        assert_eq!(pending, 3);
     }
 
     #[test]

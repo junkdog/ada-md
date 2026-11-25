@@ -33,6 +33,9 @@ pub struct Effects {
     resolver: Arc<dyn Resolver + Send + Sync>,
     /// Where git runs post their results; without it, git runs inline.
     git: Option<Sender<Msg>>,
+    /// Where a document's links, resolved on a thread of their own, post; without it, they're
+    /// resolved inline. A vault's first alias lookup reads every note's front matter (RLD-001).
+    links: Option<Sender<Msg>>,
     /// The terminal's image support, as the probe found it (or, replaying live, `Msg::Graphics`
     /// gave it). Without it, images are encoded as half-blocks.
     encoder: Option<images::Encoder>,
@@ -57,6 +60,7 @@ impl Effects {
             highlight: None,
             resolver: Arc::new(BuiltinResolver),
             git: None,
+            links: None,
             encoder: None,
             images: None,
             image_results: None,
@@ -94,6 +98,7 @@ impl Effects {
     pub fn spawn_workers(&mut self, tx: &Sender<Msg>) {
         self.highlight = Some(highlight::spawn_worker(tx.clone()));
         self.git = Some(tx.clone());
+        self.links = Some(tx.clone());
         self.image_results = Some(tx.clone());
         if let Some(encoder) = self.encoder.take() {
             self.set_encoder(encoder);
@@ -158,12 +163,23 @@ impl Effects {
                 }
                 None
             }
-            Cmd::ResolveLinks { doc_gen, targets } => Some(Msg::LinksResolved {
-                doc_gen,
-                resolved: (targets.iter())
-                    .map(|(source, t)| self.resolver.resolve(source, t))
-                    .collect(),
-            }),
+            Cmd::ResolveLinks { doc_gen, targets } => {
+                let resolver = Arc::clone(&self.resolver);
+                let resolve = move || Msg::LinksResolved {
+                    doc_gen,
+                    resolved: (targets.iter())
+                        .map(|(source, t)| resolver.resolve(source, t))
+                        .collect(),
+                };
+                match &self.links {
+                    Some(tx) => {
+                        let tx = tx.clone();
+                        thread::spawn(move || tx.send(resolve()));
+                        None
+                    }
+                    None => Some(resolve()),
+                }
+            }
             Cmd::OpenWithSystem(target) => {
                 open_with_system(&target).err().map(|e| Msg::OpenFailed {
                     target: target.to_string_lossy().into_owned(),
@@ -588,6 +604,39 @@ fn base64(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::links::{LocalTarget, Resolved};
+
+    /// The loop doesn't wait for a document's links: a resolver that takes its time (a vault's
+    /// aliases read cold) answers on a thread of its own (RLD-001).
+    #[test]
+    fn links_resolve_off_the_loop() {
+        struct Slow(Mutex<mpsc::Receiver<()>>);
+        impl Resolver for Slow {
+            fn resolve(&self, _: &Path, _: &LocalTarget) -> Resolved {
+                let _ = self.0.lock().unwrap().recv();
+                Resolved::Found("b.md".into())
+            }
+        }
+        let (go, wait) = mpsc::channel();
+        let mut effects = Effects::new(None);
+        effects.set_resolver(Slow(Mutex::new(wait)));
+        let (tx, rx) = mpsc::channel();
+        effects.links = Some(tx);
+        let cmd = Cmd::ResolveLinks {
+            doc_gen: 3,
+            targets: vec![("a.md".into(), LocalTarget::Path("b.md".into()))],
+        };
+        assert!(effects.run(cmd).is_none());
+        go.send(()).unwrap();
+        let msg = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            msg,
+            Msg::LinksResolved {
+                doc_gen: 3,
+                resolved: vec![Resolved::Found("b.md".into())],
+            }
+        );
+    }
 
     #[test]
     fn a_document_of_4_gib_or_more_is_refused() {

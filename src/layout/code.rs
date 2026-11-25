@@ -261,7 +261,36 @@ fn needs_expanding(line: &str) -> bool {
         .iter()
         .any(|c| c.iter().fold(false, |m, &b| m | suspect(b)))
         || rest.iter().any(|&b| suspect(b));
-    found && line.contains(|c: char| c.is_control())
+    found && holds_control(line.as_bytes())
+}
+
+/// Whether `b` holds a control character, a 16-byte step at a time as [`needs_expanding`]
+/// reads it, only a step with a byte that may start one looked at again, its bytes alone
+/// (HL-009: `line.contains(char::is_control)` took huge.json's one 3.75 MB line, its four
+/// 0xc2s each a `©`'s lead, a character at a time, 8 M cycles). Out of line, so the check
+/// every line makes stays as it was where it's inlined.
+#[inline(never)]
+fn holds_control(b: &[u8]) -> bool {
+    let suspect = |b: u8| (b < 0x20) | (b == 0x7f) | (b == 0xc2);
+    let controls_in = |from: usize, to: usize| {
+        (from..to).any(|i| match b[i] {
+            x if x < 0x20 || x == 0x7f => true,
+            // C1 controls are U+0080..=U+009F: 0xc2 then 0x80..=0x9f
+            0xc2 => b.get(i + 1).is_some_and(|n| (0x80..=0x9f).contains(n)),
+            _ => false,
+        })
+    };
+    let (chunks, rest) = b.as_chunks::<16>();
+    let has = |c: &[u8; 16]| c.iter().fold(false, |m, &x| m | suspect(x));
+    let mut from = 0;
+    while let Some(k) = chunks[from..].iter().position(has) {
+        let n = from + k;
+        if controls_in(n * 16, n * 16 + 16) {
+            return true;
+        }
+        from = n + 1;
+    }
+    controls_in(b.len() - rest.len(), b.len())
 }
 
 /// `line`'s characters onto `out`, tabs to spaces at stops of four and other control
@@ -620,19 +649,41 @@ fn chunks(line: &str, first: u16, rest: u16) -> Vec<&str> {
             .map(|i| &line[i..(i + if i == 0 { first } else { rest }).min(len)])
             .collect();
     }
+    // past ASCII, a run of printable ASCII still takes a column a byte: taken as far as the
+    // row's room at once, the other characters one at a time by their width (HL-009: one `ø`
+    // sent huge.json's 3.75 MB line through `char_indices` whole)
+    let printable = |x: u8| (0x20..0x7f).contains(&x);
+    let b = line.as_bytes();
     let mut out = Vec::new();
-    let mut start = 0;
-    let mut used = 0u16;
-    let mut width = first;
-    for (i, c) in line.char_indices() {
-        let cw = c.width().unwrap_or(0) as u16;
+    let (mut start, mut i) = (0, 0);
+    let (mut used, mut width) = (0, usize::from(first));
+    while i < b.len() {
+        let room = width.saturating_sub(used);
+        let n = b[i..(i + room).min(b.len())]
+            .iter()
+            .position(|&x| !printable(x))
+            .unwrap_or(room.min(b.len() - i));
+        (i, used) = (i + n, used + n);
+        if i == b.len() {
+            break;
+        }
+        if printable(b[i]) {
+            // the row is full, and the next column starts the next one
+            if i > start {
+                out.push(&line[start..i]);
+                (start, used, width) = (i, 0, usize::from(rest));
+            } else {
+                (i, used) = (i + 1, used + 1);
+            }
+            continue;
+        }
+        let c = line[i..].chars().next().expect("a character starts here");
+        let cw = c.width().unwrap_or(0);
         if used + cw > width && i > start {
             out.push(&line[start..i]);
-            start = i;
-            used = 0;
-            width = rest;
+            (start, used, width) = (i, 0, usize::from(rest));
         }
-        used += cw;
+        (i, used) = (i + c.len_utf8(), used + cw);
     }
     out.push(&line[start..]);
     out
@@ -665,6 +716,75 @@ mod tests {
                         lines_hold_one(&text),
                         "{text:?}"
                     );
+                }
+            }
+        }
+    }
+
+    /// A line past ASCII is cut where the character loop before HL-009 cut it, whatever the
+    /// widths of its characters and wherever they fall against a row's end.
+    #[test]
+    fn chunks_cut_as_characters_do() {
+        fn by_chars(line: &str, first: u16, rest: u16) -> Vec<&str> {
+            let (mut out, mut start, mut used, mut width) = (Vec::new(), 0, 0u16, first);
+            for (i, c) in line.char_indices() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if used + cw > width && i > start {
+                    out.push(&line[start..i]);
+                    (start, used, width) = (i, 0, rest);
+                }
+                used += cw;
+            }
+            out.push(&line[start..]);
+            out
+        }
+        let pieces = [
+            "a",
+            "bc",
+            "\u{301}",
+            "日",
+            "ø",
+            "\u{85}",
+            "\u{200b}",
+            "\u{1f468}",
+        ];
+        let n = pieces.len();
+        for len in 1..=6u32 {
+            for mut k in 0..n.pow(len) {
+                let mut s = String::new();
+                for _ in 0..len {
+                    s.push_str(pieces[k % n]);
+                    k /= n;
+                }
+                for (first, rest) in [(1, 1), (1, 2), (2, 1), (2, 3), (3, 2), (4, 4), (5, 3)] {
+                    assert_eq!(
+                        chunks(&s, first, rest),
+                        by_chars(&s, first, rest),
+                        "{s:?} {first} {rest}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `needs_expanding` finds a control character wherever it falls against its 16-byte
+    /// steps, and nothing in a line whose 0xc2s lead printable characters (HL-009).
+    #[test]
+    fn needs_expanding_finds_controls() {
+        for pad in 0..40 {
+            for (p, control) in [
+                ("\t", true),
+                ("\u{1b}", true),
+                ("\u{7f}", true),
+                ("\u{85}", true),
+                ("\u{9f}", true),
+                ("©", false),
+                ("\u{a0}", false),
+                ("ø", false),
+            ] {
+                for tail in ["", "x", "©"] {
+                    let line = format!("{}{p}{tail}", "a".repeat(pad));
+                    assert_eq!(needs_expanding(&line), control, "{line:?}");
                 }
             }
         }

@@ -151,8 +151,10 @@ pub fn targets(text: &str) -> Vec<LocalTarget> {
         }
     };
     let bytes = text.as_bytes();
+    // memchr's vector search: `str::find`'s two-way search took 4.4 instructions a byte (PRN-008)
+    let opener = memchr::memmem::Finder::new(b"![");
     let mut at = 0;
-    while let Some(i) = text[at..].find("![").map(|i| at + i) {
+    while let Some(i) = opener.find(&bytes[at..]).map(|i| at + i) {
         at = i + 2;
         if bytes.get(at) == Some(&b'[') {
             if let Some(t) = wiki(&text[at + 1..]) {

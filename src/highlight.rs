@@ -19,7 +19,7 @@ mod selector;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{BuildHasherDefault, DefaultHasher, Hash, Hasher};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -38,10 +38,12 @@ use ada_parse::{FirstLine, Lang};
 /// Cached blocks before the cache starts over.
 const CACHE_CAP: usize = 4096;
 
-/// Code a print highlights on each thread of its own: below it, a second thread barely
-/// shortens the blocks' time (PRN-01, measured when syntect compiled each grammar's regexes;
-/// ada's own lexers start at once and run at hundreds of MB/s).
-const CODE_PER_THREAD: usize = 16 * 1024;
+/// Code a print highlights on each thread of its own (HL-008): the blocks are highlighted while
+/// the rest is laid out, and up to this much a thread they're done before the layout is. At
+/// 1 MiB a thread, 256 KiB of code in a note outlasted its layout (wall +8.5%); 16 KiB, sized
+/// for syntect (PRN-01), gave XL's 156 KB eight threads for under a millisecond of lexing. The
+/// tests keep 16 KiB, to put several threads on a few KB of code.
+const CODE_PER_THREAD: usize = if cfg!(test) { 16 * 1024 } else { 256 * 1024 };
 
 /// Lines highlighted so far, by every thread. When it stands still for [`STALL`] while a block
 /// is being highlighted, a lexer is stuck on a line (F-06): syntect's parser could loop forever
@@ -311,6 +313,24 @@ impl SyntaxTheme {
     /// The rule a scope stack takes, its outermost scope first, as `selector` picks it.
     pub fn rule(&self, stack: &[&str]) -> Rule {
         self.selectors.rule(stack)
+    }
+
+    /// The rule each of `stacks` takes among `rules`, as [`SyntaxTheme::rule`] picks it, with
+    /// only the rules that may match them parsed (`Selectors::for_firsts`): a theme's load looks
+    /// up its diff tints so, where a whole [`SyntaxTheme`] took 4% of a small note's print
+    /// (PRN-008).
+    pub fn rules_for<const N: usize>(rules: &[(String, Style)], stacks: [&[&str]; N]) -> [Rule; N] {
+        let firsts: Vec<&str> = stacks
+            .iter()
+            .flat_map(|s| s.iter())
+            .map(|scope| scope.split('.').next().unwrap_or(scope))
+            .collect();
+        let scopes = rules
+            .iter()
+            .take(usize::from(Rule::NONE))
+            .map(|(scope, _)| scope.as_str());
+        let selectors = Selectors::for_firsts(scopes, &firsts);
+        stacks.map(|stack| selectors.rule(stack))
     }
 }
 
@@ -715,9 +735,83 @@ fn recv_watched<T>(rx: &Receiver<T>) -> Option<T> {
 
 /// Highlight a code block's text. Deterministic, so replays recompute it (ADR-19).
 pub fn highlight(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeSpans {
+    if let Some(own) = own_of(lang, text)
+        && own != Lang::Diff
+        && lang != ANSI
+        && blame::of_name(lang).is_none()
+    {
+        return highlight_own(key, own, text, theme);
+    }
     let mut h = Highlighter::new(key, lang, text, theme);
     while h.step(usize::MAX) {}
     h.finish()
+}
+
+/// [`highlight`] for a block an ada-parse lexer reads alone (not a diff's, blame's or text in
+/// its own colors): lexed whole into the thread's scratch, with no [`Highlighter`] to step.
+/// A small file paid ~250 instructions a call for one (HL-010): its engines' moves (two
+/// `memcpy`s), their variants matched and dropped, and `ParseRules::cached` out of line, 3–10%
+/// of a `.gitignore`'s or `.env`'s highlighting.
+fn highlight_own(key: u64, lang: Lang, text: &str, theme: &SyntaxTheme) -> CodeSpans {
+    let BlockScratch {
+        mut spans,
+        mut lines,
+        mut buf,
+    } = BlockScratch::take();
+    let mut rules = ParseRules::cached(lang, theme.id);
+    if let Some(rest) = Lines::new(text).0 {
+        let scratch = (&mut spans, &mut buf, block_needs_expanding(text));
+        let mut state = ada_parse::State::default();
+        parse_lines(
+            &mut rules,
+            rest,
+            usize::MAX,
+            &mut state,
+            scratch,
+            theme,
+            &mut lines,
+        );
+    }
+    rules.keep();
+    let done = CodeSpans {
+        key,
+        rules: theme.id,
+        partial: false,
+        palette: Vec::new(),
+        lines: lines.done(),
+    };
+    BlockScratch { spans, lines, buf }.put();
+    done
+}
+
+/// Up to `n` of `text`'s lines, a block's in an ada-parse language, highlighted into `out`
+/// after the lines before them left `state`, a batch of lines at a time: where the lines left
+/// start, `None` once the block is done. The stall watch counts lines; an ada-parse lexer never
+/// stalls, so they're counted a batch at a time, a call a batch, not with an atomic add a line
+/// (HL-004; the loop is ada-parse's since X-086). Inline in both callers, as it was in
+/// `step` before [`highlight_own`] (HL-010).
+#[inline(always)]
+fn parse_lines<'t>(
+    rules: &mut ParseRules,
+    mut text: &'t str,
+    n: usize,
+    state: &mut ada_parse::State,
+    (spans, buf, expand): (&mut Vec<ada_parse::Span>, &mut String, bool),
+    theme: &SyntaxTheme,
+    out: &mut LineRuns,
+) -> Option<&'t str> {
+    const BATCH: usize = 1024;
+    let mut left = n;
+    loop {
+        let (max, done) = (left.min(BATCH), out.ends.len());
+        let next = rules.lines_resolving(text, max, state, (spans, buf, expand), theme, out);
+        LINES.fetch_add((out.ends.len() - done) as u64, Ordering::Relaxed);
+        left -= max;
+        match next {
+            Some(p) if left > 0 => text = &text[p..],
+            next => return next.map(|p| &text[p..]),
+        }
+    }
 }
 
 /// Highlight only a code block's first `lines` lines, as a partial result did (O-05).
@@ -731,6 +825,24 @@ pub fn highlight_first(
     let mut h = Highlighter::new(key, lang, text, theme);
     h.step(lines as usize);
     h.partial()
+}
+
+/// The lexer of ada's own that highlights a block in `lang`, if one does: a header's fence
+/// (```` ```h ````) by its text, as a `.h` file (X-134); a header template's (```` ```h.in ````)
+/// too (X-140); an assembly fence's (```` ```asm ````) architecture (X-171). Those tokens are
+/// told by their length first, since every block asks (HL-010).
+fn own_of(lang: &str, text: &str) -> Option<Lang> {
+    if !matches!(lang.len(), 1 | 3 | 4 | 8) {
+        own(lang)
+    } else if lang.eq_ignore_ascii_case("h") {
+        Some(Lang::for_header(text.as_bytes()))
+    } else if lang.eq_ignore_ascii_case("h.in") {
+        Some(Lang::for_header_template(text.as_bytes()))
+    } else if lang.eq_ignore_ascii_case("asm") || lang.eq_ignore_ascii_case("assembly") {
+        Some(Lang::for_assembly(text.as_bytes(), Lang::X86Asm))
+    } else {
+        own(lang)
+    }
 }
 
 /// The lexer of ada's own that highlights a language, if one does (ADR-40).
@@ -1373,18 +1485,7 @@ pub struct Highlighter<'a> {
 impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let BlockScratch { spans, lines, buf } = BlockScratch::take();
-        // a header's fence (```` ```h ````) by its text, as a `.h` file (X-134); a header
-        // template's (```` ```h.in ````) too (X-140); an assembly fence's (```` ```asm ````)
-        // architecture (X-171)
-        let own = if lang.eq_ignore_ascii_case("h") {
-            Some(Lang::for_header(text.as_bytes()))
-        } else if lang.eq_ignore_ascii_case("h.in") {
-            Some(Lang::for_header_template(text.as_bytes()))
-        } else if lang.eq_ignore_ascii_case("asm") || lang.eq_ignore_ascii_case("assembly") {
-            Some(Lang::for_assembly(text.as_bytes(), Lang::X86Asm))
-        } else {
-            own(lang)
-        };
+        let own = own_of(lang, text);
         // `git blame`'s lines (FEAT-026), and the language of their text
         let blamed = blame::of_name(lang);
         let state = match own {
@@ -1431,37 +1532,14 @@ impl<'a> Highlighter<'a> {
         let out = &mut self.lines;
         match state {
             Engine::Parse(rules, state, spans, expand) => {
-                // the stall watch counts lines; an ada-parse lexer never stalls, so they're
-                // counted a batch at a time, a call a batch, not with an atomic add a line
-                // (HL-004; the loop is ada-parse's since X-086)
-                const BATCH: usize = 1024;
-                let Some(mut text) = self.rest.0 else {
+                let Some(text) = self.rest.0 else {
                     return false;
                 };
-                let mut left = n;
-                loop {
-                    let (max, done) = (left.min(BATCH), out.ends.len());
-                    let next = rules.lines_resolving(
-                        text,
-                        max,
-                        state,
-                        (spans, &mut self.buf, *expand),
-                        self.theme,
-                        out,
-                    );
-                    LINES.fetch_add((out.ends.len() - done) as u64, Ordering::Relaxed);
-                    left -= max;
-                    match next {
-                        Some(p) if left > 0 => text = &text[p..],
-                        next => {
-                            self.rest = Lines(next.map(|p| &text[p..]));
-                            break;
-                        }
-                    }
-                }
+                let scratch = (spans, &mut self.buf, *expand);
+                self.rest = Lines(parse_lines(rules, text, n, state, scratch, self.theme, out));
             }
             Engine::Diff(diff, expand) => {
-                // as `Parse`'s, a batch at a time
+                // as `parse_lines`, a batch at a time
                 const BATCH: usize = 1024;
                 let Some(mut text) = self.rest.0 else {
                     return false;
@@ -1577,21 +1655,27 @@ impl Drop for Highlighter<'_> {
 /// Blocks this big are highlighted on several threads in print mode (O-04).
 const PARALLEL_BYTES: usize = 1 << 20;
 const PARALLEL_LINES: usize = 20_000;
+/// Lines a thread at least when a block is cut by its lines: below it, the line-at-a-time path
+/// costs more than the block lexer saves on one thread (huge.json's one line: 671 M
+/// instructions against `highlight`'s 627 M, experiment 91).
+const LINES_PER_THREAD: usize = 1024;
 
 /// [`highlight`] for print mode (O-04): a block of 1 MiB or 20,000 lines and up whose lines
 /// don't depend on each other (`Lang::line_by_line`, or JSON without a `/* */`) is cut into a
-/// chunk of lines per thread. Any other block goes on one thread: ada's lexers run at hundreds
-/// of MB/s, and the chunks that guessed a state and met the true one were syntect's, gone with
-/// it (ADR-43). The result is [`highlight`]'s.
+/// chunk of lines per thread, [`LINES_PER_THREAD`] at least. Any other block goes on one
+/// thread: ada's lexers run at hundreds of MB/s, and the chunks that guessed a state and met
+/// the true one were syntect's, gone with it (ADR-43). The result is [`highlight`]'s.
 pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeSpans {
     let Some(own) = own(lang) else {
         return highlight(key, lang, text, theme);
     };
-    if text.len() < PARALLEL_BYTES && newlines(text) < PARALLEL_LINES {
+    let lines = newlines(text);
+    if text.len() < PARALLEL_BYTES && lines < PARALLEL_LINES {
         return highlight(key, lang, text, theme);
     }
-    // not for every block: it reads the cgroup's CPU quota
-    let threads = thread::available_parallelism().map_or(1, |n| n.get().min(8));
+    // a thread a `LINES_PER_THREAD` of lines: a block of a few long lines (a one-line 3.75 MB
+    // JSON) goes through `highlight`'s block lexer on one thread, not line by line (HL-008)
+    let threads = crate::cores().min(lines / LINES_PER_THREAD);
     if threads < 2 {
         return highlight(key, lang, text, theme);
     }
@@ -1685,17 +1769,45 @@ fn lines_on(
     }
 }
 
+// memchr's count is SIMD: a byte at a time took ~4.7 instructions a byte, 25 M on a 5 MB JSON
+// (HL-008)
 fn newlines(text: &str) -> usize {
-    text.bytes().filter(|&b| b == b'\n').count()
+    memchr::memchr_iter(b'\n', text.as_bytes()).count()
 }
 
 /// Highlighting results, and the blocks waiting for them.
 #[derive(Debug, Default)]
 pub struct Highlights {
-    done: HashMap<u64, Arc<CodeSpans>>,
-    pending: HashSet<u64>,
+    done: HashMap<u64, Arc<CodeSpans>, Keyed>,
+    pending: HashSet<u64, Keyed>,
     /// Pending blocks already re-requested ahead of the queue.
-    urged: HashSet<u64>,
+    urged: HashSet<u64, Keyed>,
+}
+
+/// [`Highlights`]' keys ([`key`]) are hashes already, as uniform as SipHash makes them: each is
+/// its own hash, not hashed again. A scroll looks up every visible block (PRN-006's `wants`), and
+/// SipHash each time cost a page scroll's frame +3–4% (TRM-006).
+type Keyed = BuildHasherDefault<KeyHash>;
+
+/// The [`Hasher`] of a [`Keyed`] map: a `u64` key as it is.
+#[derive(Debug, Default)]
+struct KeyHash(u64);
+
+impl Hasher for KeyHash {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write_u64(&mut self, key: u64) {
+        self.0 = key;
+    }
+
+    /// Only a `u64` is ever written; any other bytes folded in, should one be.
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = self.0.rotate_left(8) ^ u64::from(b);
+        }
+    }
 }
 
 impl Highlights {
@@ -1763,8 +1875,7 @@ impl Highlights {
             }
         }
         let code: usize = todo.iter().map(|t| t.2.len()).sum();
-        let cores = thread::available_parallelism().map_or(1, |n| n.get().min(8));
-        let threads = cores.min(1 + code / CODE_PER_THREAD);
+        let threads = crate::cores().min(1 + code / CODE_PER_THREAD);
         while !todo.is_empty() {
             let jobs = Arc::new(todo);
             let next = Arc::new(AtomicUsize::new(0));

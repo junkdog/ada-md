@@ -1,12 +1,17 @@
 //! The generated documents, one construct each (BEN-009; ada-throughput in the vault). Each is about
 //! [`SIZE`] bytes from a fixed seed, so every run and every commit sees the same bytes, and comes
 //! with a check that the parsed `Doc` holds what was generated. A change to a generator's output
-//! bumps its version: the version starts a new series in the results.
+//! bumps its version: the version starts a new series in the results. Most are one document read
+//! as CommonMark; those of 1.2's paths that live in a note's own parts (front matter, embeds, the
+//! math passes) are many notes, some read in Obsidian's dialect ([`Read`], BEN-019).
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use ada::doc::{Block, BlockKind, Doc, InlineStyle, LinkKind, Run, RunKind};
+use ada::doc::embed::{self, Note};
+use ada::doc::{self, Block, BlockKind, Dialect, Doc, Embeds, InlineStyle, LinkKind, Run, RunKind};
 
 /// About 4 MB: past every cache but L3, and long enough that a sample isn't a handful of calls.
 pub const SIZE: usize = 4_000_000;
@@ -112,10 +117,48 @@ const WORDS: [&str; 64] = [
     "result",
 ];
 
-/// A generated document and what its parse must hold.
+/// How an input's texts are parsed (BEN-019).
+pub enum Read {
+    /// [`doc::parse_as`] in this dialect.
+    As(Dialect),
+    /// [`doc::parse_with`] in Obsidian's dialect: the `i`th text is the note at the `i`th path,
+    /// transcluding the notes its embeds name, as a load reads them.
+    Embedding(Vec<(PathBuf, Embeds)>),
+}
+
+impl Read {
+    pub const COMMONMARK: Read = Read::As(Dialect::CommonMark);
+    /// Obsidian's dialect as a note outside a vault reads it, its line breaks shown.
+    pub const OBSIDIAN: Read = Read::As(Dialect::Obsidian { line_breaks: true });
+
+    /// The `i`th of an input's texts, `text`, parsed.
+    pub fn parse(&self, i: usize, text: &str) -> Doc {
+        match self {
+            Read::As(dialect) => doc::parse_as(text, *dialect),
+            Read::Embedding(notes) => {
+                let (path, embeds) = &notes[i];
+                doc::parse_with(text, Dialect::Obsidian { line_breaks: true }, path, embeds)
+            }
+        }
+    }
+
+    /// The dialect's name, for the results.
+    pub fn dialect(&self) -> &'static str {
+        match self {
+            Read::As(Dialect::CommonMark) => "commonmark",
+            _ => "obsidian",
+        }
+    }
+}
+
+/// A generated document, or notes, and what their parse must hold.
 pub struct Generated {
     pub version: u32,
+    /// The document, or the notes end to end.
     pub text: String,
+    /// Where each note after the first starts in [`Generated::text`]; empty for one document.
+    starts: Vec<usize>,
+    pub read: Read,
     check: Expect,
 }
 
@@ -131,8 +174,43 @@ enum Expect {
 }
 
 impl Generated {
-    /// What the parse holds against what was generated: `Err` names the first difference.
-    pub fn check(&self, doc: &Doc) -> Result<(), String> {
+    /// One document read as CommonMark.
+    fn one(version: u32, text: String, check: Expect) -> Self {
+        Generated {
+            version,
+            text,
+            starts: Vec::new(),
+            read: Read::COMMONMARK,
+            check,
+        }
+    }
+
+    /// The texts parsed one by one: the document, or each note.
+    pub fn texts(&self) -> Vec<&str> {
+        let ends = self.starts.iter().copied().chain([self.text.len()]);
+        let starts = [0].into_iter().chain(self.starts.iter().copied());
+        starts.zip(ends).map(|(a, b)| &self.text[a..b]).collect()
+    }
+
+    /// What the parses hold against what was generated: `Err` names the first difference. A
+    /// census of notes is their sum.
+    pub fn check(&self, docs: &[Doc]) -> Result<(), String> {
+        if let Expect::Census(want) = &self.check {
+            let mut got = BTreeMap::new();
+            for (key, n) in docs.iter().flat_map(census) {
+                *got.entry(key).or_insert(0) += n;
+            }
+            for &(key, n) in want {
+                let g = got.get(key).copied().unwrap_or(0);
+                if g != n {
+                    return Err(format!("{key}: {n}, got {g}"));
+                }
+            }
+            return Ok(());
+        }
+        let [doc] = docs else {
+            return Err(format!("one document, got {}", docs.len()));
+        };
         match &self.check {
             &Expect::Paragraphs(n) => {
                 let got = doc
@@ -181,15 +259,7 @@ impl Generated {
                     return Err(format!("links by kind {want:?}, got {got:?}"));
                 }
             }
-            Expect::Census(want) => {
-                let got = census(doc);
-                for &(key, n) in want {
-                    let g = got.get(key).copied().unwrap_or(0);
-                    if g != n {
-                        return Err(format!("{key}: {n}, got {g}"));
-                    }
-                }
-            }
+            Expect::Census(_) => unreachable!("checked above"),
         }
         Ok(())
     }
@@ -212,6 +282,13 @@ pub fn by_id(id: &str) -> Option<Generated> {
         "fences" => Some(fences()),
         "html" => Some(html()),
         "long-lines" => Some(long_lines()),
+        "math" => Some(math()),
+        "prices" => Some(prices()),
+        "properties" => Some(properties()),
+        "tags" => Some(tags()),
+        "highlights" => Some(highlights()),
+        "comments" => Some(comments()),
+        "embeds" => Some(embeds()),
         _ => None,
     }
 }
@@ -256,11 +333,7 @@ fn prose() -> Generated {
         text.push_str("\n\n");
         paragraphs += 1;
     }
-    Generated {
-        version: 1,
-        text,
-        check: Expect::Paragraphs(paragraphs),
-    }
+    Generated::one(1, text, Expect::Paragraphs(paragraphs))
 }
 
 /// Tables of 4 to 8 columns and 10 to 40 rows, cells of 1 to 4 words, now and then bold or code,
@@ -306,11 +379,7 @@ fn tables() -> Generated {
         text.push('\n');
         columns.push(cols);
     }
-    Generated {
-        version: 1,
-        text,
-        check: Expect::Tables(columns),
-    }
+    Generated::one(1, text, Expect::Tables(columns))
 }
 
 /// Paragraphs where about one word in five is a link: inline, reference (defined after the
@@ -361,25 +430,25 @@ fn links() -> Generated {
             text.push('\n');
         }
     }
-    Generated {
-        version: 1,
-        text,
-        check: Expect::Links(kinds),
-    }
+    Generated::one(1, text, Expect::Links(kinds))
 }
 
 /// What a parse holds, counted by name: blocks by kind, wherever they're nested (`h1` to `h6`
 /// by level, `item` and `task` per list item, `callout` per quote with one), the bytes of text
 /// under each inline style (`em-bytes`, `strong-bytes`, `strike-bytes`, `code-span-bytes`) and
 /// of code blocks (`code-bytes`), hard breaks, footnote references, and the doc's footnotes,
-/// links and anchors.
+/// links and anchors. 1.2's: highlights' and tags' bytes, runs of typeset math (`math-run`),
+/// embeds left links (`embed-run`) and transcluded (`embed`), each TeX (`tex`), properties
+/// blocks and their rows (`property`), and the `%%` left in the text (`comment-marks`).
 pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
     const LEVELS: [&str; 6] = ["h1", "h2", "h3", "h4", "h5", "h6"];
-    const STYLES: [(InlineStyle, &str); 4] = [
+    const STYLES: [(InlineStyle, &str); 6] = [
         (InlineStyle::EMPH, "em-bytes"),
         (InlineStyle::STRONG, "strong-bytes"),
         (InlineStyle::STRIKE, "strike-bytes"),
         (InlineStyle::CODE, "code-span-bytes"),
+        (InlineStyle::HIGHLIGHT, "highlight-bytes"),
+        (InlineStyle::TAG, "tag-bytes"),
     ];
     type Counts = BTreeMap<&'static str, usize>;
     fn add(n: &mut Counts, key: &'static str, by: usize) {
@@ -398,6 +467,8 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
                 }
                 RunKind::HardBreak => add(n, "hardbreak", 1),
                 RunKind::FootnoteRef(_) => add(n, "footnote-ref", 1),
+                RunKind::Math(_) => add(n, "math-run", 1),
+                RunKind::Embed(_) => add(n, "embed-run", 1),
                 _ => {}
             }
         }
@@ -437,7 +508,10 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
                 BlockKind::Rule => add(n, "rule", 1),
                 BlockKind::Html(_) => add(n, "html", 1),
                 BlockKind::FootnoteDefs => add(n, "footnote-section", 1),
-                BlockKind::Properties(p) => add(n, "property", p.rows.len()),
+                BlockKind::Properties(p) => {
+                    add(n, "properties", 1);
+                    add(n, "property", p.rows.len());
+                }
             }
         }
     }
@@ -450,6 +524,8 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
     add(&mut n, "footnote", doc.footnotes.len());
     add(&mut n, "link", doc.links.len());
     add(&mut n, "anchor", doc.anchors.len());
+    add(&mut n, "tex", doc.math.len());
+    add(&mut n, "comment-marks", doc.text.matches("%%").count());
     n
 }
 
@@ -553,11 +629,7 @@ fn unicode() -> Generated {
         text.push_str(".\n\n");
         paragraphs += 1;
     }
-    Generated {
-        version: 1,
-        text,
-        check: Expect::Paragraphs(paragraphs),
-    }
+    Generated::one(1, text, Expect::Paragraphs(paragraphs))
 }
 
 /// Paragraphs where about one token in three is emphasized: `*em*` and `_em_`, `**strong**`
@@ -615,17 +687,17 @@ fn emphasis() -> Generated {
         text.push_str(".\n\n");
         paragraphs += 1;
     }
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("paragraph", paragraphs),
             ("em-bytes", em),
             ("strong-bytes", strong),
             ("strike-bytes", strike),
             ("link", 0),
         ]),
-    }
+    )
 }
 
 /// Paragraphs where about one token in two is a code span: a word, a path, a call, or a
@@ -671,15 +743,15 @@ fn code_spans() -> Generated {
         text.push_str(".\n\n");
         paragraphs += 1;
     }
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("paragraph", paragraphs),
             ("code-span-bytes", code),
             ("link", 0),
         ]),
-    }
+    )
 }
 
 /// Paragraphs where about one word in eight carries a footnote reference, one in ten of them
@@ -719,17 +791,17 @@ fn footnotes() -> Generated {
             paragraphs += 1;
         }
     }
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("paragraph", paragraphs),
             ("footnote", notes),
             ("footnote-ref", refs),
             ("footnote-section", 1),
             ("link", refs),
         ]),
-    }
+    )
 }
 
 /// Short sections, a heading of any level and a paragraph or two: ATX headings, some closed
@@ -765,10 +837,10 @@ fn headings() -> Generated {
         }
     }
     let headings = levels.iter().sum();
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("heading", headings),
             ("h1", levels[0]),
             ("h2", levels[1]),
@@ -779,7 +851,7 @@ fn headings() -> Generated {
             ("anchor", headings),
             ("paragraph", paragraphs),
         ]),
-    }
+    )
 }
 
 /// Lists and the counts [`lists`] checks: lists, items, tasks.
@@ -846,17 +918,17 @@ fn lists() -> Generated {
         list(&mut rng, &mut text, 0, 0, &mut n);
         text.push('\n');
     }
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("list", n.lists),
             ("item", n.items),
             ("task", n.tasks),
             // a tight item's text is a paragraph of its own
             ("paragraph", paragraphs + n.items),
         ]),
-    }
+    )
 }
 
 /// A quote of a paragraph or two at `prefix`, with a quote nested in it about one time in
@@ -895,15 +967,15 @@ fn quotes() -> Generated {
         quote(&mut rng, &mut text, "> ", &mut n);
         text.push('\n');
     }
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("quote", n[0]),
             ("callout", n[1]),
             ("paragraph", n[2]),
         ]),
-    }
+    )
 }
 
 /// Tables of 20 to 30 columns and 10 to 30 rows, cells of 3 to 12 words, now and then bold or
@@ -945,11 +1017,7 @@ fn table_wide() -> Generated {
         text.push('\n');
         columns.push(cols);
     }
-    Generated {
-        version: 1,
-        text,
-        check: Expect::Tables(columns),
-    }
+    Generated::one(1, text, Expect::Tables(columns))
 }
 
 /// A line of code-like text: statements, calls, comments, blank lines, and argument lists long
@@ -1007,15 +1075,15 @@ fn fences() -> Generated {
         writeln!(text, "{fence}\n").unwrap();
         blocks += 1;
     }
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("code", blocks),
             ("code-bytes", bytes),
             ("paragraph", paragraphs),
         ]),
-    }
+    )
 }
 
 /// HTML blocks as READMEs have them (a `div` of paragraphs, a table, a centered image,
@@ -1097,16 +1165,16 @@ fn html() -> Generated {
             _ => writeln!(text, "<!-- {a} {b} -->\n").unwrap(),
         }
     }
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("html", blocks),
             ("hardbreak", breaks),
             ("paragraph", paragraphs),
             ("link", 0),
         ]),
-    }
+    )
 }
 
 /// Paragraphs of one line of 2 to 16 KB, and one time in three, of two to six lines of 200
@@ -1141,14 +1209,456 @@ fn long_lines() -> Generated {
         text.push_str(".\n\n");
         paragraphs += 1;
     }
-    Generated {
-        version: 1,
+    Generated::one(
+        1,
         text,
-        check: Expect::Census(vec![
+        Expect::Census(vec![
             ("paragraph", paragraphs),
             ("hardbreak", breaks),
             ("link", 0),
         ]),
+    )
+}
+
+/// Inline TeX as notes write it.
+const TEX: [&str; 8] = [
+    "x^2",
+    "\\alpha + \\beta",
+    "a_{i} \\le b_{i}",
+    "\\frac{1}{n}",
+    "\\sqrt{x + y}",
+    "O(n \\log n)",
+    "e^{i\\pi} + 1 = 0",
+    "\\sum_{k} w_k",
+];
+
+/// Lines of display math.
+const DISPLAY: [&str; 5] = [
+    "\\sum_{i=1}^{n} x_i = y",
+    "E = mc^2",
+    "\\int_0^1 f(x)\\,dx = F(1) - F(0)",
+    "\\frac{a + b}{c} \\cdot d",
+    "\\lim_{n \\to \\infty} (1 + 1/n)^n = e",
+];
+
+/// Paragraphs where about one token in six is inline math (`$x^2$`, `$\frac{1}{n}$`), one in
+/// four followed by display math (`$$` around one to three lines, `\\` between them, a row
+/// each): math is on in every dialect (ADR-45), and typeset (OBS-003).
+fn math() -> Generated {
+    let mut rng = Rng::new(0x4d41_5448);
+    let mut text = String::with_capacity(SIZE + 1024);
+    let (mut inline, mut blocks, mut lines, mut paragraphs) = (0, 0, 0, 0);
+    let mut token = String::new();
+    while text.len() < SIZE {
+        let mut col = 0;
+        for _ in 0..rng.range(30, 90) {
+            token.clear();
+            if rng.one_in(6) {
+                write!(token, "${}$", TEX[rng.range(0, TEX.len() - 1)]).unwrap();
+                inline += 1;
+            } else {
+                token.push_str(rng.word());
+            }
+            put(&mut text, &mut col, "", &token);
+        }
+        text.push_str(".\n\n");
+        paragraphs += 1;
+        if rng.one_in(4) {
+            text.push_str("$$\n");
+            let n = rng.range(1, 3);
+            for i in 0..n {
+                text.push_str(DISPLAY[rng.range(0, DISPLAY.len() - 1)]);
+                text.push_str(if i + 1 < n { " \\\\\n" } else { "\n" });
+                lines += 1;
+            }
+            text.push_str("$$\n\n");
+            blocks += 1;
+        }
+    }
+    Generated::one(
+        1,
+        text,
+        Expect::Census(vec![
+            ("paragraph", paragraphs),
+            ("math", blocks),
+            ("tex", inline + lines),
+            ("link", 0),
+        ]),
+    )
+}
+
+/// A price: dollars, with cents or thousands now and then.
+fn price(rng: &mut Rng, token: &mut String) {
+    match rng.range(0, 3) {
+        0 => write!(token, "${}", rng.range(1, 99)),
+        1 => write!(token, "${}.{:02}", rng.range(0, 99), rng.range(0, 99)),
+        2 => write!(token, "${},{:03}", rng.range(1, 9), rng.range(0, 999)),
+        _ => write!(token, "${}k", rng.range(1, 500)),
+    }
+    .unwrap();
+}
+
+/// Where the next note starts, once `text` holds one.
+fn next_note(text: &str, starts: &mut Vec<usize>) {
+    if !text.is_empty() {
+        starts.push(text.len());
+    }
+}
+
+/// Notes of 4 to 16 paragraphs where about one word in eight is a price (`$5`, `$12.50`,
+/// `$1,200`), one paragraph in three with inline math among them: the text shows a price's `$`
+/// opens no math, so it is masked before the first pass and the note parses once (PAR-010,
+/// D6). One note in four has a paragraph of math that a `$` before a digit doesn't close
+/// (`$n+$5 per unit$`, pandoc's rule; shown as code, past what ada typesets), where
+/// pulldown-cmark closes it: those take the passes, parsed twice. Read as CommonMark; notes, as
+/// a pass parses a note again whole.
+fn prices() -> Generated {
+    let mut rng = Rng::new(0x5052_4943);
+    let mut text = String::with_capacity(SIZE + 16 * 1024);
+    let mut starts = Vec::new();
+    let (mut tex, mut code, mut paragraphs) = (0, 0, 0);
+    let mut token = String::new();
+    while text.len() < SIZE {
+        next_note(&text, &mut starts);
+        let n = rng.range(4, 16);
+        let wrong = rng.one_in(4).then(|| rng.range(0, n - 1));
+        for p in 0..n {
+            let mut col = 0;
+            let with_math = rng.one_in(3);
+            let tokens = rng.range(30, 90);
+            let at = (wrong == Some(p)).then(|| rng.range(0, tokens - 1));
+            for i in 0..tokens {
+                token.clear();
+                if at == Some(i) {
+                    write!(token, "$n+${} per {}$", rng.range(1, 99), rng.word()).unwrap();
+                    // TeX with a `$` in it: shown as code, as written
+                    code += token.len() - 2;
+                } else if at.is_some() {
+                    token.push_str(rng.word());
+                } else if rng.one_in(8) {
+                    price(&mut rng, &mut token);
+                } else if with_math && rng.one_in(12) {
+                    write!(token, "${}$", TEX[rng.range(0, TEX.len() - 1)]).unwrap();
+                    tex += 1;
+                } else {
+                    token.push_str(rng.word());
+                }
+                put(&mut text, &mut col, "", &token);
+            }
+            text.push_str(".\n\n");
+            paragraphs += 1;
+        }
+    }
+    Generated {
+        version: 1,
+        text,
+        starts,
+        read: Read::COMMONMARK,
+        check: Expect::Census(vec![
+            ("paragraph", paragraphs),
+            ("tex", tex),
+            ("code-span-bytes", code),
+            ("math", 0),
+            ("link", 0),
+        ]),
+    }
+}
+
+/// Notes that open with front matter of 3 to 9 properties (a title, tags as a list, aliases, a
+/// date, a status, a number, a checkbox, a link, a URL), then 2 to 8 paragraphs, read in
+/// Obsidian's dialect: the properties block, every note's first (ADR-46, OBS-010).
+fn properties() -> Generated {
+    let mut rng = Rng::new(0x5052_4f50);
+    let mut text = String::with_capacity(SIZE + 16 * 1024);
+    let mut starts = Vec::new();
+    let (mut notes, mut rows, mut paragraphs) = (0, 0, 0);
+    while text.len() < SIZE {
+        next_note(&text, &mut starts);
+        notes += 1;
+        text.push_str("---\n");
+        let mut keys = 0;
+        // each key one time in two, three at least: the last ones fill up to it
+        for k in 0..9 {
+            if !rng.one_in(2) && keys + (8 - k) >= 3 {
+                continue;
+            }
+            keys += 1;
+            let (a, b) = (rng.word(), rng.word());
+            match k {
+                0 => writeln!(text, "title: {a} {b} {}", rng.word()),
+                1 => {
+                    text.push_str("tags:\n");
+                    for _ in 0..rng.range(1, 4) {
+                        writeln!(text, "  - {}/{}", rng.word(), rng.word()).unwrap();
+                    }
+                    Ok(())
+                }
+                2 => writeln!(text, "aliases: [{a}, {a} {b}]"),
+                3 => writeln!(
+                    text,
+                    "created: 2026-{:02}-{:02}",
+                    rng.range(1, 12),
+                    rng.range(1, 28)
+                ),
+                4 => writeln!(text, "status: {a}"),
+                5 => writeln!(text, "rating: {}", rng.range(1, 5)),
+                6 => writeln!(text, "done: {}", rng.one_in(2)),
+                7 => writeln!(text, "related: \"[[{a} {b}]]\""),
+                _ => writeln!(text, "source: https://example.com/{a}/{b}"),
+            }
+            .unwrap();
+        }
+        rows += keys;
+        text.push_str("---\n");
+        for _ in 0..rng.range(2, 8) {
+            paragraph(&mut rng, &mut text, "", 6);
+            text.push('\n');
+            paragraphs += 1;
+        }
+    }
+    Generated {
+        version: 1,
+        text,
+        starts,
+        read: Read::OBSIDIAN,
+        check: Expect::Census(vec![
+            ("properties", notes),
+            ("property", rows),
+            ("paragraph", paragraphs),
+        ]),
+    }
+}
+
+/// Paragraphs where about one token in six is a tag (`#word`, `#word/word`, `#word-word`,
+/// `#word2026`), read in Obsidian's dialect (OBS-006).
+fn tags() -> Generated {
+    let mut rng = Rng::new(0x5441_4753);
+    let mut text = String::with_capacity(SIZE + 1024);
+    let (mut bytes, mut paragraphs) = (0, 0);
+    let mut token = String::new();
+    while text.len() < SIZE {
+        let mut col = 0;
+        for _ in 0..rng.range(30, 90) {
+            token.clear();
+            if rng.one_in(6) {
+                let (a, b) = (rng.word(), rng.word());
+                match rng.range(0, 3) {
+                    0 => write!(token, "#{a}"),
+                    1 => write!(token, "#{a}/{b}"),
+                    2 => write!(token, "#{a}-{b}"),
+                    _ => write!(token, "#{a}{}", rng.range(2000, 2030)),
+                }
+                .unwrap();
+                bytes += token.len();
+            } else {
+                token.push_str(rng.word());
+            }
+            put(&mut text, &mut col, "", &token);
+        }
+        text.push_str(".\n\n");
+        paragraphs += 1;
+    }
+    Generated {
+        version: 1,
+        text,
+        starts: Vec::new(),
+        read: Read::OBSIDIAN,
+        check: Expect::Census(vec![
+            ("paragraph", paragraphs),
+            ("tag-bytes", bytes),
+            ("link", 0),
+        ]),
+    }
+}
+
+/// Paragraphs where about one token in five is a highlight of one to three words (`==word==`),
+/// read in Obsidian's dialect (OBS-005).
+fn highlights() -> Generated {
+    let mut rng = Rng::new(0x4849_4748);
+    let mut text = String::with_capacity(SIZE + 1024);
+    let (mut bytes, mut paragraphs) = (0, 0);
+    let mut token = String::new();
+    while text.len() < SIZE {
+        let mut col = 0;
+        for _ in 0..rng.range(30, 90) {
+            token.clear();
+            if rng.one_in(5) {
+                token.push_str("==");
+                for i in 0..rng.range(1, 3) {
+                    if i > 0 {
+                        token.push(' ');
+                    }
+                    token.push_str(rng.word());
+                }
+                bytes += token.len() - 2;
+                token.push_str("==");
+            } else {
+                token.push_str(rng.word());
+            }
+            put(&mut text, &mut col, "", &token);
+        }
+        text.push_str(".\n\n");
+        paragraphs += 1;
+    }
+    Generated {
+        version: 1,
+        text,
+        starts: Vec::new(),
+        read: Read::OBSIDIAN,
+        check: Expect::Census(vec![
+            ("paragraph", paragraphs),
+            ("highlight-bytes", bytes),
+            ("link", 0),
+        ]),
+    }
+}
+
+/// Paragraphs where about one word in ten is followed by an inline comment of one to four words
+/// (`word %%word word%%`), one paragraph in four followed by a block comment (`%%` lines around
+/// one to three sentences), read in Obsidian's dialect: the comments go before the parse
+/// (OBS-004). An inline comment never wraps onto a line of its own, which would leave the line
+/// blank and end the paragraph there.
+fn comments() -> Generated {
+    let mut rng = Rng::new(0x434f_4d4d);
+    let mut text = String::with_capacity(SIZE + 1024);
+    let mut paragraphs = 0;
+    let mut token = String::new();
+    while text.len() < SIZE {
+        let mut col = 0;
+        for _ in 0..rng.range(30, 90) {
+            token.clear();
+            if rng.one_in(10) {
+                token.push_str(rng.word());
+                token.push_str(" %%");
+                for i in 0..rng.range(1, 4) {
+                    if i > 0 {
+                        token.push(' ');
+                    }
+                    token.push_str(rng.word());
+                }
+                token.push_str("%%");
+            } else {
+                token.push_str(rng.word());
+            }
+            put(&mut text, &mut col, "", &token);
+        }
+        text.push_str(".\n\n");
+        paragraphs += 1;
+        if rng.one_in(4) {
+            text.push_str("%%\n");
+            let n = rng.range(1, 3);
+            sentences(&mut rng, &mut text, "", n);
+            text.push_str("%%\n\n");
+        }
+    }
+    Generated {
+        version: 1,
+        text,
+        starts: Vec::new(),
+        read: Read::OBSIDIAN,
+        check: Expect::Census(vec![
+            ("paragraph", paragraphs),
+            ("comment-marks", 0),
+            ("link", 0),
+        ]),
+    }
+}
+
+/// Notes of two to four sections (`## Part 1 word` and one to three paragraphs), one in four
+/// embedding two to four of the others, read in Obsidian's dialect with what their embeds name
+/// (OBS-007): a note whole (`![[n12]]`) or a heading's section (`![[n12#Part 2 word]]`) alone in
+/// its paragraph, transcluded, or inline in a sentence, a link. Only notes that embed nothing are
+/// embedded, so each embed transcludes one note: a note's parse reads more than its own bytes.
+fn embeds() -> Generated {
+    let mut rng = Rng::new(0x454d_4245);
+    // the notes that embed nothing first, then the rest, which embed them
+    let mut notes: Vec<Option<String>> = Vec::new();
+    let mut headings: Vec<Vec<String>> = Vec::new();
+    let mut bytes = 0;
+    while bytes < SIZE * 3 / 4 {
+        if notes.len().is_multiple_of(4) {
+            notes.push(None);
+            headings.push(Vec::new());
+            continue;
+        }
+        let mut text = String::new();
+        let mut heads = Vec::new();
+        for k in 1..=rng.range(2, 4) {
+            let head = format!("Part {k} {}", rng.word());
+            writeln!(text, "## {head}\n").unwrap();
+            for _ in 0..rng.range(1, 3) {
+                paragraph(&mut rng, &mut text, "", 6);
+                text.push('\n');
+            }
+            heads.push(head);
+        }
+        bytes += text.len();
+        notes.push(Some(text));
+        headings.push(heads);
+    }
+    let leaves: Vec<usize> = (0..notes.len()).filter(|&i| notes[i].is_some()).collect();
+    let (mut blocks, mut inline) = (0, 0);
+    for note in notes.iter_mut().filter(|n| n.is_none()) {
+        let mut text = String::new();
+        writeln!(text, "## Part 1 {}\n", rng.word()).unwrap();
+        for _ in 0..rng.range(2, 4) {
+            paragraph(&mut rng, &mut text, "", 6);
+            text.push('\n');
+            let j = leaves[rng.range(0, leaves.len() - 1)];
+            match rng.range(0, 2) {
+                0 => {
+                    writeln!(text, "![[n{j}]]\n").unwrap();
+                    blocks += 1;
+                }
+                1 => {
+                    let head = &headings[j][rng.range(0, headings[j].len() - 1)];
+                    writeln!(text, "![[n{j}#{head}]]\n").unwrap();
+                    blocks += 1;
+                }
+                _ => {
+                    writeln!(text, "As ![[n{j}]] has it, {}.\n", rng.word()).unwrap();
+                    inline += 1;
+                }
+            }
+        }
+        *note = Some(text);
+    }
+    let notes: Vec<String> = notes.into_iter().map(Option::unwrap).collect();
+    let path = |i: usize| PathBuf::from(format!("n{i}.md"));
+    let shared: Vec<Arc<str>> = notes.iter().map(|t| Arc::from(t.as_str())).collect();
+    let read = (0..notes.len())
+        .map(|i| {
+            let from = path(i);
+            let named = embed::targets(&notes[i]).into_iter().map(|target| {
+                let ada::links::LocalTarget::Wiki(name) = &target else {
+                    unreachable!("the notes embed by wiki names")
+                };
+                let j: usize = name[1..].parse().expect("a note's number");
+                Note {
+                    from: from.clone(),
+                    target,
+                    path: path(j),
+                    mtime: None,
+                    text: shared[j].clone(),
+                }
+            });
+            let embeds = Embeds(named.collect::<Vec<_>>().into());
+            (from, embeds)
+        })
+        .collect();
+    let mut text = String::with_capacity(notes.iter().map(String::len).sum());
+    let mut starts = Vec::new();
+    for note in &notes {
+        next_note(&text, &mut starts);
+        text.push_str(note);
+    }
+    Generated {
+        version: 1,
+        text,
+        starts,
+        read: Read::Embedding(read),
+        // a transcluded note's title row is a link to it, an embed run too
+        check: Expect::Census(vec![("embed", blocks), ("embed-run", inline + blocks)]),
     }
 }
 

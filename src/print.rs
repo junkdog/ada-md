@@ -143,10 +143,12 @@ pub fn write(
             None => layout::layout_print(doc, &measure, &theme.glyphs, params),
         }
     };
-    let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
-    let blocks = doc.code_blocks();
-    // the code is highlighted while the rest is laid out
+    // only what shows: front matter shown as rows needs no YAML highlight, nor its thread (PRN-006)
+    let blocks = doc.shown_code(|p| params.properties.as_written(p));
+    // the code is highlighted while the rest is laid out; the theme's rules are built only then
+    // (PRN-007: selector parsing and sorting, 24% of a small note's print)
     let (layout, highlights) = if blocks.iter().any(|&b| highlight::key(b).is_some()) {
+        let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
         thread::scope(|s| {
             let highlights = s.spawn(|| Highlights::compute_all(&blocks, &syntax));
             let layout = lay_out();
@@ -170,7 +172,7 @@ pub fn write(
     let end = skip
         .saturating_add(opts.rows.unwrap_or(usize::MAX))
         .min(layout.rows.len());
-    let painters = cores().min(end.saturating_sub(skip) / BATCH);
+    let painters = crate::cores().min(end.saturating_sub(skip) / BATCH);
     if painters > 1 && opts.images.is_none() {
         w.write_all("\n".repeat(pad).as_bytes())?;
         return paint_on(&painter, &overlay, skip..end, painters, w);
@@ -312,8 +314,9 @@ impl<'a> Overlay<'a> {
         let (theme, layout) = (painter.theme, painter.layout);
         let landed = self.landed.is_some_and(|src| row.src == src);
         let tint = landed.then(|| theme.style(StyleKey::Landed).bg).flatten();
-        // a code line is tinted on its block's background too, or only its margins would show it
-        let block = matches!(row.kind, RowKind::Code { .. })
+        // a code line is tinted on its block's background too, or only its margins would show it;
+        // looked up only for a tinted row, not for every code row (PAR-022)
+        let block = (tint.is_some() && matches!(row.kind, RowKind::Code { .. }))
             .then(|| theme.style(StyleKey::CodeBlock).bg)
             .flatten()
             .filter(|&bg| bg != Color::RESET);
@@ -787,12 +790,7 @@ fn alignment(layout: &Layout, line: u32) -> (usize, usize) {
 /// side by side 1.2× (PRN-01; ADR-27 amended).
 pub fn start() {
     // the main thread, the one waiting on the highlighting, then one a core
-    app::arenas(cores() + 2);
-}
-
-/// The cores to highlight and paint on, eight at most.
-fn cores() -> usize {
-    thread::available_parallelism().map_or(1, |n| n.get().min(8))
+    app::arenas(crate::cores() + 2);
 }
 
 /// `--color-only` (X-174): `text`'s lines, each in `lang`'s colors and a diff's tints and changed

@@ -39,7 +39,11 @@ cargo build --release --manifest-path bench/b2/Cargo.toml   # the pty driver, be
 print mode, the previewer files, images, mermaid diagrams and the tables) into a record set that `rerun.zsh` takes as REF, with
 the bench cores held ready (below). A viewer new to B2 gets a dry run first: `zsh bench/b2/dry.zsh OUT
 basalt,ekphos` runs the lanes alone for those viewers, with fewer runs, beside two controls (the last measured ada
-and leaf), whose cells against the tables give the drift; nothing is merged. The steps one by one:
+and leaf), whose cells against the tables give the drift; nothing is merged. To have the full run measure it
+too, list it in `lanes.py` (what `full.zsh` runs), `doctables.py` and `rank.py` (the tables and ranks), and
+`plot.py` (the site's charts; a cell it can't have gets its reason in `site/perf.py`'s `MISSING`): `mkspec.py`
+alone isn't enough, and the Obsidian viewers missed the 2026-11-25 run that way, their lanes merged after
+(`DRY_RUNS=5 DRY_XL_RUNS=3`, the full run's counts). smd keeps its spec but isn't listed: 2 stars (the user). The steps one by one:
 
 ```zsh
 B2=bench/b2/target/release/b2

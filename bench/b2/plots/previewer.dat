@@ -1,39 +1,39 @@
-# B2 previewer files at ada de95d5b, Python and Clojure with every tool, 2026-11-14: hyperfine medians, ms (peak RSS in MiB); cap at 120 s; written by bench/b2/plot.py
+# B2 previewer files at ada ef2d102: hyperfine medians, ms (peak RSS in MiB); cap at 120 s; written by bench/b2/plot.py
 # previewer, a preview, wall
 # doc ada bat rich
-code-s.py 0.892359 10.7007 65.8696
-code-m.clj 1.10276 12.4236 180.71
-code-l.rs 1.22089 30.4619 195.68
-log.log 1.78849 1048.43 236.903
-huge.json 3.98568 29.1096 4321.1
-huge.log 2.02172 1045.9 9124.03
+code-s.py 0.702491 10.5593 64.6949
+code-m.clj 0.941644 12.0807 175.52
+code-l.rs 1.0949 30.6113 196.891
+log.log 1.57407 1055.16 239.112
+huge.json 3.17049 28.9797 4371.6
+huge.log 1.80808 1061.11 9170.16
 
 
 # previewer, the whole file, wall
 # doc ada bat rich mcat
-code-s.py 0.886799 10.7397 65.8976 9.92994
-code-m.clj 1.10125 12.3153 176.975 12.3391
-code-l.rs 2.2619 146.505 520.279 38.0272
-log.log 3.7128 3277.89 394.144 3227.67
-huge.json 18.7318 30.0346 4245.18 cap
-huge.log 127.251 cap 24357.6 cap
+code-s.py 0.69661 10.5381 64.6921 9.79773
+code-m.clj 0.929841 12.1152 173.039 12.094
+code-l.rs 2.04756 146.786 521.081 38.1321
+log.log 3.31058 3300.44 392.596 3252.21
+huge.json 12.8113 30.0278 4291.65 cap
+huge.log 102.057 cap 24433.3 cap
 
 
 # previewer, a preview, peak RSS
 # doc ada bat rich
-code-s.py 4.97656 15.2559 24.7754
-code-m.clj 4.88477 14.1602 45.3867
-code-l.rs 7.08008 15.3203 46.752
-log.log 7.6543 13.9238 48.418
-huge.json 12.2754 25.2617 580.166
-huge.log 7.60938 14.1191 348.518
+code-s.py 6.83984 15.1055 24.9844
+code-m.clj 7.16797 14.1426 45.4062
+code-l.rs 7.41602 15.0996 46.7422
+log.log 7.62305 13.832 48.3418
+huge.json 11.9258 25.748 579.9
+huge.log 7.48438 13.9941 348.199
 
 
 # previewer, the whole file, peak RSS
 # doc ada bat rich mcat
-code-s.py 4.87109 15.2148 24.7227 17.2012
-code-m.clj 4.85938 14.3906 45.25 16.793
-code-l.rs 9.72656 15.6133 63.9688 21.2559
-log.log 12.5137 13.9902 54.0684 35.0527
-huge.json 33.9688 26.1211 580.082 cap
-huge.log 14.7461 cap 899.137 cap
+code-s.py 6.31055 15.1777 24.7227 17.2207
+code-m.clj 6.67383 14.0938 45.0977 16.8477
+code-l.rs 9.58008 15.4355 63.8027 21.1465
+log.log 12.3457 14.0273 53.9062 35.4082
+huge.json 33.5078 26.0938 577.578 cap
+huge.log 16.6367 cap 897.57 cap

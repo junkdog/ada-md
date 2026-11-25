@@ -1,6 +1,7 @@
 //! Themes (ADR-03, ADR-08). Layout emits semantic [`StyleKey`]s and paint resolves them here, so a
 //! color-only theme switch needs no relayout. Glyphs change widths, so they are a layout input.
 
+mod compiled;
 mod load;
 
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -161,8 +162,15 @@ impl StyleKey {
         }
     }
 
-    /// The key this one refines, so that themes may leave it out.
+    /// The key this one refines, so that themes may leave it out: one load from [`PARENTS`],
+    /// as [`Theme::style`] asks twice a span (PAR-022).
+    #[inline(always)]
     fn parent(self) -> Option<StyleKey> {
+        PARENTS[self as usize]
+    }
+
+    /// [`StyleKey::parent`]'s table, made at compile time.
+    const fn parent_of(self) -> Option<StyleKey> {
         match self {
             StyleKey::CodeText => Some(StyleKey::CodeBlock),
             // a note's properties, dim: its keys as raw HTML is, its values as a quote's text
@@ -225,6 +233,17 @@ impl StyleKey {
             .then(|| i - StyleKey::GutterUnstagedAdded as usize)
     }
 }
+
+/// Each key's parent, by [`StyleKey::parent_of`].
+static PARENTS: [Option<StyleKey>; StyleKey::COUNT] = {
+    let mut parents = [None; StyleKey::COUNT];
+    let mut i = 0;
+    while i < StyleKey::COUNT {
+        parents[i] = StyleKey::ALL[i].parent_of();
+        i += 1;
+    }
+    parents
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TableBorder {
@@ -406,18 +425,14 @@ impl Theme {
     /// The built-in default theme.
     pub fn builtin() -> Self {
         let (name, text) = BUILTIN[0];
-        load_str(&format!("builtin:{name}"), text, &mut Vec::new(), 0)
-            .expect("the built-in theme is valid")
+        load::builtin(name, text)
     }
 
     /// Every built-in theme, the default first.
     pub fn builtins() -> Vec<Theme> {
         BUILTIN
             .iter()
-            .map(|(name, text)| {
-                load_str(&format!("builtin:{name}"), text, &mut Vec::new(), 0)
-                    .expect("the built-in themes are valid")
-            })
+            .map(|(name, text)| load::builtin(name, text))
             .collect()
     }
 
@@ -535,26 +550,33 @@ impl Theme {
     /// reads as changed and the language's colors stay legible on it, and [`EMPH`] of the way
     /// for the words it changed. None where either color isn't RGB, for a terminal's palette
     /// can't be mixed.
-    pub(crate) fn derive_tints(&mut self) {
-        let syntax = SyntaxTheme::new(&self.syntax);
+    /// The passes a theme takes as a whole, the one it extends under it (X-174): what it leaves
+    /// unset of the diff tints and the marks.
+    pub(crate) fn derive(&mut self) {
+        self.derive_tints();
+        self.derive_marks();
+    }
+
+    fn derive_tints(&mut self) {
         let bg = self.style(StyleKey::CodeBlock).bg;
-        for (keys, scope) in [
-            (
-                [
-                    (StyleKey::CodeInserted, TINT),
-                    (StyleKey::CodeInsertedEmph, EMPH),
-                ],
-                "markup.inserted.diff",
-            ),
-            (
-                [
-                    (StyleKey::CodeDeleted, TINT),
-                    (StyleKey::CodeDeletedEmph, EMPH),
-                ],
-                "markup.deleted.diff",
-            ),
-        ] {
-            let rule = syntax.rule(&["source.diff", scope]);
+        let stacks = [
+            &["source.diff", "markup.inserted.diff"][..],
+            &["source.diff", "markup.deleted.diff"][..],
+        ];
+        // only the rules that may match the two stacks are parsed: a whole `SyntaxTheme` at every
+        // load was 4% of a small note's print (PRN-008)
+        let rules = SyntaxTheme::rules_for(&self.syntax, stacks);
+        let keys = [
+            [
+                (StyleKey::CodeInserted, TINT),
+                (StyleKey::CodeInsertedEmph, EMPH),
+            ],
+            [
+                (StyleKey::CodeDeleted, TINT),
+                (StyleKey::CodeDeletedEmph, EMPH),
+            ],
+        ];
+        for (keys, rule) in keys.into_iter().zip(rules) {
             let fg = rule_style(rule, &self.syntax).and_then(|s| s.fg);
             for (key, t) in keys {
                 let style = &mut self.styles[key as usize];
@@ -569,7 +591,7 @@ impl Theme {
     /// `extends`) doesn't know: an `==highlight==`, whose `==` go, reversed, and a `#tag` as the
     /// theme's inline code, a pill. Inline marks patch their own key, not their parents', so
     /// these can't come from [`StyleKey::parent`].
-    pub(crate) fn derive_marks(&mut self) {
+    fn derive_marks(&mut self) {
         let unset = |s: &Style| *s == Style::new();
         if unset(&self.styles[StyleKey::Highlight as usize]) {
             self.styles[StyleKey::Highlight as usize] =
@@ -581,18 +603,41 @@ impl Theme {
     }
 
     /// A key's style on top of its parent's, theirs on top of theirs, and so on to the document
-    /// style.
+    /// style. Inlined always: a call a span cost print and the TUI's paint as much as the
+    /// parent chain it saved (PAR-022).
+    #[inline(always)]
     pub fn style(&self, key: StyleKey) -> Style {
+        // most keys have no parent, and most parents none of their own: both paths inline into
+        // every span's style (PRN-008), so code's text (`CodeText` on `CodeBlock`) patches its
+        // parent as v1.1.0 did; a call a span cost fences' print +3% (PAR-022). Longer chains
+        // go out of line.
+        let text = self.styles[StyleKey::Text as usize];
         let base = match key.parent() {
-            Some(parent) => self.style(parent),
-            None => self.styles[StyleKey::Text as usize],
+            None => text,
+            Some(parent) => match parent.parent() {
+                None => text.patch(self.styles[parent as usize]),
+                Some(_) => self.parents_style(parent),
+            },
         };
         base.patch(self.styles[key as usize])
+    }
+
+    /// [`Theme::style`] of a key that is another's parent, and has a parent of its own.
+    #[inline(never)]
+    fn parents_style(&self, key: StyleKey) -> Style {
+        self.style(key)
     }
 
     /// The style of a laid-out span: its key, then inline markup, then link styling.
     pub fn span_style(&self, key: StyleKey, inline: InlineStyle, link: bool) -> Style {
         let mut style = self.style(key);
+        // most spans have no inline markup: one test, not one a flag (PAR-022, TRM-006)
+        if inline == InlineStyle::NONE {
+            return match link {
+                true => style.patch(self.styles[StyleKey::Link as usize]),
+                false => style,
+            };
+        }
         for (flag, key) in [
             (InlineStyle::CODE, StyleKey::CodeInline),
             (InlineStyle::EMPH, StyleKey::Emph),

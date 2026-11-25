@@ -14,8 +14,9 @@
 //! what the built-in rules find stands; otherwise the nearest root's unique match, the one in a
 //! folder named like the note's, or the built-in reason, or an ambiguity listing the matches.
 //! A `[[name]]` without folders that no file has is the note that gives it as an alias, by the
-//! same rules. Asked again, by the same resolver (its index) or a fresh one, the answer is the
-//! same.
+//! same rules. A path with folders in it names its file from the root (OBS-013), if that is
+//! inside the root and exists. Asked again, by the same resolver (its index) or a fresh one, the
+//! answer is the same.
 //!
 //! Also `[links]` in the config: a parse that succeeds has absolute roots and plain markers (no
 //! `/`, not `.` or `..`). Markers that exist above the tree are dropped, so a root stays inside it.
@@ -27,7 +28,7 @@
 #![no_main]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
 use ada::config;
@@ -170,6 +171,59 @@ fn build(u: &mut Unstructured, root: &Path) -> Result<Vec<PathBuf>> {
     Ok(made)
 }
 
+/// The note's folder as given, canonical, and the nearest root at or above it.
+fn nearest_root(
+    roots: &[PathBuf],
+    markers: &[String],
+    source: &Path,
+) -> Option<(PathBuf, PathBuf, PathBuf)> {
+    let dir = match source.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let canonical = fs::canonicalize(&dir).ok()?;
+    let roots: Vec<PathBuf> = roots
+        .iter()
+        .filter_map(|r| fs::canonicalize(r).ok())
+        .collect();
+    let mut at = Some(canonical.as_path());
+    while let Some(a) = at {
+        if roots.iter().any(|r| r == a) || markers.iter().any(|m| a.join(m).exists()) {
+            let root = a.to_path_buf();
+            return Some((dir, canonical, root));
+        }
+        at = a.parent();
+    }
+    None
+}
+
+/// A path with folders in it that isn't beside the note: from the root, as Obsidian writes a link
+/// in its `absolute` format (OBS-013), its `..`s taken by the names before them, and never a file
+/// outside the root.
+fn from_root(roots: &[PathBuf], markers: &[String], source: &Path, path: &str) -> Option<Expect> {
+    if path.is_empty() || Path::new(path).has_root() {
+        return None;
+    }
+    let (dir, canonical, root) = nearest_root(roots, markers, source)?;
+    let mut found = root.clone();
+    for c in Path::new(path).components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                found.pop();
+            }
+            c => found.push(c),
+        }
+    }
+    if !(found.starts_with(&root) && found.exists()) {
+        return None;
+    }
+    Some(Expect::Found(match found.strip_prefix(&canonical) {
+        Ok(rest) => dir.join(rest),
+        Err(_) => found,
+    }))
+}
+
 /// The reference: what the lookup under a root should answer, or `None` for the built-in reason.
 fn reference(
     roots: &[PathBuf],
@@ -198,30 +252,12 @@ fn reference(
         LocalTarget::Path(p) if !p.contains('/') && !["", ".", ".."].contains(&&**p) => {
             (String::new(), vec![p.clone()])
         }
-        LocalTarget::Path(_) => return None,
+        LocalTarget::Path(p) => return from_root(roots, markers, source, p),
     };
     if names.iter().any(String::is_empty) {
         return None;
     }
-    let dir = match source.parent() {
-        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    let canonical = fs::canonicalize(&dir).ok()?;
-    let roots: Vec<PathBuf> = roots
-        .iter()
-        .filter_map(|r| fs::canonicalize(r).ok())
-        .collect();
-    let mut root = None;
-    let mut at = Some(canonical.as_path());
-    while let Some(a) = at {
-        if roots.iter().any(|r| r == a) || markers.iter().any(|m| a.join(m).exists()) {
-            root = Some(a.to_path_buf());
-            break;
-        }
-        at = a.parent();
-    }
-    let root = root?;
+    let (dir, canonical, root) = nearest_root(roots, markers, source)?;
     let mut files = Vec::new();
     walk(&root, &mut files);
     for n in &names {

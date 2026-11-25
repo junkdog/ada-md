@@ -126,6 +126,75 @@ pub(super) fn line_frag(frag: &str) -> Option<u32> {
     first.parse().ok().filter(|&n| n > 0)
 }
 
+/// The answer a local link's `state` was given, or none while it waits.
+fn answer(state: &LinkState) -> Option<Resolved> {
+    match state {
+        LinkState::Doc { path, .. } | LinkState::File(path) => Some(Resolved::Found(path.clone())),
+        LinkState::Broken(why) => Some(Resolved::Broken(why.clone())),
+        LinkState::Pending | LinkState::Anchor(_) | LinkState::External(_) => None,
+    }
+}
+
+impl Document {
+    /// Each local link's state from the answer for its target, `index` its index among the
+    /// local targets; a link `answer_for` has none for stays as it is.
+    fn set_links(
+        &mut self,
+        index: &[Option<usize>],
+        answer_for: impl Fn(usize) -> Option<Resolved>,
+    ) {
+        for (id, &i) in index.iter().enumerate() {
+            let (Some(i), Some(link)) = (i, self.doc.links.get(id)) else {
+                continue;
+            };
+            let Some(answer) = answer_for(i) else {
+                continue;
+            };
+            let frag = match Target::of(link) {
+                Target::Local { frag, .. } => frag,
+                _ => None,
+            };
+            self.links[id] = match answer {
+                Resolved::Found(path) if FileType::opens_in_ada(&path) => {
+                    LinkState::Doc { path, frag }
+                }
+                Resolved::Found(path) => LinkState::File(path),
+                Resolved::Broken(why) => LinkState::Broken(why),
+            };
+        }
+    }
+
+    /// Start a reloaded document's local links where `old`, the same file as it was, left
+    /// them: each link to a target `old` had, from the same note, gets the answer `old`'s got
+    /// (RLD-002). Without it every local link waits for the resolver again, so the reload's
+    /// frame shows them all unresolved (a broken link no longer struck through) and the
+    /// resolver's answer, on its own thread since RLD-001, makes a second frame. That answer
+    /// still comes, and corrects a link whose file came or went meanwhile; when nothing did, it
+    /// changes no cell, and the frame it makes writes nothing.
+    pub(super) fn keep_links(&mut self, old: &Document) {
+        let (old_targets, old_index) = local_targets(&old.doc, &old.path);
+        let mut known = vec![None; old_targets.len()];
+        for (&i, state) in old_index.iter().zip(&old.links) {
+            if let Some(i) = i
+                && known[i].is_none()
+            {
+                known[i] = answer(state);
+            }
+        }
+        if known.iter().all(Option::is_none) {
+            return;
+        }
+        let (targets, index) = local_targets(&self.doc, &self.path);
+        let from_old: Vec<Option<Resolved>> = (targets.iter())
+            .map(|t| {
+                let at = old_targets.iter().position(|o| o == t)?;
+                known[at].clone()
+            })
+            .collect();
+        self.set_links(&index, |i| from_old[i].clone());
+    }
+}
+
 /// The command that resolves a new document's local links, if it has any.
 pub(super) fn resolve_cmd(doc: &Document) -> Option<Cmd> {
     let (targets, _) = local_targets(&doc.doc, &doc.path);
@@ -141,24 +210,13 @@ impl State {
             return;
         };
         let (_, index) = local_targets(&doc.doc, &doc.path);
-        for (id, i) in index.into_iter().enumerate() {
-            let (Some(i), Some(link)) = (i, doc.doc.links.get(id)) else {
-                continue;
-            };
-            let frag = match Target::of(link) {
-                Target::Local { frag, .. } => frag,
-                _ => None,
-            };
-            doc.links[id] = match resolved.get(i) {
-                Some(Resolved::Found(path)) if FileType::opens_in_ada(path) => LinkState::Doc {
-                    path: path.clone(),
-                    frag,
-                },
-                Some(Resolved::Found(path)) => LinkState::File(path.clone()),
-                Some(Resolved::Broken(why)) => LinkState::Broken(why.clone()),
-                None => LinkState::Broken("not resolved".into()),
-            };
-        }
+        doc.set_links(&index, |i| {
+            Some(
+                resolved
+                    .get(i)
+                    .map_or_else(|| Resolved::Broken("not resolved".into()), Resolved::clone),
+            )
+        });
     }
 
     /// The header rows of a table pinned over the top of the viewport, as the view draws them.

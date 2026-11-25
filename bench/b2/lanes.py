@@ -5,11 +5,14 @@ cells up to 1.4Ã— (CCD1 slower on line and page scroll), and XL search read 1.8Ã
 import json, os, subprocess, sys
 H = os.path.dirname(os.path.abspath(__file__))
 LANES = ["0,2,4,6", "8,10,12,14"]  # one thread per physical core, CCD0's two lanes; XL runs on the first alone
-viewers = "ada,treemd,treemd-head,leaf,mdfried,mdtui,glow"
+# the most starred Obsidian viewers since 2026-11-25 (dry run 2026-11-22, then their lanes merged into that day's
+# full run); smd, dry-run with them, left out for its 2 stars (the user)
+viewers = "ada,treemd,treemd-head,leaf,mdfried,mdtui,glow,basalt,ekphos,emeraldian"
 jobs = json.loads(subprocess.check_output([sys.executable, "-I", H + "/mkspec.py", "5", "s,m,l", viewers]))
 xl = json.loads(subprocess.check_output([sys.executable, "-I", H + "/mkspec.py", "3", "xl", viewers]))
 COST = {"treemd-l": 3, "treemd-m": 2, "treemd-xl": 4, "treemd-head-xl": 3, "mdtui-l": 3, "mdtui-m": 2, "mdtui-xl": 10,
-        "mdfried-xl": 3, "glow-xl": 3, "leaf-xl": 2, "ada-xl": 1.5}
+        "mdfried-xl": 3, "glow-xl": 3, "leaf-xl": 2, "ada-xl": 1.5, "basalt-xl": 2, "emeraldian-xl": 1.5,
+        "ekphos-xl": 1.5}
 cost = lambda j: COST.get(j["name"], 1.2) * j["runs"]
 lanes = [[] for _ in LANES]
 for j in sorted(jobs, key=cost, reverse=True):

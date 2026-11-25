@@ -130,6 +130,17 @@ fn load_from(
 }
 
 pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Settings, String> {
+    // comments alone, as ada first writes it, set nothing: no TOML parse at every start for them
+    // (PRN-008: 0.17 M instructions, 6% of an empty note's print)
+    let set = |line: &str| !line.trim_start().is_empty() && !line.trim_start().starts_with('#');
+    if !text.lines().any(set) {
+        return Ok(Settings::default());
+    }
+    parse_toml(file, text, warnings)
+}
+
+/// [`parse`], through the TOML parse whatever the text.
+fn parse_toml(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Settings, String> {
     let root = toml_walk::parse(file, text)?;
     let mut cx = Cx {
         file,
@@ -723,6 +734,11 @@ mod tests {
         let text = default_text();
         assert_eq!(
             parse("c.toml", &text, &mut warnings).unwrap(),
+            Settings::default()
+        );
+        // as the TOML reads, which comments alone skip
+        assert_eq!(
+            parse_toml("c.toml", &text, &mut warnings).unwrap(),
             Settings::default()
         );
         assert!(warnings.is_empty(), "{warnings:?}");

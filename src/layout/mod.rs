@@ -150,6 +150,16 @@ impl PropertiesMode {
             _ => PropertiesMode::Hide,
         }
     }
+
+    /// Whether `p` shows as written, its source laid out as code: in `source` mode, and in
+    /// `show` when ada couldn't read it. Only then is its YAML worth highlighting (PRN-006).
+    pub fn as_written(self, p: &Properties) -> bool {
+        match self {
+            PropertiesMode::Source => true,
+            PropertiesMode::Show => !p.read,
+            PropertiesMode::Hide => false,
+        }
+    }
 }
 
 /// The most property rows shown before a row saying how many more there are; one more than this
@@ -647,8 +657,16 @@ fn relayout_lines(
     // for twice that up front, so it seldom grows. Grown by doubling, its capacity landed anywhere
     // up to twice its length, set by how the first bytes came, and a large text held both copies
     // while it moved (XL's print +2.7 MiB at O-24, which copies a line at a time). The room it
-    // doesn't fill is never touched, so it isn't resident.
-    let source = doc.line_starts.last().map_or(0, |&s| s as usize);
+    // doesn't fill is never touched, so it isn't resident. The source is the last line's start, or
+    // a whole file's code when that's longer: a one-line file's last line starts at 0, and its
+    // text grew by doubling from a row's 100 bytes, each copy left resident (huge.json's print
+    // +3.6 MiB, MEM-014).
+    let source = doc.line_starts.last().map_or(0, |&s| s as usize).max(
+        match doc.blocks.first().map(|b| &b.kind) {
+            Some(BlockKind::Code(code)) if code.whole_file => code.text.len(),
+            _ => 0,
+        },
+    );
     text.reserve(2 * source);
     spans.clear();
     rows.clear();
@@ -689,6 +707,7 @@ fn relayout_lines(
         },
         screen,
         prefixes: Vec::new(),
+        spare: Vec::new(),
         prefix_width: 0,
         right_margin: margin,
         text_key: StyleKey::Text,
@@ -788,6 +807,10 @@ struct Builder<'a> {
     /// Whether to record [`Layout::search`] and [`Layout::hits`]: not for print (MEM-05).
     screen: bool,
     prefixes: Vec<Prefix>,
+    /// Prefixes popped, kept for [`Builder::push_prefix_of`] to write over: each quote's bar,
+    /// item's bullet and callout's icon took three allocations, and quotes' layout spent 7% of
+    /// its instructions in `str::replace` (LAY-010).
+    spare: Vec<Prefix>,
     prefix_width: u16,
     right_margin: u16,
     /// The base style of prose: `Text`, or `Quote` inside a block quote.
@@ -825,15 +848,19 @@ fn push_span(out: &mut Layout, row_start: u32, col: &mut u16, text: &str, width:
         return;
     }
     let start = out.text.len() as u32;
-    // 0xa0 ends NBSP's encoding (and others'); most spans don't have it, and memchr is quick.
-    if text.as_bytes().contains(&0xa0) {
-        out.text
-            .extend(text.chars().map(|c| if c == NBSP { ' ' } else { c }));
-    } else {
-        out.text.push_str(text);
-    }
+    push_spaced(&mut out.text, text);
     let end = out.text.len() as u32;
     push_range(out, row_start, col, start..end, width, look);
+}
+
+/// `text` written to the end of `out`, its NBSPs as spaces: a span's text, a prefix's.
+fn push_spaced(out: &mut String, text: &str) {
+    // 0xa0 ends NBSP's encoding (and others'); most texts don't have it, and memchr is quick
+    if text.as_bytes().contains(&0xa0) {
+        out.extend(text.chars().map(|c| if c == NBSP { ' ' } else { c }));
+    } else {
+        out.push_str(text);
+    }
 }
 
 /// [`push_span`] of `text` in style `key`, which holds no [`NBSP`]: copied unchecked.
@@ -931,14 +958,29 @@ impl Builder<'_> {
     }
 
     fn push_prefix(&mut self, first: &str, key: StyleKey) {
-        let width = first.width() as u16;
-        self.prefixes.push(Prefix {
-            first: first.replace(NBSP, " "),
-            rest: " ".repeat(width as usize),
+        self.push_prefix_of(&[first], key);
+    }
+
+    /// A prefix of `parts` written one after the other, in a prefix popped before if there is
+    /// one: its strings are written over, not allocated again (LAY-010).
+    fn push_prefix_of(&mut self, parts: &[&str], key: StyleKey) {
+        let mut p = self.spare.pop().unwrap_or_else(|| Prefix {
+            first: String::new(),
+            rest: String::new(),
             key,
-            width,
+            width: 0,
             used: false,
         });
+        p.first.clear();
+        let mut width = 0;
+        for part in parts {
+            width += part.width() as u16;
+            push_spaced(&mut p.first, part);
+        }
+        p.rest.clear();
+        p.rest.extend(std::iter::repeat_n(' ', usize::from(width)));
+        (p.key, p.width, p.used) = (key, width, false);
+        self.prefixes.push(p);
         self.prefix_width += width;
     }
 
@@ -946,13 +988,15 @@ impl Builder<'_> {
     fn push_bar(&mut self, bar: &str, key: StyleKey) {
         self.push_prefix(bar, key);
         if let Some(p) = self.prefixes.last_mut() {
-            p.rest = bar.replace(NBSP, " ");
+            p.rest.clear();
+            push_spaced(&mut p.rest, bar);
         }
     }
 
     fn pop_prefix(&mut self) {
         if let Some(p) = self.prefixes.pop() {
             self.prefix_width -= p.width;
+            self.spare.push(p);
         }
     }
 
@@ -1302,9 +1346,8 @@ impl Builder<'_> {
     fn properties<'p>(&mut self, p: &'p Properties) -> Option<&'p CodeBlock> {
         match self.params.properties {
             PropertiesMode::Hide => return None,
-            PropertiesMode::Source => return Some(&p.source),
-            PropertiesMode::Show if !p.read => return Some(&p.source),
-            PropertiesMode::Show => {}
+            mode if mode.as_written(p) => return Some(&p.source),
+            _ => {}
         }
         let shown = match p.rows.len() {
             n if n <= MAX_PROPERTIES + 1 => n,
@@ -1499,12 +1542,11 @@ impl Builder<'_> {
         let g = self.g;
         let key = StyleKey::callout(callout.kind);
         let icon = &g.callout[callout.kind as usize];
-        let icon = match icon.is_empty() {
-            true => String::new(),
-            false => format!("{icon} "),
-        };
         let fold = callout.fold.map(|_| format!(" {}", g.fold[0]));
-        self.push_prefix(&icon, key);
+        match icon.is_empty() {
+            true => self.push_prefix("", key),
+            false => self.push_prefix_of(&[icon, " "], key),
+        }
         let runs = self.doc.runs(&callout.title);
         self.paragraph(runs, callout.title.unit, key, fold.as_deref());
         self.pop_prefix();

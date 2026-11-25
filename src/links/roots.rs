@@ -12,13 +12,17 @@
 //! front matter (OBS-010, ADR-46), as Obsidian resolves it. Those are read on the first lookup
 //! that misses every file, from each note's front matter alone, and kept with the note's
 //! modification time: when the index is walked again, only the notes changed since are read.
+//!
+//! The walk and the read run without the indexes' lock, held only to look up and to store: the
+//! loader gathers a note's embeds while links resolve on threads of their own, and a cold read
+//! of a large vault's front matter takes tens of milliseconds (RLD-001).
 
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use super::{BuiltinResolver, LocalTarget, Resolved, Resolver, is_markdown};
@@ -75,8 +79,8 @@ pub struct RootedResolver {
     roots: Vec<PathBuf>,
     markers: Vec<String>,
     refresh: Duration,
-    /// Behind a lock: the loader resolves a note's embeds while the UI thread resolves links
-    /// (OBS-007), and both share the indexes.
+    /// Behind a lock: the loader resolves a note's embeds while links resolve on threads of
+    /// their own (OBS-007, RLD-001), and they share the indexes. Never held over a walk or a read.
     indexes: Mutex<Vec<Index>>,
 }
 
@@ -84,14 +88,18 @@ pub struct RootedResolver {
 struct Index {
     root: PathBuf,
     built: Instant,
-    /// Lowercased file name → the files of that name, sorted.
-    names: HashMap<String, Vec<PathBuf>>,
+    /// Lowercased file name → the files of that name, sorted. Shared, so that the aliases are
+    /// read from it without the lock.
+    names: Arc<HashMap<String, Vec<PathBuf>>>,
     /// Lowercased alias → the notes that give it, sorted: made when a lookup first misses every
     /// file, from `read`.
     aliases: Option<HashMap<String, Vec<PathBuf>>>,
-    /// Each note's aliases as last read, beside its modification time then.
-    read: HashMap<PathBuf, (Option<SystemTime>, Vec<String>)>,
+    /// Each note's aliases as last read.
+    read: AliasesRead,
 }
+
+/// Each note's aliases as last read, beside its modification time then.
+type AliasesRead = HashMap<PathBuf, (Option<SystemTime>, Vec<String>)>;
 
 /// The most of a note read for its front matter: a block that runs on past it is no front matter
 /// ada reads aliases from.
@@ -127,39 +135,63 @@ impl RootedResolver {
     /// The files under `root` named `name` (ignoring case), walking the tree first if it has no
     /// index yet, or, when `fresh` is asked for, if its index is older than [`REFRESH`].
     fn named(&self, root: &Path, name: &str, fresh: bool) -> Vec<PathBuf> {
+        let name = name.to_lowercase();
+        let named = |index: &Index| index.names.get(&name).cloned().unwrap_or_default();
+        {
+            let indexes = self.indexes();
+            let index = indexes.iter().find(|i| i.root == root);
+            if let Some(index) = index.filter(|i| !fresh || i.built.elapsed() < self.refresh) {
+                return named(index);
+            }
+        }
+        let index = Index::build(root);
+        let found = named(&index);
         let mut indexes = self.indexes();
-        let at = match indexes.iter().position(|i| i.root == root) {
-            Some(at) => {
-                if fresh && indexes[at].built.elapsed() >= self.refresh {
-                    let read = std::mem::take(&mut indexes[at].read);
-                    indexes[at] = Index::build(root);
-                    indexes[at].read = read;
-                }
-                at
+        match indexes.iter_mut().find(|i| i.root == root) {
+            // another lookup walked it after this one did
+            Some(old) if old.built > index.built => {}
+            // the notes' aliases as read stay: a note unchanged since isn't read again
+            Some(old) => {
+                let read = std::mem::take(&mut old.read);
+                *old = Index { read, ..index };
             }
-            None => {
-                indexes.push(Index::build(root));
-                indexes.len() - 1
-            }
-        };
-        indexes[at]
-            .names
-            .get(&name.to_lowercase())
-            .cloned()
-            .unwrap_or_default()
+            None => indexes.push(index),
+        }
+        found
     }
 
     /// The notes under `root`, which has an index, that give `name` as an alias, ignoring case.
     fn aliased(&self, root: &Path, name: &str) -> Vec<PathBuf> {
-        let mut indexes = self.indexes();
-        let Some(index) = indexes.iter_mut().find(|i| i.root == root) else {
-            return Vec::new();
+        let name = name.to_lowercase();
+        let (built, names, read) = {
+            let mut indexes = self.indexes();
+            let Some(index) = indexes.iter_mut().find(|i| i.root == root) else {
+                return Vec::new();
+            };
+            if let Some(aliases) = &index.aliases {
+                return aliases.get(&name).cloned().unwrap_or_default();
+            }
+            let read = std::mem::take(&mut index.read);
+            (index.built, Arc::clone(&index.names), read)
         };
-        let aliases = index.aliases();
-        aliases
-            .get(&name.to_lowercase())
-            .cloned()
-            .unwrap_or_default()
+        let (aliases, read) = read_all(&names, read);
+        let found = aliases.get(&name).cloned().unwrap_or_default();
+        let mut indexes = self.indexes();
+        if let Some(index) = indexes.iter_mut().find(|i| i.root == root) {
+            // what was read saves a later walk's index reading it again: moved in, as `read` was
+            // taken from it (another read's notes added to the larger, a hash of each path
+            // 1 ms for 5,536)
+            if index.read.len() < read.len() {
+                let other = std::mem::replace(&mut index.read, read);
+                index.read.extend(other);
+            } else {
+                index.read.extend(read);
+            }
+            if index.built == built {
+                index.aliases.get_or_insert(aliases);
+            }
+        }
+        found
     }
 
     /// Look `target` up under the root of `source`, if it names a file rather than a path.
@@ -297,66 +329,60 @@ impl Index {
         Index {
             root: root.to_path_buf(),
             built: Instant::now(),
-            names,
+            names: Arc::new(names),
             aliases: None,
             read: HashMap::new(),
         }
     }
+}
 
-    /// Lowercased alias → the notes that give it, made from their front matter on first use: a
-    /// note unchanged since it was last read keeps the aliases read then.
-    fn aliases(&mut self) -> &HashMap<String, Vec<PathBuf>> {
-        let Index {
-            names,
-            aliases,
-            read,
-            ..
-        } = self;
-        aliases.get_or_insert_with(|| {
-            let notes: Vec<&PathBuf> = names
-                .values()
-                .flatten()
-                .filter(|p| is_markdown(p))
-                .collect();
-            // on threads: from a cold cache, a note's read is ~0.1 ms of waiting on the disk
-            // (5,536 notes, 0.53 s on one), a warm one's 8 µs
-            let fresh = on_threads(&notes, |path| {
-                let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
-                let same = read
-                    .get(*path)
-                    .is_some_and(|(then, _)| then.is_some() && *then == modified);
-                (modified, (!same).then(|| read_aliases(path)))
-            });
-            let mut map: HashMap<String, Vec<PathBuf>> = HashMap::new();
-            let mut now = HashMap::new();
-            for (path, (modified, fresh)) in notes.into_iter().zip(fresh) {
-                let given = match fresh {
-                    Some(given) => given,
-                    None => read
-                        .remove(path)
-                        .map(|(_, given)| given)
-                        .unwrap_or_default(),
-                };
-                for alias in &given {
-                    map.entry(alias.to_lowercase())
-                        .or_default()
-                        .push(path.clone());
-                }
-                now.insert(path.clone(), (modified, given));
-            }
-            for paths in map.values_mut() {
-                paths.sort();
-                paths.dedup();
-            }
-            *read = now;
-            map
-        })
+/// Lowercased alias → the notes of `names` that give it, from their front matter, beside each
+/// note's aliases as read now: a note unchanged since `read` keeps the aliases read then.
+fn read_all(
+    names: &HashMap<String, Vec<PathBuf>>,
+    mut read: AliasesRead,
+) -> (HashMap<String, Vec<PathBuf>>, AliasesRead) {
+    let notes: Vec<&PathBuf> = names
+        .values()
+        .flatten()
+        .filter(|p| is_markdown(p))
+        .collect();
+    // on threads: from a cold cache, a note's read is ~0.1 ms of waiting on the disk
+    // (5,536 notes, 0.53 s on one), a warm one's 8 µs
+    let fresh = on_threads(&notes, |path| {
+        let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
+        let same = read
+            .get(*path)
+            .is_some_and(|(then, _)| then.is_some() && *then == modified);
+        (modified, (!same).then(|| read_aliases(path)))
+    });
+    let mut map: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let mut now = HashMap::new();
+    for (path, (modified, fresh)) in notes.into_iter().zip(fresh) {
+        let given = match fresh {
+            Some(given) => given,
+            None => read
+                .remove(path)
+                .map(|(_, given)| given)
+                .unwrap_or_default(),
+        };
+        for alias in &given {
+            map.entry(alias.to_lowercase())
+                .or_default()
+                .push(path.clone());
+        }
+        now.insert(path.clone(), (modified, given));
     }
+    for paths in map.values_mut() {
+        paths.sort();
+        paths.dedup();
+    }
+    (map, now)
 }
 
 /// `f` of each of `items`, in order, on up to 8 threads; on this one for a few.
 fn on_threads<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+    let threads = crate::cores();
     if threads == 1 || items.len() < 64 {
         return items.iter().map(f).collect();
     }

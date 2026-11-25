@@ -1,7 +1,8 @@
 #!/usr/bin/env zsh
 # run.zsh [COMMIT]: ada's throughput at COMMIT (HEAD by default), BEN-009; the vault's ada-throughput has the
 # method. Builds COMMIT from `git archive` with this tree's harness laid over it (examples/throughput*, and
-# examples/common), so every commit is measured by the same harness; then, under the bench profile:
+# examples/common), so every commit is measured by the same harness; a commit from before 1.2's doc API keeps its
+# own (BEN-019). Then, under the bench profile:
 #   cells:      examples/throughput pinned to one CPU ($THROUGHPUT_CPU, 2): every input and stage, with the
 #               ceiling kernels and the core's counters, as JSON lines (cells.N.jsonl), $THROUGHPUT_RUNS times (3),
 #               each in a process of its own, which report.py takes the medians of; the vault's notes too
@@ -14,6 +15,8 @@
 #   THROUGHPUT_SAMPLES=N       samples a cell (15)
 #   THROUGHPUT_RUNS=N          runs of the cells (3): a run's CPU times scatter up to 13.5% with the heap's layout
 #   B2_PROFILE=off             without the bench profile (records under different profiles don't mix)
+#   THROUGHPUT_BUILD_ONLY=1    only the build, logged to the build's directory: compile under `work.zsh build`, then
+#                              run the cells under `work.zsh bench`, which finds the build done
 setopt err_exit no_unset pipe_fail
 H=${0:A:h}; REPO=${H:h:h}; S=${B2_ROOT:-$REPO/bench/b2/root}
 CORPUS=$S/corpus; CPU=${THROUGHPUT_CPU:-2}; E2E_CPUS=2,4,6,8; VAULT=${THROUGHPUT_VAULT:-$HOME/opt/birb-vault}
@@ -25,25 +28,49 @@ COMMIT=$(git -C $REPO rev-parse --short ${1:-HEAD})
 }
 (cd $CORPUS && sha256sum --quiet -c $H/inputs.sha256) || { echo "run: an input in $CORPUS changed (inputs.sha256)" >&2; exit 1 }
 
-OUT=$S/results/$(date +%F)-$COMMIT-throughput; n=1
-while [[ -e $OUT ]]; do OUT=$S/results/$(date +%F)-$COMMIT-throughput-$((++n)); done
+# whether COMMIT's FILE has a line matching PATTERN: grep reads it all, as a `grep -q` that stops at the first match
+# leaves `git show` to die of SIGPIPE on a large file, which pipe_fail reads as no match
+has() { git -C $REPO show ${COMMIT}:$1 | grep -c -- $2 > /dev/null }
+
+BUILD=$S/build/throughput-$COMMIT
+if [[ -n ${THROUGHPUT_BUILD_ONLY:-} ]]; then
+  OUT=$BUILD
+else
+  OUT=$S/results/$(date +%F)-$COMMIT-throughput; n=1
+  while [[ -e $OUT ]]; do OUT=$S/results/$(date +%F)-$COMMIT-throughput-$((++n)); done
+fi
 mkdir -p $OUT
 
 # the build: COMMIT's tree, this tree's harness; cargo rebuilds only what changed since the last run
-BUILD=$S/build/throughput-$COMMIT
-if [[ ! -d $BUILD ]]; then
+if [[ ! -d $BUILD/src ]]; then
   mkdir -p $BUILD
   git -C $REPO archive $COMMIT | tar -x -C $BUILD
 fi
-rm -rf $BUILD/examples/throughput $BUILD/examples/common
-cp -r $REPO/examples/throughput.rs $REPO/examples/throughput $REPO/examples/common $BUILD/examples/
 harness=(examples/throughput.rs examples/throughput examples/common)
-HARNESS=$(cd $REPO && find $harness -type f | sort | xargs sha256sum | sha256sum | cut -c1-16)
-DIRTY=$(git -C $REPO status --porcelain -- $harness | wc -l)
+rm -rf $BUILD/examples/throughput $BUILD/examples/common
+ADDED=
+# this tree's harness reads 1.2's IR and dialects (BEN-019): a commit from before them (no `doc::parse_with`) is
+# measured by its own harness, as it was then, which meta.txt says
+if has src/doc/mod.rs 'parse_with'; then
+  cp -r $REPO/examples/throughput.rs $REPO/examples/throughput $REPO/examples/common $BUILD/examples/
+  HARNESS=$(cd $REPO && find $harness -type f | sort | xargs sha256sum | sha256sum | cut -c1-16)
+  DIRTY=$(git -C $REPO status --porcelain -- $harness | wc -l)
+  # C2 runs on doc::options, exported since BEN-019 (2026-11-23): exported in a 1.2 commit from before it
+  if ! has src/doc/mod.rs 'pub use parse::{options'; then
+    grep -q '^pub use parse::options;' $BUILD/src/doc/mod.rs || print 'pub use parse::options;' >> $BUILD/src/doc/mod.rs
+    ADDED+=" (doc::options exported)"
+  fi
+else
+  git -C $REPO cat-file -e ${COMMIT}:examples/throughput.rs 2>/dev/null \
+    || { echo "run: $COMMIT has neither 1.2's doc API nor a harness of its own" >&2; exit 1 }
+  git -C $REPO archive $COMMIT $harness | tar -x -C $BUILD
+  HARNESS=$(cd $BUILD && find $harness -type f | sort | xargs sha256sum | sha256sum | cut -c1-16)
+  DIRTY=0
+  ADDED+=" (its own harness: from before 1.2's doc API)"
+fi
 # the harness's reference needs pulldown-cmark's HTML renderer, a dev-dependency since BEN-009's phase 2:
 # added to the manifest of a commit from before it (meta.txt says so)
-ADDED=
-if ! git -C $REPO show $COMMIT:Cargo.toml | grep -q '^pulldown-cmark = .*"html"'; then
+if ! has Cargo.toml '^pulldown-cmark = .*"html"'; then
   ADDED=" (pulldown-cmark's html added as a dev-dependency)"
   grep -q '^pulldown-cmark = .*"html"' $BUILD/Cargo.toml \
     || (cd $BUILD && cargo add --quiet --dev pulldown-cmark@0.13.5 --no-default-features -F html) \
@@ -51,7 +78,7 @@ if ! git -C $REPO show $COMMIT:Cargo.toml | grep -q '^pulldown-cmark = .*"html"'
 fi
 # the print cell calls print::write, public since BEN-010 (2026-11-02; the same signature since the series began):
 # made public in a commit from before it (meta.txt says so)
-if ! git -C $REPO show ${COMMIT}:src/print.rs | grep -q '^pub fn write('; then
+if ! has src/print.rs '^pub fn write('; then
   grep -qE '^(pub )?fn write\(' $BUILD/src/print.rs || { echo "run: no print::write in $COMMIT" >&2; exit 1 }
   sed -i 's/^fn write(/pub fn write(/' $BUILD/src/print.rs
   ADDED+=" (print::write made public)"
@@ -60,6 +87,10 @@ fi
 (cd $BUILD && CARGO_TARGET_DIR=$BUILD/target cargo build --release --locked --bin ada \
   && CARGO_TARGET_DIR=$BUILD/target cargo build --release --locked --example throughput) \
   >> $OUT/build.log 2>&1 || { echo "run: the build failed, $OUT/build.log" >&2; exit 1 }
+if [[ -n ${THROUGHPUT_BUILD_ONLY:-} ]]; then
+  print "=== built $BUILD$ADDED"
+  exit 0
+fi
 # fresh copies, as B2 runs them (BEN-001)
 cp $BUILD/target/release/examples/throughput $BUILD/target/release/ada $OUT/
 

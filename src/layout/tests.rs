@@ -980,3 +980,52 @@ fn an_embed_lays_out_the_note_on_its_line() {
     // its heading's row is known, for a link to it
     assert_eq!(l.anchor_rows[1], 3);
 }
+
+/// What print highlights is what layout lays out as code (PRN-006): fenced code always, the
+/// note's own front matter only as written (in `source` mode, or unreadable in `show`), an
+/// embedded note's never.
+#[test]
+fn shown_code_is_the_code_laid_out() {
+    use crate::doc::{Embeds, embed::Note, parse_with};
+    use crate::highlight;
+    use crate::links::LocalTarget;
+
+    let theme = Theme::builtin();
+    let note = Note {
+        from: "host.md".into(),
+        target: LocalTarget::Wiki("other".into()),
+        path: "other.md".into(),
+        mtime: None,
+        text: "---\ntags: x\n---\n# Other\n\n```rust\nfn f() {}\n```\n".into(),
+    };
+    let embeds = Embeds(vec![note].into());
+    for (front, read) in [("tags: [a]\n", true), ("just text\n", false)] {
+        let md = format!("---\n{front}---\n# Host\n\n```sh\nls\n```\n\n![[other]]\n");
+        let obsidian = Dialect::Obsidian { line_breaks: false };
+        let doc = parse_with(&md, obsidian, Path::new("host.md"), &embeds);
+        assert_eq!(doc.properties().map(|p| p.read), Some(read));
+        for mode in [
+            PropertiesMode::Show,
+            PropertiesMode::Hide,
+            PropertiesMode::Source,
+        ] {
+            let p = LayoutParams {
+                properties: mode,
+                ..params(40)
+            };
+            let l = layout(&doc, &theme.glyphs, p);
+            let laid_out: Vec<u32> = (0..l.code.len() as u32)
+                .filter(|&id| l.code[id as usize].key.is_some())
+                .collect();
+            let mut shown: Vec<u32> = (doc.shown_code(|p| mode.as_written(p)).iter())
+                .filter(|code| highlight::key(code).is_some())
+                .map(|code| code.id)
+                .collect();
+            shown.sort_unstable();
+            assert_eq!(shown, laid_out, "{mode:?}, read {read}");
+            // the sh block, the embed's rust block, and the front matter only as written
+            let own = mode == PropertiesMode::Source || (mode == PropertiesMode::Show && !read);
+            assert_eq!(shown.len(), 2 + usize::from(own), "{mode:?}, read {read}");
+        }
+    }
+}

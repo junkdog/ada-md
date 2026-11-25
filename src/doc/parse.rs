@@ -14,7 +14,7 @@ use pulldown_cmark::{
 
 use super::embed::{self, Embed, Embedded, Embeds, Offsets};
 use super::flavor::Dialect;
-use super::lines::{code_line_count, line_starts_and_marks};
+use super::lines::{Scan, code_line_count};
 use super::slug::Slugger;
 use super::{
     Align, Anchor, AnchorKind, Block, BlockKind, Callout, CalloutKind, CodeBlock, CodeId, Doc,
@@ -27,7 +27,8 @@ use crate::links::Target;
 
 /// The parser's options, for every dialect: what has no other meaning in CommonMark or GFM is on
 /// everywhere, as wiki links and math are (ADR-45). Front matter is found by [`super::front`],
-/// not by pulldown-cmark's option, which takes a `---` anywhere for it.
+/// not by pulldown-cmark's option, which takes a `---` anywhere for it. Public for the throughput
+/// bench's C2 ceiling, pulldown-cmark's events alone (BEN-019).
 pub fn options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -124,13 +125,30 @@ fn max_events(len: usize) -> usize {
 /// pandoc, does one right after a backtick: that's how a code span that starts with a `$` opens
 /// (`` `${@:-1}` ``, `` `$HOME` ``), and the code span takes it. Math that opens with a backtick
 /// too is GitHub's other form (`` $`\sqrt{2}`$ ``) and stays math, as does a backtick elsewhere
-/// in math, often a prime (`` $f`(x)$ ``). pulldown-cmark has no hook for its closers, so a text
-/// where it closes math on such a `$` is parsed again with that `$` masked (a byte the text
-/// lacks, of the same length, so every offset holds), until no such `$` is left or after
-/// [`MAX_MATH_PASSES`]. Notes without one parse once, as before.
+/// in math, often a prime (`` $f`(x)$ ``). pulldown-cmark has no hook for its closers, so such
+/// a `$` is masked (a byte the text lacks, of the same length, so every offset holds): before
+/// the first pass where the text alone shows it opens no math ([`never_opens`]), as a price's
+/// `$` does, so a note with prices parses once (PAR-010); else a text where pulldown-cmark closes
+/// math on one is parsed again with it masked, until no such `$` is left or after
+/// [`MAX_MATH_PASSES`]. Notes without one parse once, as before. In a note that leaves only a
+/// control byte to mask with, a false closer the control byte would change the parse at is kept
+/// instead: its math read as pulldown-cmark reads it ([`kept_besides`], PAR-015).
+///
+/// A pass ([`read_pass`]) is one loop, which inlines the parser's iterator and
+/// [`Builder::event`] (PAR-010). Its builder stops at the first false closer, and the rest of
+/// the pass only finds the others ([`Builder::dead`]), of which the next pass masks those
+/// pandoc's rule skips as this one reads them: each paragraph's (heading's, cell's) first, and
+/// the next only where masking it leaves the rest as it was ([`Builder::settle`], PAR-016). So
+/// the masks are pandoc's, left to right, a label's copies with them ([`label_copies`],
+/// [`stepwise`], PAR-019), up to [`MAX_MATH_PASSES`]. What masking costs is in [`set_bytes`] and
+/// [`Builder::event_rare`], out of the way.
 ///
 /// In Obsidian's dialect, its `%%comments%%` go first (OBS-004), their line ends kept: what's
-/// parsed is the note without them, its lines numbered as the note's. pulldown-cmark reads the
+/// parsed is the note without them, its lines numbered as the note's. A `%%` in code opens none,
+/// the code as pulldown-cmark reads the note as written: a note whose `%%`s all look like code
+/// is parsed as written, its first pass finding its code ([`passes`]), and again without its
+/// comments only where that finds one; any other's code is found by a pass of its own first
+/// ([`super::comments::code`], PAR-021). pulldown-cmark reads the
 /// note from past its front matter (found by [`super::front`]; with a blank line after its `---`
 /// in that dialect, OBS-011), its offsets moved back to the note's; the front matter is read into
 /// the note's first block, its properties (ADR-46).
@@ -144,140 +162,1502 @@ fn markdown(text: &str, dialect: Dialect, embedding: Option<Embedding<'_>>) -> O
         .map(|f| super::front::drawing(text, f));
     let text = drawing.as_ref().map_or(text, |d| &text[..d.end]);
     let obsidian = matches!(dialect, Dialect::Obsidian { .. }) || drawing.is_some();
-    let uncommented;
-    let text = match obsidian {
-        true => {
-            uncommented = super::comments::strip(text, max)?;
-            &*uncommented
+    // where the front matter ends, as the dialect takes it; comments start past it, which keeps
+    // its place
+    let matter = read.filter(|f| f.taken(obsidian)).map_or(0, |f| f.end);
+    let front = drawing.as_ref().map_or(matter, |d| d.start);
+    let note = Note {
+        dialect,
+        drawing: drawing.is_some(),
+        obsidian,
+        front,
+        max,
+        embedding,
+    };
+    if !obsidian || !super::comments::any(text) {
+        return passes(text, first(text, front), &note, false)?.ok();
+    }
+    // a note whose `%%`s all look like code is parsed as written, its first pass finding its code
+    // and so its comments (a drawing's text before `front` isn't parsed); any other's code is
+    // found by a pass of its own (PAR-021)
+    let looks = drawing.is_none() && super::comments::look_like_code(text, front);
+    #[cfg(test)]
+    let looks = looks && !tests::CODE_PASS.get();
+    let comments = match looks {
+        true => match passes(text, first(text, front), &note, true)? {
+            Ok(doc) => return Some(doc),
+            Err(comments) => comments,
+        },
+        false => {
+            let code = super::comments::code(text, matter, max)?;
+            let comments = super::comments::find(text, &code);
+            if comments.is_empty() {
+                return passes(text, first(text, front), &note, false)?.ok();
+            }
+            comments
         }
-        false => text,
     };
-    // comments start past the front matter, which keeps its place
-    let front = match &drawing {
-        Some(d) => d.start,
-        None => read.filter(|f| f.taken(obsidian)).map_or(0, |f| f.end),
-    };
-    let at = |range: Range<usize>| range.start + front..range.end + front;
+    let uncommented = super::comments::strip(text, &comments)?;
+    passes(&uncommented, first(&uncommented, front), &note, false)?.ok()
+}
+
+/// What [`markdown`] parses a note (or the note without its comments) with.
+struct Note<'e> {
+    dialect: Dialect,
+    /// An Excalidraw drawing's: [`Builder::drawing`] reads its front matter and banner.
+    drawing: bool,
+    obsidian: bool,
+    /// Where pulldown-cmark starts reading.
+    front: usize,
+    max: usize,
+    embedding: Option<Embedding<'e>>,
+}
+
+/// The source of [`markdown`]'s first pass over `text`: `text` with the `$`s [`never_opens`]
+/// finds masked ([`premasked`]), and the mask, or `text` as it is; and `text`'s lines, which
+/// every pass reads.
+struct First<'t> {
+    source: Cow<'t, str>,
+    mask: Option<u8>,
+    /// The `$`s masked, when the mask is some.
+    never: Vec<usize>,
+    /// `text` holds a `$` past the front matter.
+    dollars: bool,
+    /// `text`'s line starts and marks ([`Builder::line_starts`], [`Builder::marks`]).
+    starts: Vec<u32>,
+    marks: Vec<u32>,
+}
+
+fn first(text: &str, front: usize) -> First<'_> {
     let mut source = Cow::Borrowed(text);
     let mut mask = None;
-    let mut maskable = true;
+    // a note without a `$` past its front matter has no math, and no wiki link's target to read
+    // for it; found in the newlines' pass (PAR-022)
+    let Scan {
+        starts,
+        marks,
+        dollar: dollars,
+    } = super::lines::scan(text, front);
+    let never = match dollars {
+        true => never_opens(text, front),
+        false => Vec::new(),
+    };
+    #[cfg(test)]
+    let never = tests::hooked(never);
+    let mut never = never;
+    if !never.is_empty() {
+        mask = premasked(&mut source, text, front, &mut never);
+    }
+    First {
+        source,
+        mask,
+        never,
+        dollars,
+        starts,
+        marks,
+    }
+}
+
+/// [`markdown`]'s passes over `text`, the first from `start`: the doc, or `None` past
+/// [`max_events`]. Where `comments` is set (an Obsidian note whose `%%`s all look like code), the
+/// first pass finds `text`'s code too, and where that leaves a `%%` to open a comment, gives back
+/// the comments ([`super::comments::find`]) instead of reading on: the code as pulldown-cmark
+/// reads the note as written, so only from a first pass that masked no `$`; a masked one's is
+/// found by a pass of [`super::comments::code`] (PAR-021).
+fn passes(
+    text: &str,
+    start: First<'_>,
+    note: &Note<'_>,
+    comments: bool,
+) -> Option<Result<Doc, Vec<Range<usize>>>> {
+    let Note {
+        dialect,
+        drawing,
+        obsidian,
+        front,
+        max,
+        embedding,
+    } = *note;
+    let First {
+        mut source,
+        mut mask,
+        never,
+        dollars,
+        mut starts,
+        mut marks,
+    } = start;
+    // where the source's `$`s are masked, before the first pass and by the passes
+    let mut masked_at = if mask.is_some() { never } else { Vec::new() };
+    // the false closers left unmasked under a control byte, read as pulldown-cmark reads them
+    // (PAR-015), in order
+    let mut kept = Vec::new();
     // what the notes transcluded before this parse took: a pass after a false closer grafts its
     // embeds again, and counts them from here, not on top of the last pass's (PAR-012)
     let spent = embedding.map(|e| e.budget.spent.get());
-    for pass in 0.. {
-        let check = maskable && pass < MAX_MATH_PASSES;
-        let mut b = Builder::new(text);
+    let mut pass = 0;
+    // the pass that takes its math as pulldown-cmark reads it, false closers or not
+    let mut last = false;
+    loop {
+        let mut b = Builder::with_lines(text, mem::take(&mut starts), mem::take(&mut marks));
         b.embedding = embedding;
         // a drawing's text elements keep their lines, as Obsidian's default does
         b.line_breaks = match dialect {
             Dialect::Obsidian { .. } => dialect.line_breaks(),
-            _ => drawing.is_some(),
+            _ => drawing,
         };
         b.obsidian = obsidian;
-        if drawing.is_some() {
+        b.dollars = dollars;
+        if drawing {
             b.drawing(front);
         } else if front > 0 {
             b.properties();
         }
-        let mut events = Parser::new_ext(&source[front..], options())
-            .into_offset_iter()
-            .enumerate();
-        let mut wrong = Vec::new();
-        for (n, (event, range)) in events.by_ref() {
-            if n == max {
-                return None;
-            }
-            let range = at(range);
-            if check && matches!(event, Event::InlineMath(_)) && !math_closes(text, &range) {
-                wrong.push(range.end - 1);
-                break;
-            }
-            b.event(unmask(event, mask), range);
+        b.mask = mask;
+        #[cfg(test)]
+        tests::MASK.set(mask);
+        b.rare_from = masked_at.first().copied().unwrap_or(usize::MAX);
+        b.masked = mem::take(&mut masked_at);
+        b.kept = mem::take(&mut kept);
+        b.last = last || pass == MAX_MATH_PASSES;
+        // pandoc's rule takes as many passes as it takes
+        #[cfg(test)]
+        if tests::ideal() {
+            b.last = last;
         }
-        if wrong.is_empty() {
-            return Some(b.finish());
+        #[cfg(test)]
+        tests::PASSES.set(tests::PASSES.get() + 1);
+        if pass == 0 && comments {
+            // the front matter, then what the pass finds
+            b.code = Some(std::iter::once(0..front).collect());
+            b.rare_from = 0;
         }
-        // the rest of the pass's false closers, so that the next pass masks them all
-        for (n, (event, range)) in events {
-            if n == max {
-                return None;
+        read_pass(&mut b, &source, front, max)?;
+        if let Some(mut code) = b.code.take() {
+            let found = match mask {
+                None => {
+                    code.sort_unstable_by_key(|r| r.start);
+                    super::comments::find(text, &code)
+                }
+                // the code as written, past masks that may have moved math (`$` prices)
+                Some(_) => super::comments::find(text, &super::comments::code(text, front, max)?),
+            };
+            if !found.is_empty() {
+                if let (Some(e), Some(spent)) = (embedding, spent) {
+                    e.budget.spent.set(spent);
+                }
+                return Some(Err(found));
             }
-            let range = at(range);
-            if matches!(event, Event::InlineMath(_)) && !math_closes(text, &range) {
-                wrong.push(range.end - 1);
-            }
+        }
+        // a builder that met a false closer stopped there ([`Builder::dead`])
+        if !b.dead {
+            return Some(Ok(b.finish()));
         }
         if let (Some(e), Some(spent)) = (embedding, spent) {
             e.budget.spent.set(spent);
         }
-        let Some(m) = mask.or_else(|| unused_byte(text)) else {
-            // a text holding every candidate byte (only a fuzzer's): math as pulldown-cmark reads it
-            maskable = false;
+        // the last inline context's false closers
+        b.settle(text.len());
+        #[cfg(test)]
+        tests::WRONG.with_borrow_mut(|w| w.extend_from_slice(&b.wrong));
+        masked_at = mem::take(&mut b.masked);
+        kept = mem::take(&mut b.kept);
+        // `text`'s lines, for the next pass's builder
+        starts = mem::take(&mut b.line_starts);
+        marks = mem::take(&mut b.marks);
+        pass += 1;
+        // a text holding every candidate byte (only a fuzzer's): math as pulldown-cmark reads it
+        let Some(m) = mask.or_else(|| mask_byte(text)) else {
+            last = true;
             continue;
         };
         mask = Some(m);
-        let mut bytes = source.into_owned().into_bytes();
-        for at in wrong {
+        // those of each inline context that pandoc's rule skips, as this pass reads them (none
+        // kept)
+        let mut wrong = mem::take(&mut b.wrong);
+        wrong.sort_unstable();
+        wrong.dedup();
+        let control = m.is_ascii_control();
+        if control {
+            // a control byte where a `$` would change the parse: the false closer is kept
+            let all = wrong.clone();
+            line_safe(text.as_bytes(), &mut wrong, true, false);
+            kept_besides(&mut kept, &all, &wrong);
+        }
+        set_bytes(&mut source, &wrong, m);
+        masked_at.extend_from_slice(&wrong);
+        masked_at.sort_unstable();
+        masked_at.dedup();
+        // a label's `$` masked in each copy the math leaves, as the next pass reads it: after
+        // each pass, as a later one may undo math a copy was in (PAR-014); a copy in math as
+        // this pass's masks read it may be out of it as pandoc's rule meets them, one at a time
+        // ([`stepwise`], PAR-019)
+        let (mut copies, unmasked, rejected) =
+            label_copies(&source, text, front, &masked_at, control);
+        if !rejected.is_empty() && wrong.len() > 1 {
+            copies.extend(stepwise(&source, front, &wrong, &copies, &rejected, m));
+            copies.sort_unstable();
+        }
+        if !unmasked.is_empty() {
+            set_bytes(&mut source, &unmasked, b'$');
+            masked_at.retain(|at| unmasked.binary_search(at).is_err());
+            kept.extend_from_slice(&unmasked);
+            kept.sort_unstable();
+        }
+        while !copies.is_empty() {
+            set_bytes(&mut source, &copies, m);
+            masked_at.extend_from_slice(&copies);
+            masked_at.sort_unstable();
+            // a copy masked may undo math another copy was in: judged again, as the next pass
+            // would, which may meet no false closer to call this after (PAR-019)
+            copies = label_copies(&source, text, front, &masked_at, control).0;
+        }
+        #[cfg(test)]
+        tests::KEPT.set(kept.len());
+    }
+}
+
+/// One pass of [`markdown`]: the events of `source` past `front` read into `b`, their offsets
+/// moved by `front`, or `None` past [`max_events`]' `max`. The loop is v1.1.0's, but for how it
+/// counts the events: it calls the parser's iterator and [`Builder::event`] once each, and is
+/// their one caller, so both are inlined into it. Nothing in it is the same for a whole pass: a test of the mask was, LLVM
+/// unswitched the loop on it into two loops, each a caller, and both went out of line, every
+/// note's parse +8 to +17% instructions (PAR-010). The mask is the builder's
+/// ([`Builder::mask`]), tested where its opening is, and the false closers are its too
+/// ([`Builder::wrong`]), found in its arm for inline math. It is also the one reader of
+/// pulldown-cmark's events in ada: the parses that only look at them read them here too, into a
+/// builder that probes ([`probe`]). A second reader, of a parser type of its own, was a second
+/// caller of pulldown-cmark's `ItemBody::clone`, which went out of line, a call an event
+/// (PAR-023).
+#[inline(never)]
+fn read_pass(b: &mut Builder<'_>, source: &str, front: usize, max: usize) -> Option<()> {
+    let events = Parser::new_ext(&source[front..], options()).into_offset_iter();
+    // counted down, not `enumerate`d: its tuple moved each event once more, read_pass +1.8 M
+    // instructions on XL (PAR-023)
+    let mut left = max;
+    for (event, range) in events {
+        if left == 0 {
+            return None;
+        }
+        left -= 1;
+        b.event(event, range.start + front..range.end + front);
+    }
+    Some(())
+}
+
+/// What a parse that only looks at pulldown-cmark's events finds ([`probe`]).
+pub(super) enum Probe {
+    /// The code a `%%` opens no comment in ([`super::comments::is_code`]), for
+    /// [`super::comments::code`].
+    Code(Vec<Range<usize>>),
+    /// The ranges of math and wiki links, for [`math_ranges`].
+    Math(Vec<Range<usize>>),
+    /// Each inline math's range and its false closer ([`wrong_closer`]), for
+    /// [`Builder::wiki_target`].
+    Wiki(Vec<(Range<usize>, usize)>),
+}
+
+impl Probe {
+    /// `event`, at `range` of `source`, looked at.
+    fn event(&mut self, source: &str, event: &Event<'_>, range: Range<usize>) {
+        match self {
+            Probe::Code(code) => {
+                if super::comments::is_code(event) {
+                    code.push(range);
+                }
+            }
+            Probe::Math(math) => {
+                let found = matches!(
+                    event,
+                    Event::InlineMath(_)
+                        | Event::DisplayMath(_)
+                        | Event::Start(
+                            Tag::Link {
+                                link_type: LinkType::WikiLink { .. },
+                                ..
+                            } | Tag::Image {
+                                link_type: LinkType::WikiLink { .. },
+                                ..
+                            }
+                        )
+                );
+                if found {
+                    math.push(range);
+                }
+            }
+            Probe::Wiki(wrong) => {
+                if let Event::InlineMath(t) = event
+                    && let Some(at) = wrong_closer(source, &range, t.len())
+                {
+                    wrong.push((range, at));
+                }
+            }
+        }
+    }
+}
+
+/// `what` with the events of `source` past `front` looked at, their offsets moved by `front`;
+/// and whether the parse ended within [`max_events`]' `max` (past it, `what` holds the first
+/// `max` events'). Through [`read_pass`], pulldown-cmark's one reader (PAR-023), into a builder
+/// that builds nothing ([`Builder::probing`]).
+#[cold]
+#[inline(never)]
+pub(super) fn probe(source: &str, front: usize, max: usize, what: Probe) -> (Probe, bool) {
+    let mut b = Builder::probing(source, what);
+    let done = read_pass(&mut b, source, front, max).is_some();
+    (
+        b.probe.take().expect("a probing builder keeps its probe"),
+        done,
+    )
+}
+
+/// `source` with the bytes at `at` set to `byte`, for the next pass of [`markdown`]: a `$` to
+/// the mask, or a masked `$` back. Both are ASCII.
+#[cold]
+#[inline(never)]
+fn set_bytes(source: &mut Cow<'_, str>, at: &[usize], byte: u8) {
+    if at.is_empty() {
+        return;
+    }
+    let mut bytes = mem::take(source).into_owned().into_bytes();
+    for &i in at {
+        bytes[i] = byte;
+    }
+    *source = Cow::Owned(String::from_utf8(bytes).expect("`$` and the mask are both ASCII"));
+}
+
+/// The byte [`markdown`] masks `text`'s `$`s with ([`unused_byte`]), or a control byte in the
+/// tests that force one.
+fn mask_byte(text: &str) -> Option<u8> {
+    let m = unused_byte(text)?;
+    #[cfg(test)]
+    let m = tests::forced(text).unwrap_or(m);
+    Some(m)
+}
+
+/// `kept`, in order, with the false closers of `all` that [`line_safe`] left out of `safe`
+/// (both in order): under a control byte, the passes of [`markdown`] leave those unmasked and
+/// read their math as pulldown-cmark does, as the last pass would (PAR-015). A control byte is
+/// no punctuation, so one next to a delimiter run may make it flank otherwise (`x~$3 … ~$3`:
+/// a strikethrough comes or goes), and one in a link's destination or an autolink breaks it.
+#[cold]
+fn kept_besides(kept: &mut Vec<usize>, all: &[usize], safe: &[usize]) {
+    if all.len() > safe.len() {
+        kept.extend(all.iter().filter(|at| safe.binary_search(at).is_err()));
+        kept.sort_unstable();
+    }
+}
+
+/// The `$`s to mask beside `masked`, those masked so far in order (the false closers the passes of
+/// [`markdown`] met, and their copies), in `source` (the next pass's, of `text` past `front`), and
+/// those of `masked` to give back: where one is in a label (between brackets on its line: a
+/// footnote's, a link reference's), the same `$` of each copy of that label (PAR-014).
+/// pulldown-cmark matches a reference to its definition by the label's text, so a `$` masked in one
+/// copy but not in the other unmatched them (`$1 [^a$1]` … `[^a$1]: b`). A copy is a bracketed
+/// group on one line whose text is the label's but for case and runs of blanks, as pulldown-cmark
+/// compares them, and its `$` is the label's same one, counted in `$`s. Not a copy whose `$` is
+/// math's in `source` ([`math_ranges`]), which makes it no reference, as the `$` opening it would
+/// no longer: returned apart, each with the masked `$` that made its label's one to mask, for
+/// [`stepwise`]. Called after each pass, and again while it masks copies (a masked copy may undo
+/// math another was in), a copy whose math a later mask undoes is masked then (PAR-019). So a
+/// label's `$` is masked in every copy the math leaves, definitions above all (block-level, never
+/// math's), and masking one the math leaves changes no math (it can close, as the false closer
+/// could, so math reaching it would have closed there). A copy that is a link's text is given back
+/// with its text, one in a definition's destination or title at the links that use it
+/// ([`Builder::add_masked_link`]). Under a `control` byte, a label's `$` that a control byte would
+/// change the parse at in any copy ([`line_safe`]: next to a delimiter run, in a destination; in
+/// the rare note using every punctuation byte) is masked in none (PAR-015), and given back where it
+/// is: the false closer is kept ([`kept_besides`]), so its math is read as pulldown-cmark reads it,
+/// and every copy of the label stays the same. That's decided by the copies in the text, math or
+/// not, so it holds for every pass. A wiki link's target is no label. Only a label with a
+/// definition ([`defines`]): one nothing defines makes no reference, its copies text however
+/// they're masked. Linear in the text past the probe's parse, made only when a `$` masked is in
+/// such a label.
+#[cold]
+#[inline(never)]
+fn label_copies(
+    source: &str,
+    text: &str,
+    front: usize,
+    masked: &[usize],
+    control: bool,
+) -> (Vec<usize>, Vec<usize>, Vec<(usize, usize)>) {
+    let b = text.as_bytes();
+    // each label's text, as compared: the `$`s of it to mask, counted from its first, and
+    // whether it has a definition
+    // each with the first masked `$` of it, the copy that made it a label's to mask
+    let mut labels: HashMap<String, (Vec<(usize, usize)>, bool)> = HashMap::new();
+    for &at in masked {
+        if let Some((open, close)) = label_at(b, at) {
+            let nth = memchr::memchr_iter(b'$', &b[open + 1..at]).count();
+            let (nths, _) = labels.entry(label_key(&text[open + 1..close])).or_default();
+            if !nths.iter().any(|&(n, _)| n == nth) {
+                nths.push((nth, at));
+            }
+        }
+    }
+    let (mut copies, mut unmasked, mut rejected) = (Vec::new(), Vec::new(), Vec::new());
+    if labels.is_empty() {
+        return (copies, unmasked, rejected);
+    }
+    // the copies' `$`s, in order, each with its label's text and which of its `$`s it is, and
+    // the masked `$` that made it one to mask
+    let mut found: Vec<(usize, String, usize, usize)> = Vec::new();
+    for open in memchr::memchr_iter(b'[', &b[front..]).map(|i| front + i) {
+        let Some(close) = memchr::memchr3(b'[', b']', b'\n', &b[open + 1..]).map(|i| open + 1 + i)
+        else {
+            break;
+        };
+        let inner = &b[open + 1..close];
+        if b[close] != b']' || memchr::memchr(b'$', inner).is_none() || !is_label(b, open, close) {
+            continue;
+        }
+        let key = label_key(&text[open + 1..close]);
+        let Some((nths, defined)) = labels.get_mut(&key) else {
+            continue;
+        };
+        *defined |= defines(b, open, close);
+        let dollars: Vec<usize> = memchr::memchr_iter(b'$', inner).collect();
+        for &(n, by) in nths.iter() {
+            if let Some(d) = dollars.get(n) {
+                found.push((open + 1 + d, key.clone(), n, by));
+            }
+        }
+    }
+    // a label nothing defines makes no reference: its copies are text however they're masked
+    found.retain(|(_, key, ..)| labels[key].1);
+    if control {
+        let mut all: Vec<usize> = found.iter().map(|f| f.0).collect();
+        all.sort_unstable();
+        all.dedup();
+        let mut safe = all.clone();
+        line_safe(b, &mut safe, true, true);
+        if safe.len() < all.len() {
+            // each label's `$` a copy can't take a control byte at
+            let unsafe_: Vec<(String, usize)> = (found.iter())
+                .filter(|f| safe.binary_search(&f.0).is_err())
+                .map(|f| (f.1.clone(), f.2))
+                .collect();
+            let mut kept: Vec<usize> = Vec::new();
+            found.retain(|(at, key, n, _)| {
+                let keep = !unsafe_.iter().any(|(k, m)| k == key && m == n);
+                if !keep && masked.binary_search(at).is_ok() {
+                    kept.push(*at);
+                }
+                keep
+            });
+            kept.sort_unstable();
+            kept.dedup();
+            unmasked = kept;
+        }
+    }
+    found.retain(|(at, ..)| masked.binary_search(at).is_err());
+    if found.is_empty() {
+        return (copies, unmasked, rejected);
+    }
+    let math = math_ranges(source, front);
+    for (at, _, _, by) in found {
+        match in_math(&math, at) {
+            false => copies.push(at),
+            true => rejected.push((at, by)),
+        }
+    }
+    copies.sort_unstable();
+    copies.dedup();
+    rejected.sort_unstable();
+    rejected.dedup_by_key(|r| r.0);
+    (copies, unmasked, rejected)
+}
+
+/// Whether `at` is in one of `math`'s ranges ([`math_ranges`]: in order, apart).
+fn in_math(math: &[Range<usize>], at: usize) -> bool {
+    let i = math.partition_point(|r| r.end <= at);
+    math.get(i).is_some_and(|r| r.start <= at)
+}
+
+/// The copies of `rejected` ([`label_copies`]': each a copy in math as the next pass reads
+/// `source`, with the masked `$` that made its label's one to mask) that are out of math as
+/// `wrong` (the false closers this pass masks, in order) masked one at a time read them, from
+/// the one that made each one to mask: pandoc's rule meets them so, and masks such a copy
+/// (PAR-019). A pass masks the first false closer of each inline context at once
+/// ([`Builder::settle`]), and a copy in one context may be in math only once another context's
+/// mask moves that context's reading (a copy inside `$$…$$` that a lone `$` past it kept from
+/// closing). `copies`, masked already, are masked at each step. A probe parse for each false
+/// closer of `wrong` but its last, while a copy is left; only for a pass that masked several and
+/// left a copy in math.
+#[cold]
+#[inline(never)]
+fn stepwise(
+    source: &str,
+    front: usize,
+    wrong: &[usize],
+    copies: &[usize],
+    rejected: &[(usize, usize)],
+    m: u8,
+) -> Vec<usize> {
+    let mut bytes = source.as_bytes().to_vec();
+    for &at in &wrong[1..] {
+        bytes[at] = b'$';
+    }
+    for &at in copies {
+        bytes[at] = m;
+    }
+    let mut left = rejected.to_vec();
+    let mut out = Vec::new();
+    for i in 1..wrong.len() {
+        let Ok(step) = std::str::from_utf8(&bytes) else {
+            break;
+        };
+        let math = math_ranges(step, front);
+        // as masked so far: those of `wrong` before the `i`th, and those before this pass
+        let masked = |at: usize| wrong[i..].binary_search(&at).is_err();
+        let mut now = Vec::new();
+        left.retain(|&(at, by)| {
+            let out_of_math = masked(by) && !in_math(&math, at);
+            if out_of_math {
+                now.push(at);
+            }
+            !out_of_math
+        });
+        for &at in &now {
             bytes[at] = m;
         }
-        // `$` and the mask are both ASCII
-        source = Cow::Owned(String::from_utf8(bytes).ok()?);
+        out.extend(now);
+        if left.is_empty() {
+            break;
+        }
+        bytes[wrong[i]] = m;
     }
-    None
+    out
+}
+
+/// Whether the label in the brackets at `open` and `close` may be a definition's
+/// ([`label_copies`]): a `:` after it, and before it on its line only blanks and what opens a
+/// quote or a list item. Generous: a guess that errs only toward a probe that finds nothing to
+/// mask.
+fn defines(b: &[u8], open: usize, close: usize) -> bool {
+    let start = memchr::memrchr(b'\n', &b[..open]).map_or(0, |i| i + 1);
+    b.get(close + 1) == Some(&b':')
+        && (b[start..open].iter()).all(|c| b" \t>-*+.)0123456789".contains(c))
+}
+
+/// The ranges of `source` past `front` that are math (inline or display) as pulldown-cmark reads
+/// it, or a wiki link, whose target's math makes no event ([`Builder::wiki_target`]) and holds
+/// no reference, for [`label_copies`]: a parse of its own, events only ([`probe`]), of the first
+/// [`max_events`]. In order, overlaps merged.
+#[cold]
+fn math_ranges(source: &str, front: usize) -> Vec<Range<usize>> {
+    let max = max_events(source.len());
+    let (Probe::Math(mut ranges), _) = probe(source, front, max, Probe::Math(Vec::new())) else {
+        unreachable!("a probe gives back its own kind");
+    };
+    ranges.sort_unstable_by_key(|r| r.start);
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        match merged.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => merged.push(r),
+        }
+    }
+    merged
+}
+
+/// The brackets around the `$` at `at` on its line, where they may be a label's ([`is_label`]).
+fn label_at(b: &[u8], at: usize) -> Option<(usize, usize)> {
+    let open = memchr::memrchr3(b'[', b']', b'\n', &b[..at]).filter(|&i| b[i] == b'[')?;
+    let close = memchr::memchr3(b'[', b']', b'\n', &b[at + 1..])
+        .map(|i| at + 1 + i)
+        .filter(|&i| b[i] == b']')?;
+    is_label(b, open, close).then_some((open, close))
+}
+
+/// Whether the brackets at `open` and `close` may hold a label ([`label_copies`]): not a wiki
+/// link's target. A link's text before a `(` may be (`[a](` with no destination is a reference).
+fn is_label(b: &[u8], open: usize, close: usize) -> bool {
+    !(open > 0 && b[open - 1] == b'[' && b.get(close + 1) == Some(&b']'))
+}
+
+/// A label's text as pulldown-cmark compares labels: case folded, runs of blanks one space.
+fn label_key(label: &str) -> String {
+    let mut key = String::with_capacity(label.len());
+    for word in label.split_ascii_whitespace() {
+        if !key.is_empty() {
+            key.push(' ');
+        }
+        key.push_str(word);
+    }
+    key.to_lowercase()
+}
+
+/// Where `$`s pulldown-cmark may close inline math on and pandoc wouldn't are in `text` past
+/// `from`, those the text alone shows open no math: masked before [`markdown`]'s first pass
+/// ([`premasked`]), a note with prices parses once, where each `$` it closed math on cost it a
+/// pass more (PAR-010; the vault's parse 4.6%).
+///
+/// Only a `$` math can reach is masked: the `$` before it in its paragraph can open (no blank
+/// after it), or is a false closer math reached in turn. Any other `$` before it closes that
+/// math or ends it, and one no math reaches is text either way: masking it would only cost its
+/// note a copy and send events the slow way ([`Builder::rare_from`]). That's a guess, which may
+/// err the other way: with no math open, a `$` after an odd number of backtick runs on its line
+/// is taken to be in a code span, which takes it first, and to neither open math nor end it
+/// (`` `$VISUAL` / `$EDITOR` ``, `` `-Xmx$HEAP` ``), and no math to reach across a `|`, as in
+/// a table, whose cells are blocks of their own; where it does, the passes find the false
+/// closer. Math open before a code span does reach its `$`s: pulldown-cmark pairs `$`s
+/// before it reads the span.
+///
+/// Masking a `$` changes the parse only where it would act. pulldown-cmark pairs an inline
+/// opener with the next `$` of its block and brace context: if that one can close (no blank
+/// before it), it does, else the opener is text. So a `$` that can close and is followed by a
+/// digit either closes math, falsely, and is masked by a later pass anyway; or opens math, which
+/// masking would lose; or is text either way. It opens none when the next unescaped `$` in its
+/// paragraph that isn't another price's has a blank before it, or there's none
+/// ([`next_opens_none`]). Nor is one after a `$$` in its paragraph masked: a lone `$` keeps a
+/// display span from closing over it. A `$` right after a backtick closes math falsely too,
+/// unless the math opened on one, so one is masked the same way where no `` $` `` is before it in
+/// its paragraph (and no backtick after it: `` `$` ``): that's how a code span starting on a `$`
+/// opens, `` `${@:-1}` ``.
+/// One between brackets on its line is a label's (a footnote's, a link reference's), matched by
+/// its text, so its `$` is masked in every copy of the label or in none ([`label_masks`], each
+/// copy read by these rules, math reaching it or not), and the note parses once where the passes
+/// met such a false closer a pass (PAR-017). Not one with a bracket on one side only, nor in a
+/// wiki link's target, which the rule below leaves to the passes. Nor one after a wiki link
+/// holding a `$` in its paragraph ([`dollar_wiki_links`]): math opening in it may take its `]]`, and the link run on
+/// to a later `]]` (`![[c$1]] … a$2 … $4]]`), or a later mask free one that math took and the
+/// link take what came before (`![[a$2 … $4 … [[ … c$1]] …⏎ ~$3`, the `$3` closing the math over
+/// the `]]`). A wiki link reads back over math that closed in it, so a `$` masked early there
+/// changes the parse before it. The rest are left to the passes. Empty for a note without a
+/// `$`, one `memchr`; linear in the text, whatever the prices.
+fn never_opens(text: &str, from: usize) -> Vec<usize> {
+    let b = text.as_bytes();
+    let mut never = Vec::new();
+    // the last `$$`, the last `$` opening math GitHub's way (`` $`…`$ ``), and the last `$`
+    // while math opened before can close on the next one
+    let (mut display, mut tick) = (Since::default(), Since::default());
+    let mut reach = Since::default();
+    // whether an odd number of backtick runs is on the line before the `$`, and how far that's
+    // read (to the last `$`)
+    let (mut in_code, mut ticks_read) = (false, from);
+    // the last bracket on the line before the `$` (0 for none) and how far that's read; the first
+    // after it (0 for none, at the line's end), known for any `$` before where it was found
+    let (mut before, mut read) = (0, from);
+    let mut after = (from, 0);
+    // where the last [`next_opens_none`] stopped, and what it found: a price's `$` it went past
+    // finds the same, so a paragraph of prices is read once
+    let mut scan = (from, false);
+    let mut braces = None;
+    // the wiki links holding a `$` ([`dollar_wiki_links`]), found at the first `$` to mask; the
+    // next of them past the last `$` read, and whether a blank line is known between the last
+    // one before it and it, and how far that's read
+    let mut wikis: Option<Vec<usize>> = None;
+    let (mut wiki, mut wiki_blank, mut wiki_read) = (0, true, from);
+    // the false closers between brackets on their lines ([`label_masks`])
+    let mut labeled: Vec<(usize, bool, bool)> = Vec::new();
+    for c in memchr::memchr_iter(b'$', &b[from..]).map(|i| i + from) {
+        let next = b.get(c + 1).copied();
+        if next == Some(b'`') {
+            tick.set(c);
+        }
+        if escaped(b, c) {
+            continue;
+        }
+        let can_close = c > from && !blank_byte(b[c - 1]);
+        if can_close && b[c - 1] == b'$' {
+            display.set(c);
+        }
+        let price = next.is_some_and(|n| n.is_ascii_digit());
+        let after_tick = can_close && b[c - 1] == b'`' && next != Some(b'`');
+        let false_closer = can_close && b[c - 1] != b'$' && (price || after_tick);
+        // math that can close on `c` is open: the `$` before it in its paragraph can open, or
+        // is a false closer math reached, which the passes mask; any other `$` closes the math
+        // or ends it. With no math open, one in a code span is the span's (`` `$HOME` ``)
+        // nor across a `|`, a table's cells being blocks of their own
+        let reached = reach.holds(b, c) && memchr::memchr(b'|', &b[ticks_read..c]).is_none();
+        let line =
+            memchr::memrchr(b'\n', &b[ticks_read..c]).map_or(ticks_read, |i| ticks_read + i + 1);
+        if line > ticks_read {
+            in_code = false;
+        }
+        in_code ^= tick_runs(&b[line..c]) % 2 == 1;
+        ticks_read = c;
+        let unread = in_code && !reached;
+        if !unread {
+            let opens = next.is_some_and(|n| !blank_byte(n));
+            if opens || (false_closer && reached) {
+                reach.set(c);
+            } else {
+                reach.clear();
+            }
+        }
+        if !false_closer {
+            continue;
+        }
+        if let Some(i) = memchr::memrchr3(b'[', b']', b'\n', &b[read..c]) {
+            before = b[read + i];
+        }
+        read = c;
+        if c >= after.0 {
+            after = match memchr::memchr3(b'[', b']', b'\n', &b[c + 1..]) {
+                Some(i) => (c + 1 + i, b[c + 1 + i]),
+                None => (b.len(), 0),
+            };
+        }
+        // between brackets on its line: a label's copies are masked all or none, after the
+        // loop, reached or not (PAR-017); a bracket on one side only, left to the passes
+        let label = before == b'[' && after.1 == b']';
+        if !label && (before == b'[' || after.1 == b']' || !reached) {
+            continue;
+        }
+        if c >= scan.0 {
+            scan = next_opens_none(b, c, &mut braces);
+        }
+        let mut ok = scan.1 && !display.holds(b, c) && (price || !tick.holds(b, c));
+        if ok {
+            let wikis = wikis.get_or_insert_with(|| dollar_wiki_links(b, from));
+            while wikis.get(wiki).is_some_and(|&w| w < c) {
+                (wiki_blank, wiki_read) = (false, wikis[wiki]);
+                wiki += 1;
+            }
+            if !wiki_blank {
+                wiki_blank = memchr::memchr_iter(b'\n', &b[wiki_read..c])
+                    .any(|i| blank_line(b, wiki_read + i + 1));
+                wiki_read = c;
+                ok = wiki_blank;
+            }
+        }
+        match label {
+            true => labeled.push((c, ok, reached)),
+            false if ok => never.push(c),
+            false => {}
+        }
+    }
+    if !labeled.is_empty() {
+        label_masks(text, from, &labeled, &mut never);
+    }
+    never
+}
+
+/// The `$`s of `labeled` [`never_opens`] masks, into `never` (kept in order): the false closers
+/// between brackets on their lines, in order, each with whether masking it changes nothing but
+/// the passes (the rules of [`never_opens`], math reaching it or not), and whether math may
+/// reach it. pulldown-cmark matches a reference to its definition by the label's text, so a
+/// label's `$` is masked in every copy of the label or in none ([`label_copies`]' copies): in
+/// all where each may be masked and math may reach one, which is the false closer the passes
+/// would meet; else in none, left to the passes. A label nothing defines makes no reference
+/// ([`defines`]): its `$`s are masked as any other's. Not a wiki link's target ([`is_label`];
+/// the brackets in one are after a wiki link holding a `$`, which [`never_opens`] leaves to the
+/// passes). Linear in the text (PAR-017).
+#[cold]
+#[inline(never)]
+fn label_masks(text: &str, from: usize, labeled: &[(usize, bool, bool)], never: &mut Vec<usize>) {
+    let labels = Labels::new(text, from);
+    // as [`never_opens`] read it: may be masked, and reached
+    let read = |at: usize| {
+        let i = labeled.partition_point(|l| l.0 < at);
+        labeled.get(i).filter(|l| l.0 == at).map(|l| (l.1, l.2))
+    };
+    // each label's `$` to mask, once: the label and which of its `$`s
+    let mut wanted: Vec<(usize, usize)> = (labeled.iter())
+        .filter(|l| l.1 && l.2)
+        .filter_map(|l| labels.find(l.0))
+        .collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let start = never.len();
+    for (key, nth) in wanted {
+        let copies = labels.copies(key, nth);
+        if !labels.defined[key] {
+            never.extend(copies.filter(|&at| read(at) == Some((true, true))));
+        } else if copies.clone().all(|at| read(at).is_some_and(|(ok, _)| ok)) {
+            never.extend(copies);
+        }
+    }
+    if never.len() > start {
+        never.sort_unstable();
+        never.dedup();
+    }
+}
+
+/// `never` (in order) less each defined label's `$` of which [`line_safe`] left out a copy that
+/// [`label_masks`] masked: masked all or none (PAR-017).
+#[cold]
+fn untie(text: &str, from: usize, never: &mut Vec<usize>) {
+    let labels = Labels::new(text, from);
+    let mut tied: Vec<(usize, usize)> = (never.iter())
+        .filter_map(|&at| labels.find(at))
+        .filter(|&(key, _)| labels.defined[key])
+        .collect();
+    tied.sort_unstable();
+    tied.dedup();
+    let mut out: Vec<usize> = Vec::new();
+    for (key, nth) in tied {
+        let mut copies = labels.copies(key, nth);
+        if !copies.clone().all(|at| never.binary_search(&at).is_ok()) {
+            out.extend(copies.by_ref());
+        }
+    }
+    if !out.is_empty() {
+        out.sort_unstable();
+        never.retain(|at| out.binary_search(at).is_err());
+    }
+}
+
+/// The labels of a text past a point that hold a `$`, as [`label_copies`] finds their copies:
+/// bracketed groups on one line, not a wiki link's target ([`is_label`]), each group's label its
+/// text as compared ([`label_key`]). For [`label_masks`] and [`untie`]; linear in the text.
+struct Labels {
+    /// Each group's brackets, its label and its `$`s, in order.
+    groups: Vec<(usize, usize, usize, Vec<usize>)>,
+    /// Each label's groups.
+    members: Vec<Vec<usize>>,
+    /// Whether a group of each label may define it ([`defines`]).
+    defined: Vec<bool>,
+}
+
+impl Labels {
+    fn new(text: &str, from: usize) -> Self {
+        let b = text.as_bytes();
+        let mut keys: HashMap<String, usize> = HashMap::new();
+        let (mut groups, mut members, mut defined) = (Vec::new(), Vec::new(), Vec::new());
+        for open in memchr::memchr_iter(b'[', &b[from..]).map(|i| from + i) {
+            let Some(close) =
+                memchr::memchr3(b'[', b']', b'\n', &b[open + 1..]).map(|i| open + 1 + i)
+            else {
+                break;
+            };
+            let inner = &b[open + 1..close];
+            if b[close] != b']'
+                || memchr::memchr(b'$', inner).is_none()
+                || !is_label(b, open, close)
+            {
+                continue;
+            }
+            let n = keys.len();
+            let key = *keys.entry(label_key(&text[open + 1..close])).or_insert(n);
+            if key == n {
+                members.push(Vec::new());
+                defined.push(false);
+            }
+            members[key].push(groups.len());
+            defined[key] |= defines(b, open, close);
+            let dollars = memchr::memchr_iter(b'$', inner)
+                .map(|d| open + 1 + d)
+                .collect();
+            groups.push((open, close, key, dollars));
+        }
+        Self {
+            groups,
+            members,
+            defined,
+        }
+    }
+
+    /// The label of the `$` at `at` and which of its `$`s it is, if it's in one.
+    fn find(&self, at: usize) -> Option<(usize, usize)> {
+        let i = self.groups.partition_point(|g| g.1 < at);
+        let (_, _, key, dollars) = self.groups.get(i).filter(|g| g.0 < at)?;
+        dollars.binary_search(&at).ok().map(|nth| (*key, nth))
+    }
+
+    /// Where the `nth` `$` of each copy of the label `key` is, in order.
+    fn copies(&self, key: usize, nth: usize) -> impl Iterator<Item = usize> + Clone + '_ {
+        (self.members[key].iter()).filter_map(move |&g| self.groups[g].3.get(nth).copied())
+    }
+}
+
+/// Where each wiki link (`[[`) of `b` past `from` holding a `$` before its `]]` or its line's end
+/// starts, in order ([`never_opens`]).
+#[cold]
+fn dollar_wiki_links(b: &[u8], from: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut at = from;
+    while let Some(open) = memchr::memmem::find(&b[at..], b"[[").map(|i| at + i) {
+        let end = memchr::memchr(b'\n', &b[open..]).map_or(b.len(), |i| open + i);
+        let close = memchr::memmem::find(&b[open + 2..end], b"]]").map_or(end, |i| open + 2 + i);
+        if memchr::memchr(b'$', &b[open + 2..close]).is_some() {
+            out.push(open);
+        }
+        at = close;
+    }
+    out
+}
+
+/// The last `$` of a kind [`never_opens`] has read, while no blank line is known past it.
+#[derive(Default)]
+struct Since {
+    at: Option<usize>,
+    /// How far no blank line is known past it.
+    seen: usize,
+}
+
+impl Since {
+    fn clear(&mut self) {
+        self.at = None;
+    }
+
+    fn set(&mut self, at: usize) {
+        *self = Self {
+            at: Some(at),
+            seen: at,
+        };
+    }
+
+    /// Whether the `$` is in the paragraph of the one at `c`, before it.
+    fn holds(&mut self, b: &[u8], c: usize) -> bool {
+        if self.at.is_some() {
+            if (memchr::memchr_iter(b'\n', &b[self.seen..c]))
+                .any(|n| blank_line(b, self.seen + n + 1))
+            {
+                self.at = None;
+            }
+            self.seen = c;
+        }
+        self.at.is_some()
+    }
+}
+
+/// The runs of backticks in `b`, a run cut at its start.
+fn tick_runs(b: &[u8]) -> usize {
+    memchr::memchr_iter(b'`', b)
+        .filter(|&i| i == 0 || b[i - 1] != b'`')
+        .count()
+}
+
+/// pulldown-cmark's blank: an ASCII space, tab, line feed, vertical tab, form feed or return.
+fn blank_byte(c: u8) -> bool {
+    matches!(c, b'\t'..=b'\r' | b' ')
+}
+
+/// Whether the byte at `at` is escaped: an odd run of backslashes before it.
+fn escaped(b: &[u8], at: usize) -> bool {
+    b[..at].iter().rev().take_while(|&&c| c == b'\\').count() % 2 == 1
+}
+
+/// Whether `c` opens no math ([`never_opens`]), and where that was found: the next unescaped `$`
+/// after it in its paragraph that isn't another price's has a blank before it, or there's none.
+/// Math `c` opened would close on a price's `$` first, falsely, and the passes mask it, so `c`'s
+/// math is closed by the next `$` past those, if any; a backtick's `$` closes it falsely too,
+/// as `c` is no `` $` ``. A price past it may open math once `c`'s fails, as pandoc's rule and
+/// the passes read it (PAR-016), but would close where `c`'s would, and so on none: not a
+/// `` `$` ``, which opens GitHub's. A paragraph ends at a blank line, or sooner: a `$` past its
+/// end closes nothing of `c`'s either way.
+///
+/// Braces between are balanced braces with no `$` in them, or `c` is left to the passes: a `$`
+/// inside braces is in another context, and a `}` past `c`'s moves its context. Balanced, they
+/// leave the `$`s past them as they were, but for their contexts' numbers: with the first `$` of
+/// a block masked its braces aren't counted, and the numbers past them change. Those are a byte
+/// and the root's is 255, less one for each unbalanced `}`, so they could meet only past 255
+/// braces in all, `braces` (counted once a note, at its first brace).
+fn next_opens_none(b: &[u8], c: usize, braces: &mut Option<bool>) -> (usize, bool) {
+    let mut depth = 0u32;
+    let mut i = c + 1;
+    // a `$` or a line's end at a time, the bytes between looked at only for a brace; past
+    // `MAX_SCAN` without an answer, `c` is left to the passes (a paragraph is read here to a
+    // blank line, through code blocks, lists and tables)
+    loop {
+        if i - c > MAX_SCAN {
+            return (i, false);
+        }
+        let j = memchr::memchr2(b'$', b'\n', &b[i..]).map_or(b.len(), |k| i + k);
+        if memchr::memchr2(b'{', b'}', &b[i..j]).is_some() {
+            if !*braces.get_or_insert_with(|| few_braces(b)) {
+                return (i, false);
+            }
+            for &x in &b[i..j] {
+                match x {
+                    b'{' => depth += 1,
+                    b'}' if depth == 0 => return (i, false),
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+        if j == b.len() {
+            return (j, depth == 0);
+        }
+        match b[j] {
+            b'$' if depth > 0 => return (j, false),
+            b'$' if !escaped(b, j) => {
+                // closes `c`'s math falsely, before a digit or after a backtick (`c`'s math opens
+                // on none), and opens what `c` would: not a `` `$` ``, which opens GitHub's
+                let next = b.get(j + 1).copied();
+                let price = !blank_byte(b[j - 1])
+                    && b[j - 1] != b'$'
+                    && (next.is_some_and(|n| n.is_ascii_digit())
+                        || (b[j - 1] == b'`' && next != Some(b'`')));
+                if !price {
+                    return (j, blank_byte(b[j - 1]));
+                }
+            }
+            b'\n' if blank_line(b, j + 1) => return (j, depth == 0),
+            _ => {}
+        }
+        i = j + 1;
+    }
+}
+
+/// How far [`next_opens_none`] reads past a `$` for its answer.
+const MAX_SCAN: usize = 4096;
+
+/// Whether `b` holds too few braces for their contexts' numbers to meet ([`next_opens_none`]).
+#[cold]
+fn few_braces(b: &[u8]) -> bool {
+    memchr::memchr2_iter(b'{', b'}', b).take(255).count() < 255
+}
+
+/// Whether the line at `start` is blank, or the text ends there.
+fn blank_line(b: &[u8], start: usize) -> bool {
+    (b[start..]
+        .iter()
+        .find(|&&c| !matches!(c, b' ' | b'\t' | b'\r')))
+    .is_none_or(|&c| c == b'\n')
+}
+
+/// `source` with the `$`s at `never` masked before [`markdown`]'s first pass, and the mask, or
+/// `None`, `source` left as it is; `never` less those [`line_safe`] leaves to the passes, and
+/// less the other copies of a label one of them is in ([`untie`]).
+#[cold]
+#[inline(never)]
+fn premasked(
+    source: &mut Cow<'_, str>,
+    text: &str,
+    from: usize,
+    never: &mut Vec<usize>,
+) -> Option<u8> {
+    let m = mask_byte(text)?;
+    let all = never.len();
+    line_safe(text.as_bytes(), never, m.is_ascii_control(), true);
+    if never.len() < all {
+        untie(text, from, never);
+    }
+    if never.is_empty() {
+        return None;
+    }
+    // the text between, then the mask: no check of the copy's UTF-8, as bytes would need
+    let mut copy = String::with_capacity(text.len());
+    let mut from = 0;
+    for &at in &*never {
+        copy.push_str(&text[from..at]);
+        copy.push(char::from(m));
+        from = at + 1;
+    }
+    copy.push_str(&text[from..]);
+    *source = Cow::Owned(copy);
+    Some(m)
+}
+
+/// `never` (in order) less the `$`s on a link reference's line (`]:`, or the line after one
+/// ending so), with `definitions`: a reference link's destination is its definition's, out of
+/// the link's range, where [`Builder::rare_from`] wouldn't find it to unmask (a pass's false
+/// closer, math's, is in none). Under a `control` byte, less those it would change the parse at,
+/// where `$`, a punctuation byte, wouldn't: next to an emphasis or strikethrough delimiter run
+/// ([`flanks_otherwise`]); in a link's destination, after a `](` not closed by a `)` (on its
+/// line or the next, as one may go on); inside `<…>` on its line (an autolink). A destination
+/// holds no control byte, so the link would break; HTML and code take one as they take `$`.
+/// Reads only the lines with a `$` of `never`, and the line before each.
+#[cold]
+fn line_safe(b: &[u8], never: &mut Vec<usize>, control: bool, definitions: bool) {
+    // the start of the line `seen` is of, `None` before the first; how far that line is read
+    let (mut line, mut at) = (None, 0);
+    let mut seen = LineSeen::default();
+    never.retain(|&c| {
+        let start = match line {
+            Some(l) if memchr::memchr(b'\n', &b[at..c]).is_none() => l,
+            _ => {
+                let from = line.map_or(0, |_| at);
+                memchr::memrchr(b'\n', &b[from..c]).map_or(from, |i| from + i + 1)
+            }
+        };
+        if line != Some(start) {
+            line = Some(start);
+            seen = LineSeen::default();
+            if start > 0 {
+                // the line before: a definition's destination may come on the next line, as
+                // may a link's
+                let before = memchr::memrchr(b'\n', &b[..start - 1]).map_or(0, |i| i + 1);
+                seen.read(b, before, start - 1);
+                seen = LineSeen {
+                    definition: b[before..start - 1].trim_ascii_end().ends_with(b"]:"),
+                    dest: seen.dest,
+                    angle: false,
+                };
+            }
+            at = start;
+        }
+        seen.read(b, at, c);
+        at = c;
+        !(definitions && seen.definition
+            || control && (seen.angle || seen.dest || flanks_otherwise(b, c)))
+    });
+}
+
+/// What [`line_safe`] has read of a line.
+#[derive(Default)]
+struct LineSeen {
+    /// A `]:`: a link reference's definition.
+    definition: bool,
+    /// A `](` without its `)`.
+    dest: bool,
+    /// A `<` without its `>`.
+    angle: bool,
+}
+
+impl LineSeen {
+    /// Read `b[from..to]`, on from what's read.
+    fn read(&mut self, b: &[u8], from: usize, to: usize) {
+        for i in from..to {
+            let after_bracket = i > 0 && b[i - 1] == b']';
+            match b[i] {
+                b'<' => self.angle = true,
+                b'>' => self.angle = false,
+                b'(' if after_bracket => self.dest = true,
+                b')' => self.dest = false,
+                b':' if after_bracket => self.definition = true,
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Whether a control byte in place of the `$` at `c` makes a delimiter run next to it flank
+/// otherwise ([`line_safe`]): a control byte is no punctuation, as `$` is. A run (`*`, `_`,
+/// `~`) followed by punctuation is left-flanking only after a blank or punctuation, and one
+/// after punctuation is right-flanking only before a blank or punctuation. So one before the
+/// `$` flanks the same either way only after a blank (or at a line's start), and one after it
+/// (a backtick's `$` has no digit after it) may not. Linear: each run is read once.
+fn flanks_otherwise(b: &[u8], c: usize) -> bool {
+    if matches!(b.get(c + 1), Some(b'*' | b'_' | b'~')) {
+        return true;
+    }
+    let d = b[c - 1];
+    if !matches!(d, b'*' | b'_' | b'~') {
+        return false;
+    }
+    let start = b[..c].iter().rposition(|&x| x != d).map_or(0, |i| i + 1);
+    start > 0 && !blank_byte(b[start - 1])
 }
 
 /// The notice above an Excalidraw drawing's text (OBS-015).
 const DRAWING: &str = "An Excalidraw drawing, shown as its text";
 
 /// The most times [`markdown`] parses a text again for math closed on a `$` it shouldn't be:
-/// each pass masks every such `$` it meets, and a pass only meets new ones where masking let an
-/// opener reach further. The last pass takes what it gets.
-const MAX_MATH_PASSES: usize = 4;
+/// each pass masks the first such `$` of each inline context, and those after it that masking
+/// it leaves as they were ([`Builder::settle`]), so a context of false closers that each change
+/// what follows takes a pass each. The last pass takes what it gets. 4 until PAR-016, when a
+/// pass masked every one it met: random texts of markdown's bytes around `$` past it went from
+/// 9.5% to 0.5% at 8; the vault's notes take 2 at most.
+const MAX_MATH_PASSES: usize = 8;
 
-/// Whether the inline math at `range` (its `$`s included) closes where pulldown-cmark closed it:
-/// its closing `$` not followed by a digit (pandoc's rule), nor right after a backtick unless
-/// the math opened on one (`` $`…`$ ``).
-fn math_closes(text: &str, range: &Range<usize>) -> bool {
+/// Where the inline math at `range` (its `$`s included), of `tex` bytes of TeX, closes falsely,
+/// its closing `$`, or `None` where it closes as pulldown-cmark closed it: its closing `$` not
+/// followed by a digit (pandoc's rule), nor right after a backtick unless the math opened on one
+/// (`` $`…`$ ``). pulldown-cmark's ranges reach past the `$` at a heading's end, over its blanks
+/// (`# $a`$\t`), and math across a wiki link's `|` starts past the `|`, its opener left out
+/// (`[[a $b|c$9]]`), so shorter than its TeX and `$`s, down to the closer alone (`[[$x|$4]]`):
+/// its closer is judged alone, as math opened without a backtick.
+fn wrong_closer(text: &str, range: &Range<usize>, tex: usize) -> Option<usize> {
     let b = text.as_bytes();
-    if range.end < range.start + 3 || b[range.start] != b'$' || b[range.end - 1] != b'$' {
-        return true;
+    let end = range.start + b[range.clone()].trim_ascii_end().len();
+    let opener = range.len() >= tex + 2;
+    let shortest = range.start + if opener { 3 } else { 1 };
+    if end < shortest.max(2) || b[end - 1] != b'$' {
+        return None;
     }
-    let tick_closes = b[range.end - 2] != b'`' || b[range.start + 1] == b'`';
-    !b.get(range.end).is_some_and(u8::is_ascii_digit) && tick_closes
+    let tick_closes = b[end - 2] != b'`' || (opener && b[range.start + 1] == b'`');
+    let closes = !b.get(end).is_some_and(u8::is_ascii_digit) && tick_closes;
+    (!closes).then_some(end - 1)
+}
+
+/// [`Builder::pending`]'s opener for a false closer whose math's opener isn't known (a wiki
+/// link's target's, where pulldown-cmark's range for its math lacks one).
+const NO_OPENER: usize = usize::MAX;
+
+/// Whether masking the false closer at `at`, of math opened at `open`, in an inline context
+/// ending by `end`, leaves the context's reading past it as it was ([`Builder::settle`]), so
+/// that the false closers met past it are pandoc's too. pulldown-cmark pairs an opener with the
+/// next `$` of its brace context: with `at` masked, the opener's math is undone if that `$` (the
+/// next unmasked, unescaped one) can't close (a blank before it) or there's none, and in no
+/// other case. Undone, its TeX is inline markdown again: so none of it may be syntax that can
+/// reach past it, a code span, a link, a footnote's reference, inline HTML or an autolink. Nor
+/// past it, as a failed opener leaves the context's `$`s in pulldown-cmark's queue of them,
+/// which doesn't see a `$` a code span, a destination or HTML took after; past a closer that
+/// queue is cleared. But a wiki link, whole on its line ([`wiki_pairs_only`]): one past `at`
+/// reads as it did, and one the undone math frees reads back over nothing but its masked `$`s
+/// (`$2 [[d$2]] and $3 [[e$3]]`, PAR-020). Braces between the opener and the next `$` may put
+/// that `$` in another context: none either. Nor a `$` right before the opener: a `$$` that
+/// opened no display math because its next `$` was the opener's false closer (`$$1x$5 $$`)
+/// would pair with the next `$$` past it.
+///
+/// A false closer in a wiki link's target, whose `target` ends there (at its `|` or `]]`), has
+/// its math in the target, which the link reads back over whatever its markup: undone, none of
+/// it may reach past the target, a bracket neither (PAR-020).
+fn reads_on(
+    b: &[u8],
+    masked: &[usize],
+    open: usize,
+    at: usize,
+    target: Option<usize>,
+    end: usize,
+) -> bool {
+    let end = end.min(b.len());
+    if at >= end
+        || (open > 0 && b[open - 1] == b'$')
+        || (b[open + 1..end].iter()).any(|c| matches!(c, b'`' | b'<'))
+    {
+        return false;
+    }
+    let pairs = match target {
+        None => wiki_pairs_only(b, masked, at, open + 1, end),
+        Some(t) => {
+            // past the link's `]]`, its text after a `|` holding no bracket
+            let close = memchr::memmem::find(&b[t..end], b"]]").map(|i| t + i);
+            close.is_some_and(|c| {
+                !(b[open + 1..c].iter()).any(|c| matches!(c, b'[' | b']'))
+                    && wiki_pairs_only(b, masked, at, c + 2, end)
+            })
+        }
+    };
+    if !pairs {
+        return false;
+    }
+    let mut from = at + 1;
+    let next = loop {
+        match memchr::memchr(b'$', &b[from..end]).map(|i| from + i) {
+            Some(d) if masked.binary_search(&d).is_ok() || escaped(b, d) => from = d + 1,
+            other => break other,
+        }
+    };
+    !(b[open + 1..next.unwrap_or(end)].iter()).any(|c| matches!(c, b'{' | b'}'))
+        && next.is_none_or(|d| blank_byte(b[d - 1]))
+}
+
+/// Whether the brackets of `b[from..to]` are all wiki links' ([`reads_on`]): `[[`, then `]]`
+/// before any other bracket or a line's end, and inside, if it opens before the false closer at
+/// `at` (in the math its mask undoes), no `$` but `at` and those `masked`.
+fn wiki_pairs_only(b: &[u8], masked: &[usize], at: usize, from: usize, to: usize) -> bool {
+    let mut i = from;
+    while let Some(j) = memchr::memchr2(b'[', b']', &b[i..to]).map(|k| i + k) {
+        if b[j] == b']' || b.get(j + 1) != Some(&b'[') {
+            return false;
+        }
+        let inner = j + 2;
+        let Some(close) = memchr::memchr3(b'[', b']', b'\n', &b[inner..to]).map(|k| inner + k)
+        else {
+            return false;
+        };
+        if b[close] != b']' || b.get(close + 1) != Some(&b']') || close + 2 > to {
+            return false;
+        }
+        let freed = j < at
+            && memchr::memchr_iter(b'$', &b[inner..close])
+                .map(|k| inner + k)
+                .any(|d| d != at && masked.binary_search(&d).is_err());
+        if freed {
+            return false;
+        }
+        i = close + 2;
+    }
+    true
+}
+
+/// Whether a `tag` is inline: else it's a block's, and its start ends an inline context
+/// ([`Builder::settle`]).
+fn inline_tag(tag: &Tag<'_>) -> bool {
+    matches!(
+        tag,
+        Tag::Emphasis
+            | Tag::Strong
+            | Tag::Strikethrough
+            | Tag::Superscript
+            | Tag::Subscript
+            | Tag::Link { .. }
+            | Tag::Image { .. }
+    )
+}
+
+/// [`inline_tag`] for a tag's end.
+fn inline_end(end: TagEnd) -> bool {
+    matches!(
+        end,
+        TagEnd::Emphasis
+            | TagEnd::Strong
+            | TagEnd::Strikethrough
+            | TagEnd::Superscript
+            | TagEnd::Subscript
+            | TagEnd::Link
+            | TagEnd::Image
+    )
 }
 
 /// A byte `text` doesn't hold, to mask a `$` with. First ASCII punctuation that means nothing to
-/// CommonMark, GFM or the extensions on, as `$` (outside math) doesn't: punctuation, as `$` is, so
-/// emphasis next to it flanks the same, and a link's destination may hold it. Then a control
-/// byte, which a link's destination may not (a masked `$` in one breaks the link, as rare as a
-/// text holding all four): not a tab, line feed, form feed or carriage return, nor NUL, which
-/// pulldown-cmark replaces.
+/// CommonMark, GFM or the extensions on wherever a `$` of `text` stands, as `$` (outside math)
+/// doesn't: punctuation, as `$` is, so emphasis next to it flanks the same, and a link's
+/// destination may hold it. `%` means nothing anywhere; `?` opens a processing instruction after
+/// a `<` (`<?`), `^` a footnote's reference after a `[` (`[^`), and inside `<…>` a `,` ends an
+/// email autolink's local part and an `@` makes one, so each is taken only where no `$` of
+/// `text` stands so. Then, rarer still in a text holding those five, as a mask only where no `$`
+/// it may mask stands so ([`maskable_spots`]; PAR-018): `/` (no meaning but in an HTML tag's
+/// `/>` or `</`, which a `$` before a digit or after a backtick can't make); `#` (after an `&`
+/// it starts a numeric entity); `;` (after an entity's name it ends one, and an email autolink's
+/// local part can't hold it); `+` and `.` (an autolink's scheme or an email autolink's domain
+/// may hold them, inside `<…>`). Not `-`, which ends an HTML comment or block (`` `$-> ``).
+/// Not a byte the text writes as an entity either (`&#37;`, `&percnt;`), which pulldown-cmark
+/// decodes into the event's strings, where it would be taken for a masked `$`. Then a control
+/// byte, which a link's destination may not hold (a masked `$` in one breaks the link, as rare
+/// as a text holding all ten): not a tab, line feed, form feed or carriage return, nor NUL,
+/// which pulldown-cmark replaces.
 fn unused_byte(text: &str) -> Option<u8> {
-    let mut seen = [false; 128];
-    for &c in text.as_bytes() {
-        if c < 128 {
-            seen[usize::from(c)] = true;
-        }
-    }
-    (b"%?,@".iter().copied())
-        .chain((1..32u8).filter(|c| !matches!(c, b'\t'..=b'\r')))
-        .find(|&c| !seen[usize::from(c)])
+    let b = text.as_bytes();
+    let entities = Entities::new(b);
+    let free = |c: u8| memchr::memchr(c, b).is_none() && !entities.writes(c);
+    let after = |c: u8| memchr::memmem::find(b, &[c, b'$']).is_some();
+    let angles = || memchr::memchr(b'<', b).is_some();
+    let punct = if free(b'%') {
+        Some(b'%')
+    } else if free(b'?') && !after(b'<') {
+        Some(b'?')
+    } else if free(b'^') && !after(b'[') {
+        Some(b'^')
+    } else if free(b',') && !angles() {
+        Some(b',')
+    } else if free(b'@') && !angles() {
+        Some(b'@')
+    } else {
+        rarer_byte(b, free)
+    };
+    punct.or_else(|| (1..32u8).find(|&c| !matches!(c, b'\t'..=b'\r') && free(c)))
 }
 
-/// `event` with each masked `$` written back. A masked `$` is where math stood in an earlier
-/// pass, inline, so it can land in text, code, math, HTML, a footnote's label or a link's parts.
-fn unmask(event: Event<'_>, mask: Option<u8>) -> Event<'_> {
-    let Some(m) = mask else {
-        return event;
-    };
-    fn back(s: CowStr<'_>, m: u8) -> CowStr<'_> {
-        if s.as_bytes().contains(&m) {
-            s.replace(char::from(m), "$").into()
-        } else {
-            s
+/// [`unused_byte`]'s punctuation past its first five, `free` the bytes the text neither holds
+/// nor writes as entities.
+#[cold]
+fn rarer_byte(b: &[u8], free: impl Fn(u8) -> bool) -> Option<u8> {
+    (rarer_bytes(&maskable_spots(b)).into_iter())
+        .find(|&(c, ok)| ok && free(c))
+        .map(|(c, _)| c)
+}
+
+/// [`rarer_byte`]'s bytes, in order, each with whether no `$` stands where it would mean
+/// something ([`unused_byte`]).
+fn rarer_bytes(spots: &Spots) -> [(u8, bool); 6] {
+    [
+        (b'/', true),
+        (b'#', !spots.after_amp),
+        (b'-', !spots.angle),
+        (b'+', !spots.angle),
+        (b'.', !spots.angle),
+        (b';', !spots.after_name && !spots.angle),
+    ]
+}
+
+/// Where the `$`s that may be masked ([`markdown`]) stand in a text, for [`rarer_byte`]: a `$`
+/// not escaped, after a byte that isn't blank, before a digit or after a backtick, as every
+/// false closer and price is (a label's copies too, the same text).
+#[derive(Default)]
+struct Spots {
+    /// One right after an `&`.
+    after_amp: bool,
+    /// One right after an entity's name (`&amp`, `&#12`).
+    after_name: bool,
+    /// One after a `<` on its line, with no `>` between.
+    angle: bool,
+}
+
+/// [`Spots`] of `b`: linear, each byte read once or twice.
+fn maskable_spots(b: &[u8]) -> Spots {
+    let mut s = Spots::default();
+    // whether a `<` is open on the line before the last `$` read, and how far that's read
+    let (mut open, mut read) = (false, 0);
+    for c in memchr::memchr_iter(b'$', b) {
+        if let Some(i) = memchr::memrchr3(b'<', b'>', b'\n', &b[read..c]) {
+            open = b[read + i] == b'<';
         }
+        read = c;
+        if c == 0 || blank_byte(b[c - 1]) || escaped(b, c) {
+            continue;
+        }
+        if b[c - 1] != b'`' && !b.get(c + 1).is_some_and(u8::is_ascii_digit) {
+            continue;
+        }
+        s.after_amp |= b[c - 1] == b'&';
+        // a name stops at the `$` before
+        let n = (b[..c].iter().rev())
+            .take_while(|x| x.is_ascii_alphanumeric() || **x == b'#')
+            .count();
+        s.after_name |= n > 0 && c > n && b[c - n - 1] == b'&';
+        s.angle |= open;
     }
-    let un = |s| back(s, m);
+    s
+}
+
+/// The ASCII bytes a text writes as entities, which pulldown-cmark decodes ([`unused_byte`]):
+/// numeric ones, and the mask bytes' HTML names. One pass over the text's `&`s.
+struct Entities(u128);
+
+impl Entities {
+    fn new(b: &[u8]) -> Self {
+        let mut set = 0u128;
+        for at in memchr::memchr_iter(b'&', b) {
+            let rest = &b[at + 1..];
+            let byte = match rest.first() {
+                // CommonMark's: `&#` and 1 to 7 digits, or `&#x` and 1 to 6 hex digits, then `;`
+                Some(b'#') => {
+                    let (radix, digits) = match rest.get(1) {
+                        Some(b'x' | b'X') => (16, &rest[2..]),
+                        _ => (10, &rest[1..]),
+                    };
+                    let n = (digits.iter())
+                        .take_while(|c| c.is_ascii_digit() || radix == 16 && c.is_ascii_hexdigit())
+                        .count();
+                    if n == 0 || n > 7 || digits.get(n) != Some(&b';') {
+                        continue;
+                    }
+                    let digits = std::str::from_utf8(&digits[..n]).expect("ASCII digits");
+                    u32::from_str_radix(digits, radix).ok()
+                }
+                _ => {
+                    let n = rest
+                        .iter()
+                        .take_while(|c| c.is_ascii_alphanumeric())
+                        .count();
+                    if rest.get(n) != Some(&b';') {
+                        continue;
+                    }
+                    let c = match &rest[..n] {
+                        b"percnt" => b'%',
+                        b"quest" => b'?',
+                        b"Hat" => b'^',
+                        b"comma" => b',',
+                        b"commat" => b'@',
+                        b"sol" => b'/',
+                        b"num" => b'#',
+                        b"semi" => b';',
+                        b"plus" => b'+',
+                        b"period" => b'.',
+                        _ => continue,
+                    };
+                    Some(u32::from(c))
+                }
+            };
+            if let Some(v) = byte.filter(|&v| v < 128) {
+                set |= 1 << v;
+            }
+        }
+        Self(set)
+    }
+
+    /// Whether the text writes `c` as an entity.
+    fn writes(&self, c: u8) -> bool {
+        c < 128 && self.0 & (1 << c) != 0
+    }
+}
+
+/// `event` with each masked `$` written back. A `$` masked before the first pass can stand
+/// anywhere ([`never_opens`]); one a pass masked, where math stood in an earlier pass, inline. So
+/// it can land in text, code, math, HTML, a footnote's label or a link's parts, and a fence's
+/// info string.
+#[cold]
+#[inline(never)]
+fn unmask(event: Event<'_>, m: u8) -> Event<'_> {
+    let un = |s| unmasked(s, m);
     match event {
         Event::Text(s) => Event::Text(un(s)),
         Event::Code(s) => Event::Code(un(s)),
@@ -308,7 +1688,22 @@ fn unmask(event: Event<'_>, mask: Option<u8>) -> Event<'_> {
             title: un(title),
             id: un(id),
         }),
+        Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(un(info))))
+        }
+        Event::Start(Tag::FootnoteDefinition(label)) => {
+            Event::Start(Tag::FootnoteDefinition(un(label)))
+        }
         other => other,
+    }
+}
+
+/// `s` with each `$` masked with `m` written back.
+fn unmasked(s: CowStr<'_>, m: u8) -> CowStr<'_> {
+    if s.as_bytes().contains(&m) {
+        s.replace(char::from(m), "$").into()
+    } else {
+        s
     }
 }
 
@@ -468,16 +1863,67 @@ struct Builder<'s> {
     /// The open paragraph is the rest of one display math split (OBS-003), with no text yet: the
     /// line break that ended the math's line doesn't start it, and its lines start at its text.
     after_math: bool,
+    /// The note holds a `$` past its front matter: only then may a wiki link's target hide math
+    /// ([`Builder::wiki_target`]).
+    dollars: bool,
     /// Obsidian's dialect: GitHub's `important` and `caution` are its tip and warning (OBS-002).
     obsidian: bool,
     /// What opens the quote or item just opened, being read: a callout's marker (OBS-002) or a
     /// task status past GFM's (OBS-012). One field, so an event pays one test for both.
     opening: Option<Opening>,
+    /// The byte this pass's source has its false closers' `$`s masked with ([`markdown`]):
+    /// the strings of an event at or past one get them back, in [`Builder::event_rare`].
+    mask: Option<u8>,
+    /// Where the source's `$`s are masked, in order: before the first pass ([`never_opens`])
+    /// and by the passes before this one.
+    masked: Vec<usize>,
+    /// The first of [`Builder::masked`] past the last event that went to
+    /// [`Builder::event_rare`] (`usize::MAX` past the last): an event ending at or before it
+    /// holds none, so a note with a masked `$` sends only the events around each the slow way.
+    /// Events start in source order (ends repeat their starts, and hold no string), but around
+    /// a wiki link ([`Builder::wiki_hold`]); an event's strings are of its range, but for math
+    /// across a wiki link's `|`, whose range starts past the `|` and ends past the `$`, and a
+    /// reference link's destination and title, its definition's, given back as the link is added
+    /// ([`Builder::add_masked_link`]).
+    rare_from: usize,
+    /// Where a wiki link (or embed) holding a masked `$` starts, in the inline context being
+    /// read, else `usize::MAX`: [`Builder::rare_from`] stays there until the context ends, so
+    /// every event ending past it goes the slow way. pulldown-cmark may give the events around
+    /// one out of order: an inner image's start (`![[![^a$1]/$6 … [[$x|](">1. )…]]`, at the
+    /// `](`) before the text and the math at the `$6`, or, where an image and the link overlap
+    /// (`![[[a$1]: … ](]() … [^a$1]$4c$1]]`), the image's text past the link's end. Moved past a
+    /// mask by the later event, the earlier kept it.
+    wiki_hold: usize,
+    /// Where the false closers of inline math this pass met are, their `$`s ([`markdown`]),
+    /// those pandoc's rule skips as this pass reads them ([`Builder::settle`]): the next pass
+    /// masks them all.
+    wrong: Vec<usize>,
+    /// The false closers met in the inline context being read (a paragraph's, a heading's, a
+    /// cell's), in order, each with where its math opened ([`NO_OPENER`] where that isn't
+    /// known) and, in a wiki link's target, where the target ends, for [`Builder::settle`] at
+    /// the context's end.
+    pending: Vec<(usize, usize, Option<usize>)>,
+    /// Where false closers left unmasked under a control byte are, in order: their math is
+    /// read as pulldown-cmark reads it, as by the last pass ([`kept_besides`], PAR-015).
+    kept: Vec<usize>,
+    /// The pass met a false closer: it will be parsed again, so the builder took no event
+    /// since, and its events only go through [`Builder::event_rare`] for their false closers
+    /// and where inline contexts end ([`Builder::settle`]) (a builder that read on built the
+    /// whole note to throw it away).
+    dead: bool,
+    /// The pass takes its math as pulldown-cmark reads it: it neither stops at a false closer
+    /// nor is parsed again ([`MAX_MATH_PASSES`]).
+    last: bool,
     /// Where each run of two or more `=` in the text has its second: a closing frame's runs may
     /// hold a highlight only when one is on their lines (OBS-005).
     marks: Vec<u32>,
     /// The first of [`Builder::marks`] at or past the last frame [`Builder::marked`] looked at.
     mark: usize,
+    /// The lines of the marks either side of [`Builder::mark`]: the last before it (0 for none)
+    /// and the first at or past it (`u32::MAX` for none). A frame on lines between them holds
+    /// none, which [`Builder::close_runs`] tells in two compares: the search a frame cost XL's
+    /// parse +1.8% instructions (PAR-022).
+    mark_lines: (u32, u32),
     /// Where each escaped `#` (`\#word`) is in [`Builder::text`], in Obsidian's dialect: no tag
     /// opens there (OBS-006).
     escaped: Vec<u32>,
@@ -487,18 +1933,48 @@ struct Builder<'s> {
     embedding: Option<Embedding<'s>>,
     /// The notes transcluded, [`Doc::embedded`].
     embedded: Vec<Embedded>,
+    /// The code pulldown-cmark finds, as [`super::comments::code`] does, in the first pass over
+    /// an Obsidian note whose `%%`s all look like code ([`passes`], PAR-021); else `None`. That
+    /// pass sends every event through [`Builder::event_rare`] ([`Builder::rare_from`] held at 0),
+    /// which finds it: a test in [`Builder::dispatch`]'s arms cost every note's parse +0.2 to
+    /// +0.6% instructions.
+    code: Option<Vec<Range<usize>>>,
+    /// A builder that builds nothing, its events looked at by this ([`probe`]); else `None`. Sent
+    /// every event through [`Builder::event_rare`] as [`Builder::code`]'s pass is.
+    probe: Option<Probe>,
 }
 
 impl<'s> Builder<'s> {
+    #[cfg(test)]
     fn new(text: &'s str) -> Self {
-        let (line_starts, marks) = line_starts_and_marks(text);
-        Self {
+        let Scan { starts, marks, .. } = super::lines::scan(text, 0);
+        Self::with_lines(text, starts, marks)
+    }
+
+    /// A builder of `text`, whose line starts and marks are `line_starts` and `marks`
+    /// ([`super::lines::scan`]'s, found with whether `text` holds a `$`).
+    fn with_lines(text: &'s str, line_starts: Vec<u32>, marks: Vec<u32>) -> Self {
+        // the source's length, which inline text rarely passes: grown by doubling instead, a
+        // long run's text was copied at each step (long lines' parse +5–10%, experiment 71);
+        // the room left over is never touched, and `finish` gives it back
+        Self::with_room(text, line_starts, marks, text.len())
+    }
+
+    /// A builder of `text` that builds nothing, its every event looked at by `probe` ([`probe`]):
+    /// one line, no room for inline text.
+    fn probing(text: &'s str, probe: Probe) -> Self {
+        let mut b = Self::with_room(text, vec![0], Vec::new(), 0);
+        b.rare_from = 0;
+        b.probe = Some(probe);
+        b
+    }
+
+    /// [`Builder::with_lines`], its inline text's room `room`.
+    fn with_room(text: &'s str, line_starts: Vec<u32>, marks: Vec<u32>, room: usize) -> Self {
+        let mut b = Self {
             source: text,
             line_starts,
-            // the source's length, which inline text rarely passes: grown by doubling instead,
-            // a long run's text was copied at each step (long lines' parse +5–10%, experiment
-            // 71); the room left over is never touched, and `finish` gives it back
-            text: String::with_capacity(text.len()),
+            text: String::with_capacity(room),
             runs: Vec::new(),
             inlines_open: 0,
             line: 1,
@@ -523,15 +1999,30 @@ impl<'s> Builder<'s> {
             nesting: 0,
             line_breaks: false,
             after_math: false,
+            dollars: false,
             obsidian: false,
             opening: None,
+            mask: None,
+            masked: Vec::new(),
+            rare_from: usize::MAX,
+            wiki_hold: usize::MAX,
+            wrong: Vec::new(),
+            pending: Vec::new(),
+            kept: Vec::new(),
+            dead: false,
+            last: false,
             marks,
             mark: 0,
+            mark_lines: (0, u32::MAX),
             escaped: Vec::new(),
             math: Vec::new(),
             embedding: None,
             embedded: Vec::new(),
-        }
+            code: None,
+            probe: None,
+        };
+        b.mark_lines = b.lines_beside(0);
+        b
     }
 
     /// The line an event starts on, sought from the last event's: events come in source order,
@@ -547,6 +2038,9 @@ impl<'s> Builder<'s> {
         self.line
     }
 
+    /// Inlined into [`read_pass`], its one caller: what it inlines in turn grew it past what
+    /// LLVM inlines unasked (PAR-010).
+    #[inline(always)]
     fn event(&mut self, event: Event<'_>, range: Range<usize>) {
         let line = self.line_of(range.start);
         let src = LineRange::new(
@@ -565,55 +2059,44 @@ impl<'s> Builder<'s> {
                 search(range.end.saturating_sub(1).max(range.start)),
             )
         });
-        let event = match &self.opening {
-            Some(Opening::Callout(_)) => match self.read_marker(event, &range, src) {
-                Some(event) => event,
-                None => return,
-            },
-            Some(Opening::Status(_)) => match self.read_status(event, &range) {
-                Some(event) => event,
-                None => return,
-            },
-            None => event,
-        };
+        // the event goes on as pulldown-cmark left it: a copy of it, to rewrite in place or to give
+        // back from a `match`, stalled on the iterator's stores, every note's parse +10% CPU
+        if range.end > self.rare_from || self.opening.is_some() || self.dead {
+            return self.event_rare(event, range, src, line);
+        }
+        self.dispatch(event, range, src, line);
+    }
+
+    /// [`Builder::event`]'s work on `event` once its lines are known. Inlined into both of its
+    /// callers, [`Builder::event`] and [`Builder::event_rare`], as are the builder's calls it
+    /// inlines (`start`, `end`, `text`): a call of any of them took it out of line (PAR-010).
+    #[inline(always)]
+    fn dispatch(&mut self, event: Event<'_>, range: Range<usize>, src: LineRange, line: u32) {
         match event {
-            Event::Start(Tag::BlockQuote(None)) if self.nesting < MAX_NESTING => {
-                self.start(Tag::BlockQuote(None), src);
-                self.opening =
-                    marker(self.source, range.start, self.obsidian).map(Opening::Callout);
-            }
-            Event::Start(tag) => {
-                // a test of the tag's kind, not an arm of its own: that one dropped each item's
-                // `Tag` apart, and the lists input parsed in 0.4% more instructions
-                let item = matches!(tag, Tag::Item);
-                self.start(tag, src);
-                if item {
-                    self.opening = status(self.source, range).map(Opening::Status);
-                }
-            }
+            // one call of `start` and one of `text`, each inlined here: a second call of either
+            // (an arm of a quote's own, of a tag's) took it out of line (PAR-010)
+            Event::Start(tag) => self.start(tag, src, range),
             Event::End(end) => self.end(end),
-            Event::Text(t) if self.obsidian && t.starts_with('#') => {
-                let at = self.text_end();
+            Event::Text(t) => {
+                // the length, not `text_end`: its call, out of line in `read_pass`, cost every
+                // text event (PAR-022); `escaped_hash` checks it
+                let at = self.text.len();
                 self.text(&t, line);
-                // `\#word` is no tag (OBS-006): pulldown-cmark makes the escaped `#` text of its own
-                let b = self.source.as_bytes();
-                let escaped = b.get(range.start) == Some(&b'\\')
-                    || range.start.checked_sub(1).and_then(|i| b.get(i)) == Some(&b'\\');
-                if escaped && self.text_end() > at {
-                    // any past it are of text taken back since (a run with nowhere to go)
-                    while self.escaped.last().is_some_and(|&e| e >= at) {
-                        self.escaped.pop();
-                    }
-                    self.escaped.push(at);
+                if self.obsidian && t.starts_with('#') {
+                    self.escaped_hash(at, &range);
                 }
             }
-            Event::Text(t) => self.text(&t, line),
             Event::Code(t) => self.push_text(&t, self.style | InlineStyle::CODE, line),
             // typeset as Unicode, else the TeX as written, as code (OBS-003)
-            Event::InlineMath(t) => match tex::inline(&t) {
-                Some(math) => self.push_math(&math, &t, line),
-                None => self.push_text(&t, self.style | InlineStyle::CODE, line),
-            },
+            Event::InlineMath(t) => {
+                if let Some(at) = wrong_closer(self.source, &range, t.len()) {
+                    self.false_closer(at);
+                }
+                match tex::inline(&t) {
+                    Some(math) => self.push_math(&math, &t, line),
+                    None => self.push_text(&t, self.style | InlineStyle::CODE, line),
+                }
+            }
             Event::DisplayMath(t) => self.display_math(&t, src),
             Event::Html(t) => match self.stack.last_mut() {
                 Some(Frame::Html { text, .. }) => text.push_str(&t),
@@ -632,6 +2115,247 @@ impl<'s> Builder<'s> {
                 true => Task::Done,
                 false => Task::Open,
             }),
+        }
+    }
+
+    /// A `#` text at `range` written to [`Builder::text`] from `at`, in Obsidian's dialect:
+    /// `\#word` is no tag (OBS-006), and pulldown-cmark makes the escaped `#` text of its own.
+    #[inline(never)]
+    fn escaped_hash(&mut self, at: usize, range: &Range<usize>) {
+        let at = u32::try_from(at).expect("inline text under 4 GiB");
+        let b = self.source.as_bytes();
+        let escaped = b.get(range.start) == Some(&b'\\')
+            || range.start.checked_sub(1).and_then(|i| b.get(i)) == Some(&b'\\');
+        if escaped && self.text_end() > at {
+            // any past it are of text taken back since (a run with nowhere to go)
+            while self.escaped.last().is_some_and(|&e| e >= at) {
+                self.escaped.pop();
+            }
+            self.escaped.push(at);
+        }
+    }
+
+    /// [`Builder::event`] of `event` with its masked `$`s written back ([`Builder::mask`]),
+    /// and past what opens a quote or an item, being read ([`Builder::opening`]). Out of line:
+    /// an event pays a test for both. An event at or past [`Builder::rare_from`] moves it on.
+    #[inline(never)]
+    fn event_rare(&mut self, event: Event<'_>, range: Range<usize>, src: LineRange, line: u32) {
+        // a probe's builder only looks ([`probe`], PAR-023)
+        if let Some(probe) = &mut self.probe {
+            probe.event(self.source, &event, range);
+            return;
+        }
+        // the first pass's code (PAR-021), its every event sent here ([`Builder::code`])
+        if let Some(code) = &mut self.code
+            && super::comments::is_code(&event)
+        {
+            code.push(range.clone());
+        }
+        if self.dead {
+            #[cfg(test)]
+            if tests::ideal() {
+                return;
+            }
+            // the rest of the pass's false closers, an inline context's settled at its end
+            match &event {
+                Event::InlineMath(t) => {
+                    if let Some(at) = wrong_closer(self.source, &range, t.len()) {
+                        self.false_closer(at);
+                    }
+                }
+                Event::Start(
+                    Tag::Link {
+                        link_type: LinkType::WikiLink { .. },
+                        dest_url,
+                        ..
+                    }
+                    | Tag::Image {
+                        link_type: LinkType::WikiLink { .. },
+                        dest_url,
+                        ..
+                    },
+                ) => {
+                    // as written: this event's strings aren't given back their `$`s
+                    let dest = match self.mask {
+                        Some(m) => unmasked(dest_url.clone(), m),
+                        None => dest_url.clone(),
+                    };
+                    if memchr::memchr(b'$', dest.as_bytes()).is_some() {
+                        self.wiki_target(&range, &dest);
+                    }
+                }
+                // a block's start or end ends the inline context being read
+                Event::Start(tag) if !inline_tag(tag) => self.settle(range.start),
+                Event::End(end) if !inline_end(*end) => self.settle(range.end),
+                _ => {}
+            }
+            return;
+        }
+        let event = match self.mask {
+            Some(m) => {
+                match &event {
+                    Event::End(end) => {
+                        // the inline context's end: the events past it are in order
+                        if self.wiki_hold != usize::MAX && !inline_end(*end) {
+                            let next = self.masked.partition_point(|&at| at < self.wiki_hold);
+                            self.rare_from = self.masked.get(next).copied().unwrap_or(usize::MAX);
+                            self.wiki_hold = usize::MAX;
+                        }
+                    }
+                    _ => {
+                        let next = self.masked.partition_point(|&at| at < range.start);
+                        let at = self.masked.get(next).copied().unwrap_or(usize::MAX);
+                        if self.wiki_hold == usize::MAX
+                            && at < range.end
+                            && matches!(
+                                event,
+                                Event::Start(
+                                    Tag::Link {
+                                        link_type: LinkType::WikiLink { .. },
+                                        ..
+                                    } | Tag::Image {
+                                        link_type: LinkType::WikiLink { .. },
+                                        ..
+                                    }
+                                )
+                            )
+                        {
+                            self.wiki_hold = range.start;
+                        }
+                        self.rare_from = at.min(self.wiki_hold);
+                    }
+                }
+                if self.code.is_some() {
+                    self.rare_from = 0;
+                }
+                unmask(event, m)
+            }
+            None => event,
+        };
+        let event = match self.opening {
+            None => Some(event),
+            Some(Opening::Callout(_)) => self.read_marker(event, &range, src),
+            Some(Opening::Status(_)) => self.read_status(event, &range),
+        };
+        if let Some(event) = event {
+            self.dispatch(event, range, src, line);
+        }
+    }
+
+    /// A false closer of inline math, its `$` at `at`: the pass's builder stops at the first,
+    /// its doc to be parsed again with the `$` masked, unless the pass is the last
+    /// ([`Builder::last`]) or the false closer is kept ([`Builder::kept`]). Its math opened at
+    /// the last `$` before it, unmasked and unescaped: no other is between, but one in other
+    /// braces, which [`reads_on`] doesn't take (math across a wiki link's `|`, whose range
+    /// starts past it, too). Found here, not from the event's range: an argument more from the
+    /// pass's loop cost every note's parse +0.2 to +0.5% instructions (PAR-016).
+    #[cold]
+    #[inline(never)]
+    fn false_closer(&mut self, at: usize) {
+        let b = self.source.as_bytes();
+        let mut to = at;
+        let open = loop {
+            match memchr::memrchr(b'$', &b[..to]) {
+                Some(o) if self.masked.binary_search(&o).is_ok() || escaped(b, o) => to = o,
+                Some(o) => break o,
+                None => break NO_OPENER,
+            }
+        };
+        self.met(at, open, None);
+    }
+
+    /// [`Builder::false_closer`]'s work, and a wiki link's target's ([`Builder::wiki_target`],
+    /// the target ending at `target`), whose math opened at `open`: the false closer at `at`
+    /// waits for its inline context's end ([`Builder::settle`]).
+    fn met(&mut self, at: usize, open: usize, target: Option<usize>) {
+        if self.kept.binary_search(&at).is_ok() {
+            return;
+        }
+        if self.last {
+            #[cfg(test)]
+            tests::CAPPED.set(true);
+            return;
+        }
+        self.dead = true;
+        self.pending.push((open, at, target));
+    }
+
+    /// The false closers met in the inline context that ends at `end` ([`Builder::pending`]) to
+    /// mask, as pandoc's rule skips them: its first, and each after one that, masked, leaves the
+    /// context's reading past it as it was ([`reads_on`]); the rest dropped. Masked all, a later
+    /// one may be a closer only of math the earlier mask undoes, and stay masked where pandoc's
+    /// rule would open math at it (PAR-016); masked one a pass, a context of `n` takes `n`
+    /// passes. A wiki link's target's are among them, read on past as the others are (PAR-020;
+    /// before, each stopped its context's run, one pass a target). Contexts are read apart
+    /// (pulldown-cmark parses each leaf block's inlines alone), so each context's first is
+    /// pandoc's whatever the others' masks; a label shared between them is [`label_copies`]'
+    /// and [`stepwise`]'s to keep in step.
+    #[cold]
+    #[inline(never)]
+    fn settle(&mut self, end: usize) {
+        let b = self.source.as_bytes();
+        for &(open, at, target) in &self.pending {
+            self.wrong.push(at);
+            if open == NO_OPENER || !reads_on(b, &self.masked, open, at, target, end) {
+                break;
+            }
+        }
+        self.pending.clear();
+    }
+
+    /// The false closers of math in the target of the wiki link (or embed) at `range`, met as
+    /// [`Builder::false_closer`] meets one in an event: pulldown-cmark keeps a target's text
+    /// whole, so math that opens and closes in it makes no event (PAR-014, `[[a $b c$1]] d$`,
+    /// whose `$b` reaches the `d$` with the `$1` masked, and the math crosses the link).
+    /// The target, as this pass parsed it, is parsed alone, after a letter so that no block
+    /// opens: math open before a wiki link and closing in it or past it would have taken the
+    /// link, so the target's `$`s pair among themselves. Only a target holding a `$` gets here.
+    /// The target is `dest`, with its `$`s, found in the link's text: past its `[[`, or where
+    /// pulldown-cmark took it from, the last of it in the range (it may start further on, past
+    /// markup it split at: `![[\t|2{… }$41. *[^a$1]:]]`, whose target is `}$41. *[^a$1]:`).
+    #[cold]
+    #[inline(never)]
+    fn wiki_target(&mut self, range: &Range<usize>, dest: &str) {
+        let b = self.source.as_bytes();
+        let opens = range.start + if b[range.start] == b'!' { 3 } else { 2 };
+        let start = match b[range.clone()].get(opens - range.start..) {
+            Some(rest) if rest.starts_with(dest.as_bytes()) => opens,
+            _ => match memchr::memmem::rfind(&b[range.clone()], dest.as_bytes()) {
+                Some(i) => range.start + i,
+                None => return,
+            },
+        };
+        let end = start + dest.len();
+        let mut target = Vec::with_capacity(end - start + 1);
+        target.push(b'a');
+        target.extend_from_slice(&b[start..end]);
+        if let Some(m) = self.mask {
+            let from = self.masked.partition_point(|&at| at < start);
+            for &at in self.masked[from..].iter().take_while(|&&at| at < end) {
+                target[at - start + 1] = m;
+            }
+        }
+        let Ok(target) = String::from_utf8(target) else {
+            return;
+        };
+        // a parse of the target's own, nested in this one's ([`probe`]: the parse stays the
+        // one reader of pulldown-cmark's events)
+        let (Probe::Wiki(wrong), _) = probe(&target, 0, usize::MAX, Probe::Wiki(Vec::new())) else {
+            unreachable!("a probe gives back its own kind");
+        };
+        for (r, at) in wrong {
+            // the reference masks a pass's first false closer only
+            #[cfg(test)]
+            if self.dead && tests::ideal() {
+                return;
+            }
+            // its opener, in the target as in the link's context ([`Builder::settle`]
+            // reads on past it where masking it leaves the rest as it was, PAR-020)
+            let open = match target.as_bytes()[r.start] {
+                b'$' if r.start > 0 => start + r.start - 1,
+                _ => NO_OPENER,
+            };
+            self.met(start + at - 1, open, Some(end));
         }
     }
 
@@ -682,7 +2406,10 @@ impl<'s> Builder<'s> {
         }
     }
 
-    fn start(&mut self, tag: Tag<'_>, src: LineRange) {
+    /// The start of `tag`, at `range`: a quote's and an item's arm read what opens them, a
+    /// callout's marker or a task status past GFM's ([`Builder::opening`]).
+    #[inline(always)]
+    fn start(&mut self, tag: Tag<'_>, src: LineRange, range: Range<usize>) {
         match tag {
             Tag::Paragraph => {
                 self.close_implicit();
@@ -708,6 +2435,10 @@ impl<'s> Builder<'s> {
                     }
                 });
                 self.push_blocks(Container::Quote(callout), src);
+                if kind.is_none() {
+                    self.opening =
+                        marker(self.source, range.start, self.obsidian).map(Opening::Callout);
+                }
             }
             Tag::CodeBlock(kind) => {
                 self.close_implicit();
@@ -750,6 +2481,7 @@ impl<'s> Builder<'s> {
                     _ => Container::Other,
                 };
                 self.push_blocks(kind, src);
+                self.opening = status(self.source, range).map(Opening::Status);
             }
             Tag::FootnoteDefinition(label) => {
                 let id = self.footnote_id(&label);
@@ -788,9 +2520,14 @@ impl<'s> Builder<'s> {
                     LinkType::Inline => LinkKind::Inline,
                     LinkType::Autolink => LinkKind::Autolink,
                     LinkType::Email => LinkKind::Email,
-                    LinkType::WikiLink { has_pothole } => LinkKind::Wiki {
-                        aliased: has_pothole,
-                    },
+                    LinkType::WikiLink { has_pothole } => {
+                        if self.dollars && dest_url.as_bytes().contains(&b'$') {
+                            self.wiki_target(&range, &dest_url);
+                        }
+                        LinkKind::Wiki {
+                            aliased: has_pothole,
+                        }
+                    }
                     _ => LinkKind::Reference,
                 };
                 self.link = Some(self.add_link(&dest_url, &title, kind, src.start));
@@ -802,6 +2539,12 @@ impl<'s> Builder<'s> {
                 ..
             } => {
                 let embed = is_embed(&dest_url, link_type);
+                if matches!(link_type, LinkType::WikiLink { .. })
+                    && self.dollars
+                    && dest_url.as_bytes().contains(&b'$')
+                {
+                    self.wiki_target(&range, &dest_url);
+                }
                 let kind = match link_type {
                     _ if !embed => LinkKind::Image,
                     LinkType::WikiLink { has_pothole } => LinkKind::Wiki {
@@ -829,6 +2572,7 @@ impl<'s> Builder<'s> {
         }
     }
 
+    #[inline(always)]
     fn end(&mut self, end: TagEnd) {
         match end {
             TagEnd::Emphasis => self.style = self.style.without(InlineStyle::EMPH),
@@ -948,6 +2692,7 @@ impl<'s> Builder<'s> {
         }
     }
 
+    #[inline(always)]
     fn text(&mut self, text: &str, line: u32) {
         if self.image.is_some() {
             self.text.push_str(text);
@@ -978,6 +2723,7 @@ impl<'s> Builder<'s> {
         }
     }
 
+    #[inline]
     fn push_text(&mut self, text: &str, style: InlineStyle, line: u32) {
         self.push_text_as(text, style, line, RunKind::Text);
     }
@@ -1000,16 +2746,14 @@ impl<'s> Builder<'s> {
         }
     }
 
+    #[inline]
     fn push_text_as(&mut self, text: &str, style: InlineStyle, line: u32, kind: RunKind) {
         if self.image.is_some() {
             self.text.push_str(text);
             return;
         }
-        if mem::take(&mut self.after_math)
-            && let Some(Frame::Inline { src, .. }) = self.stack.last_mut()
-        {
-            // the rest of a paragraph split by display math starts where its text does
-            *src = LineRange::new(line, src.end.max(line));
+        if self.after_math {
+            self.text_after_math(line);
         }
         let text = self.add_text(text);
         self.push_run(Run {
@@ -1021,21 +2765,41 @@ impl<'s> Builder<'s> {
         });
     }
 
+    /// The rest of a paragraph split by display math starts where its text does, on `line`.
+    /// Out of line, so [`Builder::push_text_as`] stays small enough to inline (PAR-010).
+    #[cold]
+    #[inline(never)]
+    fn text_after_math(&mut self, line: u32) {
+        self.after_math = false;
+        if let Some(Frame::Inline { src, .. }) = self.stack.last_mut() {
+            *src = LineRange::new(line, src.end.max(line));
+        }
+    }
+
+    /// Whether a break on `line` goes, after display math, or ends a callout's title (the rest
+    /// of the paragraph is the body's). Out of line, for [`Builder::push_break`].
+    #[cold]
+    #[inline(never)]
+    fn break_taken(&mut self, line: u32) -> bool {
+        if self.after_math {
+            return true;
+        }
+        matches!(
+            self.stack.last(),
+            Some(Frame::Inline {
+                kind: InlineKind::Title,
+                ..
+            })
+        ) && self.end_title(Some(line))
+    }
+
     fn push_break(&mut self, kind: RunKind, line: u32) {
         if self.image.is_some() {
             self.text.push(' ');
             return;
         }
-        if self.after_math {
-            return;
-        }
-        if let Some(Frame::Inline {
-            kind: InlineKind::Title,
-            ..
-        }) = self.stack.last()
-            && self.end_title(Some(line))
-        {
-            // the line's end ended the title, and the rest of the paragraph is the body's
+        // a title is open only while its marker is read: one test of each for every break
+        if (self.after_math || self.opening.is_some()) && self.break_taken(line) {
             return;
         }
         let text = self.add_text("");
@@ -1104,13 +2868,14 @@ impl<'s> Builder<'s> {
     /// but nothing here relies on it). Then its runs move ahead of the open frames', which stay
     /// end to end after them, so each frame's runs remain one range.
     fn close_runs(&mut self, start: u32) -> Slots {
-        if !self.marks.is_empty() && self.marked(start as usize) {
-            self.highlight(start as usize);
+        // the marks on the frame's lines, by every mark's, in debug builds (the fuzzers', `cargo
+        // test`): none where `may_mark` lets the frame pass
+        debug_assert!(self.may_mark(start) || !self.any_mark_on(start));
+        // what most frames skip, out of line, so this stays small: inlined, the mark search
+        // saved and restored a dozen registers a frame (PAR-022)
+        if self.may_mark(start) || self.obsidian {
+            self.marks_and_tags(start as usize);
         }
-        if self.obsidian {
-            self.tags(start as usize);
-        }
-        let end = self.runs.len() as u32;
         debug_assert_eq!(
             self.inlines_open as usize,
             (self.stack.iter())
@@ -1118,8 +2883,28 @@ impl<'s> Builder<'s> {
                 .count()
         );
         if self.inlines_open == 0 {
+            let end = self.runs.len() as u32;
             return Slots { start, end };
         }
+        self.nested_runs(start)
+    }
+
+    /// A closing frame's highlights, near a mark, and its tags, in Obsidian's dialect.
+    #[inline(never)]
+    fn marks_and_tags(&mut self, start: usize) {
+        if self.may_mark(start as u32) && self.marked(start) {
+            self.highlight(start);
+        }
+        if self.obsidian {
+            self.tags(start);
+        }
+    }
+
+    /// [`Builder::close_runs`] of a frame inside another inline frame: its runs, from `start`,
+    /// moved ahead of the open frames'.
+    #[inline(never)]
+    fn nested_runs(&mut self, start: u32) -> Slots {
+        let end = self.runs.len() as u32;
         let n = end - start;
         let mut first = start;
         for f in &mut self.stack {
@@ -1137,10 +2922,43 @@ impl<'s> Builder<'s> {
         }
     }
 
+    /// Whether a mark may be on the lines of the inline frame closing, whose runs start at
+    /// `start`: not when they're between [`Builder::mark_lines`].
+    #[inline(always)]
+    fn may_mark(&self, start: u32) -> bool {
+        let (Some(first), Some(last)) = (self.runs.get(start as usize), self.runs.last()) else {
+            return false;
+        };
+        let (before, next) = self.mark_lines;
+        before >= first.src_line.min(last.src_line) || next <= first.src_line.max(last.src_line)
+    }
+
+    /// Whether any of [`Builder::marks`] is on the lines of the runs from `start`, each mark's
+    /// line searched: [`Builder::may_mark`]'s check, in debug builds.
+    fn any_mark_on(&self, start: u32) -> bool {
+        let runs = &self.runs[start as usize..];
+        let (Some(first), Some(last)) = (runs.first(), runs.last()) else {
+            return false;
+        };
+        let lines = first.src_line.min(last.src_line)..=first.src_line.max(last.src_line);
+        (self.marks.iter())
+            .any(|&q| lines.contains(&(self.line_starts.partition_point(|&s| s <= q) as u32)))
+    }
+
+    /// [`Builder::mark_lines`] for the cursor at `i`.
+    fn lines_beside(&self, i: usize) -> (u32, u32) {
+        let line = |q: u32| self.line_starts.partition_point(|&s| s <= q) as u32;
+        (
+            (i.checked_sub(1)).map_or(0, |p| line(self.marks[p])),
+            self.marks.get(i).map_or(u32::MAX, |&q| line(q)),
+        )
+    }
+
     /// Whether a run of `=`s is on the lines of the inline frame closing, whose runs start at
     /// `start`: only then may it hold a highlight. Found from [`Builder::mark`] on, as frames
     /// close in source order, nearly (a binary search a frame cost a note with one `==` 1–2% of
-    /// its parse).
+    /// its parse). Out of line: [`Builder::may_mark`] lets only the frames near a mark through.
+    #[inline(never)]
     fn marked(&mut self, start: usize) -> bool {
         let runs = &self.runs[start..];
         let (Some(first), Some(last)) = (runs.first(), runs.last()) else {
@@ -1166,8 +2984,12 @@ impl<'s> Builder<'s> {
         while marks.get(i).is_some_and(|&q| q < from) {
             i += 1;
         }
-        self.mark = i;
-        marks.get(i).is_some_and(|&q| q < to)
+        let found = marks.get(i).is_some_and(|&q| q < to);
+        if self.mark != i {
+            self.mark = i;
+            self.mark_lines = self.lines_beside(i);
+        }
+        found
     }
 
     /// Obsidian's highlights (OBS-005), in every dialect (ADR-45: `==` means nothing else), in
@@ -1390,6 +3212,9 @@ impl<'s> Builder<'s> {
         });
     }
 
+    /// Forced inline: a test, and a call only for a tight item's text. Its callers grew with
+    /// `start`'s two copies, and it went out of line, a call at every block (PAR-010).
+    #[inline(always)]
     fn close_implicit(&mut self) {
         if let Some(Frame::Inline {
             kind: InlineKind::Implicit,
@@ -1415,6 +3240,9 @@ impl<'s> Builder<'s> {
     }
 
     fn add_link(&mut self, dest: &str, title: &str, kind: LinkKind, line: u32) -> LinkId {
+        if let Some(m) = self.mask {
+            return self.add_masked_link(dest, title, kind, line, m);
+        }
         self.links.push(LinkRef {
             dest: dest.into(),
             title: title.into(),
@@ -1425,8 +3253,45 @@ impl<'s> Builder<'s> {
         self.links.len() as LinkId - 1
     }
 
+    /// [`Builder::add_link`] in a pass with masked `$`s, its destination and title given theirs
+    /// back: a reference link's (or image's) are its definition's, out of its range, where
+    /// [`Builder::rare_from`] doesn't find them. A `$` masked before the first pass may stand in a
+    /// title on the lines after a definition's (`[a]: /u` then `($b … $7)`), as [`line_safe`]
+    /// reads only a definition's line and the next, and a label's copy in one ([`label_copies`]).
+    /// Out of line, off the parse's loop: any other link's were given back with their event.
+    #[cold]
+    #[inline(never)]
+    fn add_masked_link(
+        &mut self,
+        dest: &str,
+        title: &str,
+        kind: LinkKind,
+        line: u32,
+        m: u8,
+    ) -> LinkId {
+        let dest = unmasked(CowStr::Borrowed(dest), m);
+        let title = unmasked(CowStr::Borrowed(title), m);
+        self.links.push(LinkRef {
+            dest: (*dest).into(),
+            title: (*title).into(),
+            kind,
+            src_line: line,
+            size: ImageSize::NONE,
+        });
+        self.links.len() as LinkId - 1
+    }
+
+    /// The footnote of `label`, matched as pulldown-cmark matches labels ([`label_key`]):
+    /// `[^A]` is `[^a]`'s.
     fn footnote_id(&mut self, label: &str) -> FootnoteId {
-        if let Some(&id) = self.footnote_ids.get(label) {
+        // most labels are their key already: lowercase ASCII without blanks
+        let folded =
+            (label.bytes()).all(|c| c.is_ascii() && !c.is_ascii_uppercase() && !blank_byte(c));
+        let key = match folded {
+            true => Cow::Borrowed(label),
+            false => Cow::Owned(label_key(label)),
+        };
+        if let Some(&id) = self.footnote_ids.get(&*key) {
             return id;
         }
         let id = self.footnotes.len() as FootnoteId;
@@ -1437,7 +3302,7 @@ impl<'s> Builder<'s> {
             blocks: Vec::new(),
             src: LineRange::NONE,
         });
-        self.footnote_ids.insert(label.into(), id);
+        self.footnote_ids.insert(key.into(), id);
         id
     }
 
@@ -1445,10 +3310,12 @@ impl<'s> Builder<'s> {
         if self.stack.len() <= 1 {
             return;
         }
-        if let Some(Frame::Inline {
-            kind: InlineKind::Title,
-            ..
-        }) = self.stack.last()
+        // a title is open only while its marker is read: a test of that for every block
+        if self.opening.is_some()
+            && let Some(Frame::Inline {
+                kind: InlineKind::Title,
+                ..
+            }) = self.stack.last()
             && self.end_title(None)
         {
             // a paragraph of one line: the title alone
@@ -1504,8 +3371,24 @@ impl<'s> Builder<'s> {
                             InlineKind::Implicit => self.implicit_lines(start, src),
                             _ => src,
                         };
-                        self.embed(start, src)
-                            .unwrap_or_else(|| self.paragraph(start, src))
+                        // looked for only where embeds are transcluded: its call, and the block
+                        // it gave back, cost every paragraph (PAR-010)
+                        if self.embedding.is_some()
+                            && let Some(block) = self.embed(start, src)
+                        {
+                            block
+                        } else {
+                            // the frame under a paragraph's is the container it goes in, its
+                            // block made in place there: through `push_block`'s look down the
+                            // stack, a paragraph's close cost ~145 instructions more than
+                            // v1.1.0's, its block moved between calls (PAR-010)
+                            let block = self.paragraph(start, src);
+                            match self.stack.last_mut() {
+                                Some(Frame::Blocks { blocks, .. }) => blocks.push(block),
+                                _ => self.push_block(block),
+                            }
+                            return;
+                        }
                     }
                 },
                 InlineKind::Cell | InlineKind::Title => self.paragraph(start, src),
@@ -2020,11 +3903,20 @@ impl<'s> Builder<'s> {
     /// A callout's title that is its kind's `name` in title case, as Obsidian shows it.
     fn name_title(&mut self, name: &str, line: u32) -> Inlines {
         let start = self.runs.len() as u32;
-        let mut chars = name.chars();
         let text = self.text_end();
-        if let Some(first) = chars.next() {
-            self.text.extend(first.to_uppercase());
-            self.text.extend(chars.flat_map(char::to_lowercase));
+        if name.is_ascii() {
+            // cased in place: char by char, a GitHub alert's title was ~320 instructions
+            self.text.push_str(name);
+            let title = &mut self.text[text as usize..];
+            title.make_ascii_lowercase();
+            let first = 1.min(title.len());
+            title[..first].make_ascii_uppercase();
+        } else {
+            let mut chars = name.chars();
+            if let Some(first) = chars.next() {
+                self.text.extend(first.to_uppercase());
+                self.text.extend(chars.flat_map(char::to_lowercase));
+            }
         }
         self.runs.push(Run {
             text: TextRange {
@@ -2174,19 +4066,28 @@ impl<'s> Builder<'s> {
     /// The block id `^id` that the runs from `start` on end in (OBS-009): after a blank, or
     /// alone on the paragraph's last line, of letters, digits and `-`, as Obsidian names a block.
     /// Plain text only, as written: not in code or a link, nor an escaped `\^`.
-    #[inline]
+    /// Inlined into [`Builder::pop_block`], its one caller: LLVM took that call for a cold one
+    /// and left it out of line, every paragraph a call (PAR-010).
+    #[inline(always)]
     fn block_id(&self, start: u32) -> Option<BlockId> {
         let last = self.runs[start as usize..].last()?;
         // bytes, back from the end: most paragraphs end in a word or a stop, which no `^` heads
-        // (a paragraph's check was ~170 instructions with `str`'s trims, the lists input +5%)
-        let bytes = last.text.of(&self.text).as_bytes();
-        let end = bytes.iter().rposition(|&b| b != b' ' && b != b'\t')? + 1;
-        let caret =
-            (bytes[..end].iter()).rposition(|&b| !(b.is_ascii_alphanumeric() || b == b'-'))?;
-        if bytes[caret] != b'^' || caret + 1 == end {
+        // (a paragraph's check was ~170 instructions with `str`'s trims, the lists input +5%).
+        // Loops of their own: `rposition`'s and `TextRange::of`'s calls stayed out of line,
+        // ~55 instructions a paragraph (PAR-010)
+        let bytes = &self.text.as_bytes()[last.text.start as usize..last.text.end as usize];
+        let mut i = bytes.len();
+        while i > 0 && matches!(bytes[i - 1], b' ' | b'\t') {
+            i -= 1;
+        }
+        let end = i;
+        while i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'-') {
+            i -= 1;
+        }
+        if i == 0 || i == end || bytes[i - 1] != b'^' {
             return None;
         }
-        self.block_id_at(start, caret, end)
+        self.block_id_at(start, i - 1, end)
     }
 
     /// [`Builder::block_id`] past its quick test: the last run's text has a `^` at `caret`, then
@@ -2280,21 +4181,16 @@ impl<'s> Builder<'s> {
     }
 
     /// The paragraph of the inline frame just popped, which began at `start` and has runs. One
-    /// that holds nothing but one image becomes an image block, and its runs go.
+    /// that holds nothing but one image becomes an image block, and its runs go. Inlined, and
+    /// the image looked for only past a quick test: v1.1.0's paragraph was inlined into
+    /// [`Builder::pop_block`], and forced inline whole, its look went out of line (PAR-010).
+    #[inline(always)]
     fn paragraph(&mut self, start: u32, src: LineRange) -> Block {
         let unit = self.next_unit();
-        let mut images = self.runs[start as usize..]
-            .iter()
-            .filter(|r| !is_blank(r, &self.text));
-        if let (Some(run), None) = (images.next(), images.next())
-            && let RunKind::InlineImage(link) = run.kind
+        if self.may_be_image(start)
+            && let Some(block) = self.image_block(start, src, unit)
         {
-            let alt = run.text.of(&self.text).into();
-            self.runs.truncate(start as usize);
-            return Block {
-                kind: BlockKind::Image { link, alt, unit },
-                src,
-            };
+            return block;
         }
         Block {
             kind: BlockKind::Paragraph(Inlines {
@@ -2303,6 +4199,41 @@ impl<'s> Builder<'s> {
             }),
             src,
         }
+    }
+
+    /// Whether the runs from `start` on may be one image alone: not when the first is text that
+    /// starts with printable ASCII, not a blank, as nearly every paragraph's does.
+    #[inline(always)]
+    fn may_be_image(&self, start: u32) -> bool {
+        match self.runs.get(start as usize) {
+            Some(r) if r.kind == RunKind::Text => !matches!(
+                self.text.as_bytes().get(r.text.start as usize),
+                Some(b'!'..=b'~')
+            ),
+            _ => true,
+        }
+    }
+
+    /// [`Builder::paragraph`]'s image block, unit `unit`, when the runs from `start` on are one
+    /// image alone, blanks aside.
+    #[cold]
+    #[inline(never)]
+    fn image_block(&mut self, start: u32, src: LineRange, unit: UnitId) -> Option<Block> {
+        let mut shown = self.runs[start as usize..]
+            .iter()
+            .filter(|r| !is_blank(r, &self.text));
+        let (Some(run), None) = (shown.next(), shown.next()) else {
+            return None;
+        };
+        let RunKind::InlineImage(link) = run.kind else {
+            return None;
+        };
+        let alt = run.text.of(&self.text).into();
+        self.runs.truncate(start as usize);
+        Some(Block {
+            kind: BlockKind::Image { link, alt, unit },
+            src,
+        })
     }
 
     /// The paragraph of the inline frame just popped, which began at `start`, as the note it
@@ -2434,6 +4365,7 @@ impl<'s> Builder<'s> {
         self.units - 1
     }
 
+    #[inline]
     fn push_block(&mut self, block: Block) {
         self.close_implicit();
         let target = self.stack.iter_mut().rev().find_map(|f| match f {
@@ -2651,26 +4583,38 @@ fn gfm_name(kind: BlockQuoteKind) -> &'static str {
 
 /// The callout marker on the first line of the quote whose `>` is at `at` (OBS-002): `[!kind]`
 /// after the `>` and its spaces, the kind of letters, digits, `-` and `_`, then `+` or `-`, then
-/// the title. Only offsets: the parser's events confirm it ([`Builder::read_marker`]).
+/// the title. Only offsets: the parser's events confirm it ([`Builder::read_marker`]). Inlined
+/// up to the `[!`, which most quotes lack: a call at every quote was ~55 instructions (PAR-010).
+#[inline(always)]
 fn marker(source: &str, at: usize, obsidian: bool) -> Option<Marker> {
+    let b = source.as_bytes();
+    let mut i = at;
+    while matches!(b.get(i), Some(b' ' | b'\t')) {
+        i += 1;
+    }
+    if b.get(i) != Some(&b'>') {
+        return None;
+    }
+    i += 1;
+    while matches!(b.get(i), Some(b' ' | b'\t')) {
+        i += 1;
+    }
+    if b.get(i..i + 2) != Some(b"[!") {
+        return None;
+    }
+    marker_at(source, i, obsidian)
+}
+
+/// [`marker`] past its quick test: the `[!` at `open`.
+#[inline(never)]
+fn marker_at(source: &str, open: usize, obsidian: bool) -> Option<Marker> {
     let b = source.as_bytes();
     let blank = |i: &mut usize| {
         while b.get(*i).is_some_and(|&c| c == b' ' || c == b'\t') {
             *i += 1;
         }
     };
-    let mut i = at;
-    blank(&mut i);
-    if b.get(i) != Some(&b'>') {
-        return None;
-    }
-    i += 1;
-    blank(&mut i);
-    let open = i;
-    if b.get(i..i + 2) != Some(b"[!") {
-        return None;
-    }
-    i += 2;
+    let mut i = open + 2;
     let name = i;
     while b
         .get(i)
@@ -2721,7 +4665,9 @@ struct Status {
 
 /// The task status past GFM's after the list marker of the item at `item`: one of
 /// [`Task::STATUSES`] in brackets, then a space or a tab, as GFM's own `[x]` is written. A `[*]`
-/// only in an item with no other `*`, which could pair with it into emphasis.
+/// only in an item with no other `*`, which could pair with it into emphasis. Inlined up to the
+/// `[`, which most items lack: a call at every item was ~60 instructions (PAR-010).
+#[inline(always)]
 fn status(source: &str, item: Range<usize>) -> Option<Status> {
     let b = source.as_bytes();
     let mut i = item.start;
@@ -2742,10 +4688,18 @@ fn status(source: &str, item: Range<usize>) -> Option<Status> {
     while matches!(b.get(i), Some(b' ' | b'\t')) {
         i += 1;
     }
-    let boxed = i > marker
-        && b.get(i) == Some(&b'[')
-        && b.get(i + 2) == Some(&b']')
-        && matches!(b.get(i + 3), Some(b' ' | b'\t'));
+    // GFM's own `[ ]` and `[x]` are pulldown-cmark's
+    if i == marker || b.get(i) != Some(&b'[') || matches!(b.get(i + 1), Some(b' ' | b'x' | b'X')) {
+        return None;
+    }
+    status_at(source, item, i)
+}
+
+/// [`status`] past its quick test: a `[` at `i`, after the marker and a blank, not GFM's.
+#[inline(never)]
+fn status_at(source: &str, item: Range<usize>, i: usize) -> Option<Status> {
+    let b = source.as_bytes();
+    let boxed = b.get(i + 2) == Some(&b']') && matches!(b.get(i + 3), Some(b' ' | b'\t'));
     let c = char::from(*b.get(i + 1).filter(|_| boxed)?);
     let star = c == '*'
         && source
@@ -2817,6 +4771,79 @@ fn align(a: Alignment) -> Align {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// How [`markdown`] masks `$`s, in tests.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Masks {
+        /// As it does.
+        Shipped,
+        /// Without [`never_opens`]' masks: the passes alone.
+        PassesOnly,
+        /// pandoc's rule, the reference: passes alone, each masking only its first false
+        /// closer, as many as it takes. Left to right, a pass's masks are what pandoc skips;
+        /// the shipped passes mask the same ones, more of them a pass ([`Builder::settle`]).
+        Ideal,
+    }
+
+    thread_local! {
+        /// [`markdown`] finds an Obsidian note's code by a pass of its own, whatever its `%%`s
+        /// look like (PAR-021).
+        pub(super) static CODE_PASS: Cell<bool> = const { Cell::new(false) };
+    }
+
+    thread_local! {
+        static MASKS: Cell<Masks> = const { Cell::new(Masks::Shipped) };
+        /// What [`never_opens`] gave the last parse.
+        static NEVER: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+        /// The passes [`markdown`] made, counted.
+        pub(super) static PASSES: Cell<usize> = const { Cell::new(0) };
+        /// The mask of the last pass [`markdown`] made.
+        pub(super) static MASK: Cell<Option<u8>> = const { Cell::new(None) };
+        /// The false closers each pass met, in the text [`markdown`] parsed.
+        pub(super) static WRONG: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+        /// The false closers [`markdown`]'s last parse kept ([`kept_besides`]), counted.
+        pub(super) static KEPT: Cell<usize> = const { Cell::new(0) };
+        /// [`markdown`]'s last parse met a false closer in its last pass
+        /// ([`MAX_MATH_PASSES`]), which read it as pulldown-cmark does.
+        pub(super) static CAPPED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// [`markdown`]'s `never` as [`MASKS`] has it.
+    pub(super) fn hooked(never: Vec<usize>) -> Vec<usize> {
+        NEVER.set(never.clone());
+        match MASKS.get() {
+            Masks::Shipped => never,
+            Masks::PassesOnly | Masks::Ideal => Vec::new(),
+        }
+    }
+
+    /// Whether [`markdown`] parses as [`Masks::Ideal`].
+    pub(super) fn ideal() -> bool {
+        MASKS.get() == Masks::Ideal
+    }
+
+    thread_local! {
+        /// [`markdown`] masks with a control byte ([`mask_byte`]), as in a note that uses every
+        /// punctuation byte.
+        static CONTROL: Cell<bool> = const { Cell::new(false) };
+    }
+
+    thread_local! {
+        /// [`markdown`] masks with this byte ([`mask_byte`]), one the test made sure the text
+        /// lacks.
+        static FORCE: Cell<Option<u8>> = const { Cell::new(None) };
+    }
+
+    /// The byte [`mask_byte`] takes for `text` under [`FORCE`], or the control byte under
+    /// [`CONTROL`].
+    pub(super) fn forced(text: &str) -> Option<u8> {
+        if let Some(f) = FORCE.get() {
+            return Some(f);
+        }
+        CONTROL.get().then(|| {
+            (1..32u8).find(|&c| !matches!(c, b'\t'..=b'\r') && !text.as_bytes().contains(&c))
+        })?
+    }
 
     fn kinds(blocks: &[Block]) -> Vec<&'static str> {
         blocks
@@ -3345,6 +5372,103 @@ mod tests {
     }
 
     #[test]
+    fn a_note_whose_percents_look_like_code_is_read_once() {
+        let obsidian = Dialect::Obsidian { line_breaks: false };
+        let parsed = |text: &str, code_pass: bool| {
+            CODE_PASS.set(code_pass);
+            PASSES.set(0);
+            let doc = markdown(text, obsidian, None).map(|d| format!("{d:?}"));
+            CODE_PASS.set(false);
+            (doc, PASSES.get())
+        };
+        for (text, passes) in [
+            // in code: one pass, its code found by it
+            (
+                "`printf(\"%%d\")` and\n\n```sh\n${f%%/*}\n```\n\n    %%i\n",
+                1,
+            ),
+            // a `$` price masked before it: the code found by a pass of its own
+            ("`%%` and $x$5 then a $\n", 1),
+            // one backtick run and no span: a comment after all, parsed again without it
+            ("a `b %%hidden%% c\n", 2),
+            // a fence line in an HTML block opens no fence
+            ("<div>\n```\n</div>\n\n%%hidden%% shown\n", 2),
+            // `%%`s that don't look like code: their code found first, one pass
+            ("```\n%%\n```\n\n%%\nhidden\n%%\nshown\n", 1),
+        ] {
+            let (doc, n) = parsed(text, false);
+            assert_eq!((&doc, n), (&parsed(text, true).0, passes), "{text:?}");
+        }
+        assert!(
+            !parsed("a `b %%hidden%% c\n", false)
+                .0
+                .unwrap()
+                .contains("hidden")
+        );
+        parsed("`%%` and $x$5 then a $\n", false);
+        assert!(MASK.get().is_some(), "premasked");
+        // a host parsed again gives back what its embeds took of the budget
+        let embeds = notes(&[("host.md", "other", "embedded text\n")]);
+        let host = "a `b %%hidden%%\n\n![[other]]\n";
+        let with = |code_pass: bool| {
+            CODE_PASS.set(code_pass);
+            let doc = parse_with(host, obsidian, Path::new("host.md"), &embeds);
+            CODE_PASS.set(false);
+            format!("{doc:?}")
+        };
+        let doc = with(false);
+        assert!(doc.contains("embedded text") && !doc.contains("hidden"));
+        assert_eq!(doc, with(true));
+    }
+
+    /// Random notes of code, `%%`, `$` and blocks parse the same whether their code is found by
+    /// their first pass or by a pass of its own (PAR-021). `ADA_PCT_CASES` cases (20,000).
+    #[test]
+    fn comments_are_the_same_found_either_way() {
+        const PARTS: &[&str] = &[
+            "%%", "%", "`", "``", "```\n", "~~~\n", "\n", "\n\n", "    ", "> ", "- ", "a", " b ",
+            "$", "$$", "5", "\\", "|", "|---|\n", "[[a]]", "<b>", "*", "# ",
+        ];
+        let cases: usize = (std::env::var("ADA_PCT_CASES").ok())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(20_000);
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let obsidian = Dialect::Obsidian { line_breaks: false };
+        let (mut looked, mut once) = (0, 0);
+        for _ in 0..cases {
+            let len = 4 + next() % 40;
+            let text: String = (0..len)
+                .map(|_| PARTS[(next() % PARTS.len() as u64) as usize])
+                .collect();
+            if !super::super::comments::any(&text) {
+                continue;
+            }
+            PASSES.set(0);
+            let doc = markdown(&text, obsidian, None).map(|d| format!("{d:?}"));
+            let passes = PASSES.get();
+            CODE_PASS.set(true);
+            let reference = markdown(&text, obsidian, None).map(|d| format!("{d:?}"));
+            CODE_PASS.set(false);
+            assert_eq!(doc, reference, "{text:?}");
+            if super::super::comments::look_like_code(&text, 0) {
+                looked += 1;
+                once += (passes == 1) as usize;
+            }
+        }
+        // the generator reaches both ways
+        assert!(
+            looked > cases / 50 && once > 0,
+            "{looked} looked like code, {once} read once"
+        );
+    }
+
+    #[test]
     fn obsidians_comments_are_hidden_and_lines_keep_their_numbers() {
         let text = "an %%inline%% comment\n\n%%\n# hidden\n\n- also\n%%\n\nafter `%%code%%`\n\n\
                     ```\n%%\n```\n\n%%unclosed\n\nnever shown\n";
@@ -3501,6 +5625,22 @@ mod tests {
     }
 
     #[test]
+    fn a_dollar_before_a_digit_closes_no_math_across_a_wiki_links_bar() {
+        // pulldown-cmark's range for this math starts past the `|`
+        let doc = parse("[[a $b|c$9]]\n\n[[:$|x$1]]\n");
+        assert_eq!(styled(&doc, InlineStyle::CODE), Vec::<&str>::new());
+        assert!(doc.math.is_empty());
+        let doc = parse("[[a $b|c$ d]]\n");
+        assert_eq!(typeset(&doc), ["b|c"]);
+        // its range the closer alone (PAR-014)
+        let doc = parse("[[$x|$4 b]]\n");
+        assert!(doc.math.is_empty());
+        // pulldown-cmark's range for math at a heading's end takes in its tab
+        let doc = parse("# $a b`$\t\n");
+        assert!(doc.math.is_empty());
+    }
+
+    #[test]
     fn a_code_span_opening_on_a_dollar_takes_it_from_math() {
         let doc = parse("about $21 of pod time. `intake.zsh`: default `${@:-1 2}` had\n");
         assert_eq!(styled(&doc, InlineStyle::CODE), ["intake.zsh", "${@:-1 2}"]);
@@ -3519,6 +5659,766 @@ mod tests {
         assert_eq!(doc.plain_text(inl), "$5 in a $b and  $3");
         assert_eq!(&*doc.links[0].dest, "x$1");
         assert!(!doc.text.bytes().any(|c| c < 32 && c != b'\n'));
+        // a definition's title on the line after it, its `$` masked before the first pass: the
+        // reference link, out of its range, gets it back
+        let doc = parse("[x]\n\n[x]: /u\n(t $1 a$2)\n");
+        assert_eq!(&*doc.links[0].title, "t $1 a$2");
+    }
+
+    #[test]
+    fn a_false_closer_in_a_label_is_masked_in_its_definition_too() {
+        // the math `$1` opened closes on the label's `$`, falsely: masked there and in the
+        // definition, the two still match, and the `$1` opens no math
+        let doc = parse("$1 [^a$1] b\n\n[^a$1]: c\n");
+        assert!(doc.math.is_empty());
+        let labels: Vec<_> = doc
+            .footnotes
+            .iter()
+            .map(|f| (&*f.label, f.number))
+            .collect();
+        assert_eq!(labels, [("a$1", 1)]);
+        assert!(doc.footnotes[0].anchor.is_some());
+        // every copy: another reference, in another case
+        let doc = parse("$1 [^a$1] b [^A$1] c\n\n[^a$1]: c\n");
+        assert!(doc.math.is_empty());
+        assert_eq!(doc.footnotes.len(), 1);
+        let BlockKind::Paragraph(inl) = &doc.blocks[0].kind else {
+            panic!()
+        };
+        assert_eq!(
+            (doc.runs(inl).iter())
+                .filter(|r| matches!(r.kind, RunKind::FootnoteRef(_)))
+                .count(),
+            2
+        );
+        // a link reference's, whose definition makes no event
+        let doc = parse("$1 [a$1] b [x][a$1]\n\n[a$1]: /u\n");
+        assert!(doc.math.is_empty());
+        let dests: Vec<_> = doc.links.iter().map(|l| (&*l.dest, l.kind)).collect();
+        assert_eq!(
+            dests,
+            [("/u", LinkKind::Reference), ("/u", LinkKind::Reference)]
+        );
+        // the copies: every one, in another case, a link's text too; not a copy whose `$` is
+        // math's, the first of two in a paragraph opening it
+        let copies = |text: &str| {
+            let source = text.replacen("$1]", "%1]", 1);
+            label_copies(&source, text, 0, &[5], false).0
+        };
+        let def = "\n\n[b$1]: /u\n";
+        assert_eq!(
+            copies(&format!("$1 [b$1]\n\n[b$1] x\n\n[B$1](y{def}")),
+            [12, 21, 30]
+        );
+        assert_eq!(copies(&format!("$1 [b$1]\n\n[b$1] and [B$1]{def}")), [29]);
+        // a label nothing defines: no copy is a reference
+        assert_eq!(copies("$1 [b$1]\n\n[b$1] x\n"), Vec::<usize>::new());
+        // one in a definition's title, given back at the links that use it
+        let doc = parse("$1 [b$1]\n\n[c]: /u \"[b$1]\"\n\n[c]\n");
+        assert_eq!(&*doc.links[0].title, "[b$1]");
+        // a reference before a `(` that opens no destination
+        let doc = parse("a/$6[a$1]( b\n\n[a$1]: /u\n");
+        assert_eq!(doc.links.len(), 1);
+    }
+
+    #[test]
+    fn a_false_closer_in_a_wiki_links_target_is_masked() {
+        // math in a target makes no event: the `$1` closes none, so `$b` reaches the `d$`,
+        // and the math crosses the link, as math does
+        let doc = parse("[[a $b c$1]] d$\n");
+        assert_eq!(
+            typeset(&doc).len() + styled(&doc, InlineStyle::CODE).len(),
+            1
+        );
+        assert!(doc.links.is_empty());
+        // with no `$` past it, the link stays, its target as written; an embed's too
+        let doc = parse("[[a $b c$1]] and ![[e $f g$2|x]]\n");
+        assert!(doc.math.is_empty());
+        let dests: Vec<_> = doc.links.iter().map(|l| &*l.dest).collect();
+        assert_eq!(dests, ["a $b c$1", "e $f g$2"]);
+        // math that closes as it should stays the target's
+        let doc = parse("[[a $b c$ e]] d$\n");
+        assert_eq!(doc.links.len(), 1);
+    }
+
+    #[test]
+    fn a_pass_masks_no_false_closer_of_math_an_earlier_mask_undoes() {
+        // `$x$1` and `$a$2` close falsely: with the `$1` masked, `$x` reaches `y$` and `$a$2`'s
+        // math is undone, so its `$2` opens math that closes on `b$`, as pandoc's rule reads
+        // it. A pass that masked both lost that math (PAR-016)
+        let text = "$x$1 y$a$2 b$\n";
+        let (new, _) = parsed(text, Dialect::CommonMark, Masks::Shipped);
+        let (old, passes) = parsed(text, Dialect::CommonMark, Masks::PassesOnly);
+        let (ideal, ideal_passes) = parsed(text, Dialect::CommonMark, Masks::Ideal);
+        assert_eq!((&new, &old), (&ideal, &ideal));
+        assert_eq!((passes, ideal_passes), (2, 2));
+        // math typeset, or as written where ada can't (`x$1 y`)
+        let doc = parse(text);
+        assert_eq!(
+            typeset(&doc).len() + styled(&doc, InlineStyle::CODE).len(),
+            2
+        );
+        // one whose math, undone, leaves the rest as it was (the next `$` can't close, and no
+        // markup was in it) lets the next be masked in the same pass
+        let text = "$x$1 y $a$2 b$c\n";
+        let (old, passes) = parsed(text, Dialect::CommonMark, Masks::PassesOnly);
+        let (ideal, ideal_passes) = parsed(text, Dialect::CommonMark, Masks::Ideal);
+        assert_eq!(old, ideal);
+        assert_eq!((passes, ideal_passes), (2, 3));
+        // not past markup the undone math held: undone, `$x`'s math frees a backtick, whose code
+        // span takes `$a$2`
+        let text = "$x `y$1 z $a$2 b` c$\n";
+        let (old, passes) = parsed(text, Dialect::CommonMark, Masks::PassesOnly);
+        assert_eq!(old, parsed(text, Dialect::CommonMark, Masks::Ideal).0);
+        assert_eq!(passes, 2);
+        assert_eq!(styled(&parse(text), InlineStyle::CODE), ["y$1 z $a$2 b"]);
+        // paragraphs are read apart: each one's first false closer is masked in the same pass
+        let text = "$x$1 y $a$2 b$c\n\n$x$1 y$a$2 b$\n";
+        let (old, passes) = parsed(text, Dialect::CommonMark, Masks::PassesOnly);
+        let (ideal, ideal_passes) = parsed(text, Dialect::CommonMark, Masks::Ideal);
+        assert_eq!(old, ideal);
+        assert_eq!((passes, ideal_passes), (2, 4));
+    }
+
+    #[test]
+    fn a_wiki_links_targets_false_closers_are_masked_in_one_pass() {
+        // `c$1` closes math in its target falsely: masked, `$b`'s math is undone (the next `$`
+        // can't close), and the link reads back over its target as before, so the `d$2` past
+        // it, and the `e$3` past that, are masked in the same pass (PAR-020; one pass a target
+        // before, as the reference takes)
+        for (text, ideal_passes) in [
+            ("$1 [[a $b c$1]] and $2 [[d$2]]\n", 3),
+            ("$1 [[a $b c$1]] and $2 [[d$2]] and $3 [[e$3]]\n", 4),
+        ] {
+            let (new, passes) = parsed(text, Dialect::CommonMark, Masks::Shipped);
+            let (old, old_passes) = parsed(text, Dialect::CommonMark, Masks::PassesOnly);
+            let (ideal, n) = parsed(text, Dialect::CommonMark, Masks::Ideal);
+            assert_eq!((&new, &old), (&ideal, &ideal), "{text:?}");
+            assert_eq!((passes, old_passes, n), (2, 2, ideal_passes), "{text:?}");
+        }
+        // no `$` closes math: both links stay, their targets as written
+        let doc = parse("$1 [[a $b c$1]] and $2 [[d$2]]\n");
+        let dests: Vec<_> = doc.links.iter().map(|l| &*l.dest).collect();
+        assert_eq!(dests, ["a $b c$1", "d$2"]);
+        assert!(doc.math.is_empty());
+    }
+
+    #[test]
+    fn a_labels_copies_are_masked_as_pandocs_rule_meets_the_false_closers() {
+        // a pass masks two contexts' false closers (the `$`s of `[A$1]<` and `$6)`): with both
+        // masked, the copies past `@x` and `=` are in math, with the first alone (the
+        // reference's first pass) out of it, and masked. Masked one at a time, the copies are
+        // the reference's (PAR-019)
+        let first = "[a$1]:> [A$1]<$7``a$2**~\n\n$a9/$6)`$[[$x|@x[A$1]$$`=[a$1]:- |] \
+                     $[^a$1]:1[^a$1]:";
+        // a copy masked undoes math another copy was in (`$1]($1[^a$1]` with the last `$`
+        // masked): judged again in the same pass, as the next meets no false closer to do it
+        let again = "`$\t# ;<%\n   [A$1]<|```\n$<{$$1```\n.[[$x|~2\t$4,[[[a $b#- [^a$1];\n\
+                     [^a$1]:x[^a$1]($1[^a$1]<a b=\"";
+        for (text, dialect) in [
+            (first, Dialect::Obsidian { line_breaks: false }),
+            (again, Dialect::CommonMark),
+        ] {
+            let (new, _) = parsed(text, dialect, Masks::Shipped);
+            let (old, _) = parsed(text, dialect, Masks::PassesOnly);
+            let (ideal, _) = parsed(text, dialect, Masks::Ideal);
+            assert_eq!((&new, &old), (&ideal, &ideal), "{text:?}");
+        }
+    }
+
+    /// `text` parsed as [`markdown`] does with `masks`: its doc's `Debug` ([`merged`]) and the
+    /// passes it took.
+    fn parsed(text: &str, dialect: Dialect, masks: Masks) -> (Option<String>, usize) {
+        MASKS.set(masks);
+        PASSES.set(0);
+        MASK.set(None);
+        KEPT.set(0);
+        CAPPED.set(false);
+        let doc = markdown(text, dialect, None);
+        MASKS.set(Masks::Shipped);
+        // no mask is left in the doc: every string holding one got its `$`s back (a control
+        // byte as `Debug` escapes it; punctuation inside `Debug`'s strings, which writes some
+        // of it itself)
+        if let (Some(d), Some(m)) = (&doc, MASK.get()) {
+            let debug = format!("{d:?}");
+            let left = match m.is_ascii_control() {
+                true => {
+                    let m = format!("{:?}", char::from(m));
+                    debug.contains(&m[1..m.len() - 1])
+                }
+                false => in_strings(&debug, char::from(m)),
+            };
+            assert!(!left, "{text:?}: {:?} left in the doc", char::from(m));
+        }
+        (doc.map(|d| merged(&d)), PASSES.get())
+    }
+
+    /// Whether `m` is inside a string of `debug`, a `Debug` output, but an anchor's slug, whose
+    /// `-`s are the slugger's own.
+    fn in_strings(debug: &str, m: char) -> bool {
+        let (mut inside, mut escape) = (false, false);
+        let mut slug = false;
+        for (i, c) in debug.char_indices() {
+            if !inside && c == '"' {
+                slug = debug[..i].ends_with("slug: ");
+            }
+            if slug && inside && !escape && c == m {
+                continue;
+            }
+            match (inside, escape, c) {
+                (true, true, _) => escape = false,
+                (true, false, '\\') => escape = true,
+                (true, false, '"') | (false, _, '"') => inside = !inside,
+                (true, false, c) if c == m => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// `doc`'s `Debug` with each text run merged into the one before it where only pulldown-cmark
+    /// split them: a masked `$` is text of one event with its neighbors', a `$` one of its own.
+    fn merged(doc: &Doc) -> String {
+        let mut s = format!("{doc:?}");
+        // the runs, unmerged: given merged below
+        let i = s.find(", runs: [").unwrap();
+        let j = i + s[i..].find(']').unwrap();
+        s.replace_range(i..=j, "");
+        let mut bounds = std::collections::HashSet::new();
+        let slots = |s: &str| -> Vec<(usize, u32, u32, usize)> {
+            // runs' slots only: a table row's are its cells'
+            let key = "runs: Slots { start: ";
+            let mut out = Vec::new();
+            let mut at = 0;
+            while let Some(i) = s[at..].find(key).map(|i| i + at) {
+                let rest = &s[i + key.len()..];
+                let comma = rest.find(',').unwrap();
+                let start = rest[..comma].parse().unwrap();
+                let rest2 = &rest[comma + ", end: ".len()..];
+                let close = rest2.find(' ').unwrap();
+                let end = rest2[..close].parse().unwrap();
+                let stop = i + key.len() + comma + ", end: ".len() + close + " }".len();
+                out.push((i, start, end, stop));
+                at = stop;
+            }
+            out
+        };
+        for &(_, a, b, _) in &slots(&s) {
+            bounds.extend([a, b]);
+        }
+        // a run starts a merged one, or goes on the one before
+        let mut starts = Vec::with_capacity(doc.runs.len());
+        let mut runs: Vec<Run> = Vec::new();
+        for (i, r) in doc.runs.iter().enumerate() {
+            let goes_on = runs.last().is_some_and(|p| {
+                !bounds.contains(&(i as u32))
+                    && matches!((p.kind, r.kind), (RunKind::Text, RunKind::Text))
+                    && (p.style, p.link, p.src_line, p.text.end)
+                        == (r.style, r.link, r.src_line, r.text.start)
+            });
+            match runs.last_mut() {
+                Some(p) if goes_on => p.text.end = r.text.end,
+                _ => runs.push(*r),
+            }
+            starts.push(u32::from(!goes_on));
+        }
+        let new_index = |x: u32| starts[..x as usize].iter().sum::<u32>();
+        let mut out = String::new();
+        let mut at = 0;
+        for (i, a, b, stop) in slots(&s) {
+            out.push_str(&s[at..i]);
+            out.push_str(&format!(
+                "runs: Slots {{ start: {}, end: {} }}",
+                new_index(a),
+                new_index(b)
+            ));
+            at = stop;
+        }
+        out.push_str(&s[at..]);
+        format!("{out}\nmerged: {runs:?}")
+    }
+
+    #[test]
+    fn prices_parse_once() {
+        for text in [
+            "Spend $2.81 effective ($9.53 list), ~$1 or $25/$50.\n",
+            "**DONE, $1.14 effective** ($11.80 list)\n",
+            "$5 in [a $b](x$1) and <i a=\"$2\"> $3\n",
+            // the second closes nothing: a blank before it
+            "about $1 (or $2) and\n\n$3 ($4.\n",
+            // a fence's info string gets its back; a footnote's label keeps its
+            "$1 a\n```x$5 ($6\nb\n```\n\n$1 [^a] b ($2\n\n[^a]: b ($2\n",
+            // a code span opening on a `$`
+            "about $21 of pod time. `intake.zsh`: default `${@:-1 2}` had\n",
+        ] {
+            let (new, passes) = parsed(text, Dialect::CommonMark, Masks::Shipped);
+            let (old, old_passes) = parsed(text, Dialect::CommonMark, Masks::PassesOnly);
+            assert_eq!(new, old, "{text:?}");
+            assert_eq!(
+                new,
+                parsed(text, Dialect::CommonMark, Masks::Ideal).0,
+                "{text:?}"
+            );
+            assert!(
+                passes == 1 && old_passes > 1,
+                "{text:?}: {passes}, {old_passes}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dollar_that_may_open_math_is_left_to_the_passes() {
+        // each after a `$` that can open: one no math can close on is left as it is
+        let never = |t: &str| -> Vec<usize> {
+            let at = never_opens(&format!("$a {t}"), 0);
+            at.into_iter().map(|c| c - 3).collect()
+        };
+        assert_eq!(never_opens("($5 and $6)\n", 0), Vec::<usize>::new());
+        assert_eq!(never("($5 and $6)\n"), [1]);
+        // the next `$` closes: math
+        assert_eq!(never("x$1+1$ y\n"), Vec::<usize>::new());
+        // balanced braces between move no context; a `$` in them, or a `}` past its, does
+        assert_eq!(never("x$1 {a,{b}} $2\n"), [1]);
+        assert_eq!(never("x$1 {a $b} $2\n"), Vec::<usize>::new());
+        assert_eq!(never("x$1 a} $2\n"), Vec::<usize>::new());
+        // a `$$` before it in its paragraph, not past a blank line
+        assert_eq!(never("$$ a ($5 b $$\n"), Vec::<usize>::new());
+        assert_eq!(never("$$ a $$\n\n$b ($5 b\n"), [13]);
+        // escaped, or after a blank, or after a backslash's escaped `$`
+        assert_eq!(never("x\\$1 $2 ($3\n"), [9]);
+        assert_eq!(never("a \\\\$1 b\n"), [4]);
+        // the next `$` past a blank line is another paragraph's
+        assert_eq!(never("x$1 a\n  \nb$2\n"), [1]);
+        assert_eq!(never("x$1 a\n  \n$c b$2\n"), [1, 13]);
+        // a backtick's: a code span opening on a `$`, unless math opened on a backtick before it
+        assert_eq!(never("$5 a `${b}` c\n"), [6]);
+        assert_eq!(never("$`a` `$b`\n"), Vec::<usize>::new());
+        assert_eq!(never("$`a`\n\n$c `$b` c\n"), [10]);
+        // between brackets on its line: a label nothing defines as any other (PAR-017); not a
+        // bracket on one side only, nor a wiki link's target
+        assert_eq!(never("[^a$1] [(x$2) ]\n[[b\n(c$3]]\nx] ($4\n"), [3, 10, 31]);
+        assert_eq!(never("[[c$1]] b\n"), Vec::<usize>::new());
+        // a defined label's `$` in every copy, math reaching it or not, or in none: the
+        // definition's is masked too; one copy opening math keeps all of them unmasked
+        assert_eq!(never("[^a$1] b\n\n[^a$1]: c\n"), [3, 13]);
+        assert_eq!(
+            never("[^a$1] b\n\n[^A$1]: c\n\nd [^a$1] e$\n"),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            never("[^a$1] b\n\nd `[^a$1]` e\n\n[^a$1]: c\n"),
+            [3, 16, 27]
+        );
+    }
+
+    #[test]
+    fn a_labels_false_closer_is_masked_before_the_first_pass() {
+        // each `$` a false closer the passes met one at a time (PAR-017), masked up front in
+        // each copy of its label, so the note parses once, as the passes and pandoc's rule read it
+        for text in [
+            "Spend $1 [a$1] and $2 [b$2] and $3 [c$3] and $4 [d$4].\n",
+            "Spend $1 [^a$1] and $2 [^b$2] and $3 [x$3] and $4 [^a$1].\n\n[^a$1]: b\n[^b$2]: c\n",
+            "Spend $1 [A$1] and $2 [b](/u).\n\n[a$1]: /v\n",
+        ] {
+            let (new, passes) = parsed(text, Dialect::CommonMark, Masks::Shipped);
+            let (old, old_passes) = parsed(text, Dialect::CommonMark, Masks::PassesOnly);
+            assert_eq!(new, old, "{text:?}");
+            assert_eq!(
+                new,
+                parsed(text, Dialect::CommonMark, Masks::Ideal).0,
+                "{text:?}"
+            );
+            assert!(
+                passes == 1 && old_passes > 1,
+                "{text:?}: {passes}, {old_passes}"
+            );
+        }
+        // the references still match their definitions
+        let doc = parse("Spend $1 [^a$1] b.\n\n[^a$1]: c\n");
+        assert!(doc.footnotes[0].anchor.is_some());
+        // a copy a control byte can't take (inside `<…>`): the label left to the passes, which
+        // keep its false closer
+        CONTROL.set(true);
+        let (_, passes) = parsed(
+            "$y [^a$1]\n\n<[^a$1]>\n\n[^a$1]: b\n",
+            Dialect::CommonMark,
+            Masks::Shipped,
+        );
+        CONTROL.set(false);
+        assert_eq!((passes, NEVER.take().len()), (2, 3));
+    }
+
+    #[test]
+    fn a_control_byte_masks_no_dollar_it_would_change_the_parse_at() {
+        let safe = |t: &str| -> Vec<usize> {
+            let t = format!("$a {t}");
+            let mut never = never_opens(&t, 0);
+            line_safe(t.as_bytes(), &mut never, true, true);
+            never.into_iter().map(|c| c - 3).collect()
+        };
+        // flanking, a destination (on the next line too), a reference's line and the next, `<…>`
+        assert_eq!(safe("a**$1** _$2_ c$3\n"), [9, 14]);
+        assert_eq!(safe("`$_a` `$b`\n"), [7]);
+        assert_eq!(safe("[a](x$1) [b](\ny$2) z$3\n"), [20]);
+        assert_eq!(safe("[a]: x$1\n[b]:\n y$2\nz$3\n"), [20]);
+        assert_eq!(safe("<x$1> <y\nz$2\n"), [10]);
+        // a reference's line under any mask: its destination is out of its links' ranges
+        let mut never = never_opens("$a [b]: x$1\n", 0);
+        line_safe(b"$a [b]: x$1\n", &mut never, false, true);
+        assert_eq!(never, Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_wiki_links_events_out_of_order_get_their_dollars_back() {
+        // pulldown-cmark gives the inner image's start (at the `](`) before the math at the
+        // `$6`: `parsed` asserts no mask is left in the doc
+        let text = "$$1$$(!)![[![^a$1]/$6<a b=\"[[$x|](\">1. )%[a$1]> \
+                    http://http://$http://c$1]]]][A$1][^a$1]\t===";
+        parsed(text, Dialect::CommonMark, Masks::Shipped);
+        let text = "\n\n\n\na($1a {[[a $b/`$--><http://[a$1]:{[^a$1]|>$#*$-->+c$1]]][@b.c>\
+                    </[[a $b@\">#  :```\n$ac$1]]";
+        FORCE.set(Some(b'%'));
+        parsed(text, Dialect::CommonMark, Masks::Shipped);
+        FORCE.set(None);
+        // the image and the link overlap: the image's text past the link's end comes last
+        let text = "b[A$1];,b<$7})]]](\n\">b$![[[a$1]:[a$1]http://    $a](]()9[^a$1]$4c$1]]`";
+        parsed(text, Dialect::CommonMark, Masks::Shipped);
+    }
+
+    #[test]
+    fn an_entity_of_the_mask_byte_stays_itself() {
+        // pulldown-cmark decodes `&#37;` and `&percnt;` to `%` in the destination it masked a
+        // `$` in: the mask is a byte the text doesn't write either way
+        for text in ["$a [b](/u&#37;x$1) c\n", "$a [b](/u&percnt;x$1) c\n"] {
+            let doc = parse(text);
+            assert_eq!(&*doc.links[0].dest, "/u%x$1", "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_control_byte_keeps_a_false_closer_it_would_change_the_parse_at() {
+        let control = |text: &str| {
+            CONTROL.set(true);
+            KEPT.set(0);
+            let doc = parse(text);
+            CONTROL.set(false);
+            (doc, KEPT.get())
+        };
+        let struck = |doc: &Doc| {
+            let BlockKind::Paragraph(inl) = &doc.blocks[0].kind else {
+                panic!()
+            };
+            (doc.runs(inl).iter()).any(|r| r.style.contains(InlineStyle::STRIKE))
+        };
+        // a control byte after `~` lets it open a strikethrough the `$` didn't: the false
+        // closer is kept, its math read as pulldown-cmark reads it (PAR-015)
+        let text = "$x a~$3 b~\n";
+        let (doc, kept) = control(text);
+        assert_eq!((doc.math.len(), struck(&doc), kept), (1, false, 1));
+        let doc = parse(text);
+        assert_eq!((doc.math.len(), struck(&doc)), (0, false));
+        // a label's `$` a copy can't take a control byte at (inside `<…>`): unmasked in every
+        // copy, the false closer kept, so the copy the math leaves still matches its definition
+        let (doc, kept) = control("$y [^a$1]\n\n<[^a$1]>\n\n[^a$1]: b\n");
+        assert_eq!((doc.math.len(), kept), (1, 1));
+        let BlockKind::Paragraph(inl) = &doc.blocks[1].kind else {
+            panic!()
+        };
+        assert_eq!(
+            (doc.runs(inl).iter())
+                .filter(|r| matches!(r.kind, RunKind::FootnoteRef(_)))
+                .count(),
+            1
+        );
+        assert!(doc.footnotes[0].anchor.is_some());
+    }
+
+    /// Texts of markdown's bytes around `$`, random but the same each run: a parse reads the
+    /// math as pandoc's rule does ([`Masks::Ideal`]), with the masks before the first pass and
+    /// with the passes alone, however many passes it takes (PAR-016), a label's copies masked
+    /// as the reference masks them (PAR-019). But past the last pass ([`MAX_MATH_PASSES`]). Not
+    /// a text that leaves the reference no punctuation to mask with. A third mask with a
+    /// control byte ([`CONTROL`]), whose passes read as punctuation's, and as the reference,
+    /// wherever they keep no false closer (PAR-015). Labels and their definitions, and wiki links' targets, hold
+    /// false closers too (PAR-014). `ADA_PREMASK_CASES` sets how many (50,000).
+    #[test]
+    fn masks_before_the_first_pass_read_math_as_pandoc_does() {
+        const PARTS: &[&str] = &[
+            "$", "$", "$", "$", "$$", "1", "2", "9", "a", "x", "b", " ", " ", " ", "\n", "\n\n",
+            "{", "}", "`", "``", "\\", "(", ")", "<", ">", "*", "**", "_", "[", "]", "](", "[[",
+            "]]", "|", "- ", "> ", "1. ", "# ", "%", "?", "@", ".", ",", "#", "&", ";", ":", "!",
+            "=", "==", "~", "\t", "    ", "```\n", "[^1]", "<a b=\"", "\">", "http://", "a@b.c",
+            // prices and math
+            "($1", "a$2", "~$3", "$4", "x$5 ", "/$6", "$a", "b$", "$`", "`$", "$$1", "<$7", "{$8",
+            // labels and definitions (after a "\n\n"), wiki links' targets
+            "[^a$1]", "[a$1]", "[A$1]", "[^a$1]:", "[a$1]:", "[[a $b", "c$1]]", "[[$x|", "![[",
+        ];
+        let cases: usize = (std::env::var("ADA_PREMASK_CASES").ok())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(50_000);
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let (mut once, mut premasked, mut controlled, mut old_once, mut kept) = (0, 0, 0, 0, 0);
+        let (mut again, mut capped_n) = (0, 0);
+        for _ in 0..cases {
+            let len = 4 + next() % 40;
+            let text: String = (0..len)
+                .map(|_| PARTS[(next() % PARTS.len() as u64) as usize])
+                .collect();
+            let dialect = match next() % 4 {
+                0 => Dialect::Obsidian { line_breaks: false },
+                _ => Dialect::CommonMark,
+            };
+            // the reference masks with punctuation: a control byte flanks otherwise
+            if unused_byte(&text).is_none_or(|m| m.is_ascii_control()) {
+                continue;
+            }
+            let control = next() % 3 == 0;
+            CONTROL.set(control);
+            let (new, passes) = parsed(&text, dialect, Masks::Shipped);
+            CONTROL.set(false);
+            let (capped, keeps) = (CAPPED.get(), KEPT.get() > 0);
+            let masked = !NEVER.take().is_empty();
+            // a control byte's passes read as punctuation's, but where a false closer is kept
+            // (PAR-015)
+            if control {
+                match keeps {
+                    false => {
+                        let (punct, _) = parsed(&text, dialect, Masks::Shipped);
+                        if !capped && !CAPPED.get() {
+                            assert_eq!(new, punct, "{text:?}, a control byte against punctuation");
+                        }
+                    }
+                    true => kept += 1,
+                }
+            }
+            let (ideal, _) = parsed(&text, dialect, Masks::Ideal);
+            if passes == 1 {
+                once += 1;
+                premasked += usize::from(masked);
+                controlled += usize::from(masked && control);
+            }
+            // the passes' masks are pandoc's, however many passes they take (PAR-016), a
+            // label's copies with them (PAR-019), but past the last, and a control byte's where
+            // it keeps a false closer
+            if capped {
+                capped_n += 1;
+            } else if !keeps {
+                again += usize::from(passes > 1);
+                assert_eq!(new, ideal, "{text:?}, {passes} passes");
+            }
+            let (old, old_passes) = parsed(&text, dialect, Masks::PassesOnly);
+            old_once += usize::from(old_passes == 1);
+            if !CAPPED.get() {
+                assert_eq!(
+                    old, ideal,
+                    "{text:?}, the passes alone, {old_passes} passes"
+                );
+            }
+        }
+        let counts = format!(
+            "{once} parsed once, {premasked} with masks ({controlled} a control byte's), \
+             {old_once} with the passes alone, {kept} keeping a false closer, {again} parsed \
+             again as pandoc's rule reads them, {capped_n} past the last pass"
+        );
+        eprintln!("{counts}");
+        // labels' and targets' parts send more texts through passes (PAR-014), and the prices
+        // after a wiki link holding a `$` (PAR-016): a quarter once, 3.6% with masks, 0.9% with
+        // a control byte's
+        assert!(
+            once > cases / 5 && premasked > cases / 40 && controlled > cases / 200,
+            "{counts}"
+        );
+    }
+
+    /// The mask bytes past the first five ([`rarer_byte`]) read as `%` does, which means nothing
+    /// anywhere: random texts of markdown's bytes around `$` (those of
+    /// [`masks_before_the_first_pass_read_math_as_pandoc_does`], with entities, HTML comments,
+    /// autolinks and the bytes themselves), each parsed with each byte that it lacks and that
+    /// [`rarer_byte`] would take for it, against `%` (PAR-018). `-`, which isn't taken, doesn't:
+    /// `` `$-> `` ends an HTML comment. `ADA_PREMASK_CASES` sets how many (50,000).
+    #[test]
+    fn rarer_mask_bytes_read_as_percent_does() {
+        const PARTS: &[&str] = &[
+            "$", "$", "$", "$", "$$", "1", "2", "9", "a", "x", " ", " ", "\n", "\n\n", "{", "}",
+            "`", "\\", "(", ")", "<", ">", "*", "_", "[", "]", "](", "[[", "]]", "|", "- ", "> ",
+            "1. ", "# ", "%", "@", ".", "#", "&", ";", ":", "!", "=", "~", "    ", "```\n",
+            "<a b=\"", "\">", "http://", "a@b.c", "+", "/", "<!--", "-->", "&amp", "&#3", "&#x",
+            "<x:", "<a@", "@b.c>", "</", "/>", "`$-> ", "($1", "a$2", "~$3", "x$5 ", "$a", "b$",
+            "$`", "`$", "[^a$1]", "[a$1]:", "[[a $b", "c$1]]",
+        ];
+        let percent = |text: &str, dialect: Dialect, m: u8| {
+            FORCE.set(Some(m));
+            let doc = parsed(text, dialect, Masks::Shipped).0;
+            FORCE.set(None);
+            doc
+        };
+        let cases: usize = (std::env::var("ADA_PREMASK_CASES").ok())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(50_000);
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut compared = [0usize; 6];
+        for _ in 0..cases {
+            let len = 4 + next() % 40;
+            let text: String = (0..len)
+                .map(|_| PARTS[(next() % PARTS.len() as u64) as usize])
+                .collect();
+            let dialect = match next() % 4 {
+                0 => Dialect::Obsidian { line_breaks: false },
+                _ => Dialect::CommonMark,
+            };
+            let b = text.as_bytes();
+            let entities = Entities::new(b);
+            let free = |c: u8| !b.contains(&c) && !entities.writes(c);
+            if !free(b'%') {
+                continue;
+            }
+            let reference = percent(&text, dialect, b'%');
+            for (i, (c, ok)) in rarer_bytes(&maskable_spots(b)).into_iter().enumerate() {
+                if ok && free(c) {
+                    compared[i] += 1;
+                    assert_eq!(
+                        percent(&text, dialect, c),
+                        reference,
+                        "{text:?}: {:?} against `%`",
+                        char::from(c)
+                    );
+                }
+            }
+        }
+        eprintln!("compared, `/ # - + . ;`: {compared:?}");
+        assert!(compared.iter().all(|&n| n > cases / 20), "{compared:?}");
+        // each condition keeps a byte from a parse it would change: `#` after an `&` starts a
+        // numeric entity, `;` after an entity's name ends it, and inside `<…>` the others make
+        // a tag (`<a-1>`) or an autolink of what wasn't one, or `;` breaks an email autolink
+        for (text, c) in [
+            ("$a &$35; b\n", b'#'),
+            ("$a &amp$1 b\n", b';'),
+            ("$a <a$1@b.c> b\n", b';'),
+            ("$a <a$1> b\n", b'-'),
+            ("$a <ab$1:x> b\n", b'+'),
+            ("$a <a@b$1c> b\n", b'.'),
+        ] {
+            assert_ne!(
+                percent(text, Dialect::CommonMark, c),
+                percent(text, Dialect::CommonMark, b'%'),
+                "{text:?}: {:?}",
+                char::from(c)
+            );
+        }
+    }
+
+    /// The `$`s masked before the first pass in the file at `ADA_FILE`, each with its context:
+    /// `cargo test --release premask_file -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads a file"]
+    fn premask_file() {
+        let text = std::fs::read_to_string(std::env::var("ADA_FILE").expect("ADA_FILE")).unwrap();
+        let mut source = Cow::Borrowed(&*text);
+        let mut never = never_opens(&text, 0);
+        let all = never.len();
+        let mask = premasked(&mut source, &text, 0, &mut never);
+        eprintln!("{all} found, {} masked with {mask:?}", never.len());
+        for at in never {
+            let from = text.floor_char_boundary(at.saturating_sub(50));
+            let to = text.ceil_char_boundary((at + 20).min(text.len()));
+            eprintln!("  {at}: {:?}", &text[from..to]);
+        }
+    }
+
+    /// The vault at `ADA_VAULT` parsed both ways, as
+    /// [`masks_before_the_first_pass_read_math_as_pandoc_does`]: the notes parsed more
+    /// than once each way, and those that differ from the passes alone or pandoc's rule (each to
+    /// be read: a label's copies masked at another pass, or a fault): `cargo test --release
+    /// premask_vault -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads a vault"]
+    fn premask_vault() {
+        fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap().filter_map(Result::ok) {
+                let path = entry.path();
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                match entry.file_type() {
+                    Ok(t) if t.is_dir() => walk(&path, out),
+                    Ok(t) if t.is_file() && path.extension().is_some_and(|e| e == "md") => {
+                        out.push(path);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let root = std::env::var("ADA_VAULT").expect("ADA_VAULT");
+        let mut paths = Vec::new();
+        walk(Path::new(&root), &mut paths);
+        paths.sort();
+        let (mut again, mut old_again, mut differ, mut off, mut kept) = (0, 0, 0, 0, 0);
+        for path in &paths {
+            let text = String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned();
+            for dialect in [Dialect::CommonMark, Dialect::Obsidian { line_breaks: true }] {
+                let (new, passes) = parsed(&text, dialect, Masks::Shipped);
+                if KEPT.get() > 0 {
+                    kept += 1;
+                    eprintln!("keeps {} false closers: {}", KEPT.get(), path.display());
+                }
+                let (old, old_passes) = parsed(&text, dialect, Masks::PassesOnly);
+                let (ideal, _) = parsed(&text, dialect, Masks::Ideal);
+                again += usize::from(passes > 1);
+                old_again += usize::from(old_passes > 1);
+                if new != old {
+                    differ += 1;
+                    eprintln!(
+                        "differs from the passes alone: {} ({dialect:?})",
+                        path.display()
+                    );
+                }
+                if new != ideal {
+                    off += 1;
+                    eprintln!(
+                        "differs from pandoc's rule: {} ({dialect:?})",
+                        path.display()
+                    );
+                    // `ADA_DUMP=DIR`: each side's doc to DIR/NOTE.{new,ideal,old}
+                    if let Ok(dir) = std::env::var("ADA_DUMP") {
+                        let name = path.file_stem().unwrap().to_string_lossy();
+                        for (side, doc) in [("new", &new), ("ideal", &ideal), ("old", &old)] {
+                            let out = Path::new(&dir).join(format!("{name}.{side}"));
+                            std::fs::write(out, doc.as_deref().unwrap_or("")).unwrap();
+                        }
+                    }
+                }
+                if passes > 1 && matches!(dialect, Dialect::CommonMark) {
+                    eprintln!("{passes} passes ({old_passes} alone): {}", path.display());
+                    WRONG.take();
+                    parsed(&text, dialect, Masks::Shipped);
+                    for at in WRONG.take() {
+                        let line = text[..at].matches('\n').count() + 1;
+                        let from = text.floor_char_boundary(at.saturating_sub(60));
+                        let to = text.ceil_char_boundary((at + 20).min(text.len()));
+                        eprintln!("  line {line}: {:?}", &text[from..to]);
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "{} notes, both dialects: {again} parsed again ({old_again} with the passes alone), \
+             {differ} differ from the passes alone, {off} from pandoc's rule, {kept} keep a false \
+             closer",
+            paths.len()
+        );
+        assert_eq!(off, 0);
     }
 
     /// Typeset display math: each row and its source line.

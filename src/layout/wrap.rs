@@ -6,7 +6,8 @@
 //! lines of the bytes on it, read from marks of where each source line starts in the buffer
 //! ([`SrcMark`]): a piece is a stretch of one look, across soft breaks. Where the text is ASCII
 //! with single spaces, a line is filled to its last word in one step, from masks of the buffer's
-//! word ends ([`Cuts`]), not a word at a time.
+//! word ends ([`Cuts`]), not a word at a time, and so is each line after it whose word before
+//! is sure not to fit the line above.
 //!
 //! A piece may have a searchable *body* between decorations (inline code padding, an image icon).
 //! The bodies of a [`Wrapped`], in order, are its search unit's text (ADR-12), so layout can map
@@ -171,6 +172,19 @@ impl Marks {
             return false;
         }
         let (first, last) = ((start / 64) as usize, ((end - 1) / 64) as usize);
+        // most runs are a few blocks inside one word of bits: one masked test (LAY-009)
+        if first / 64 == last / 64 {
+            let bits = (!0u64 >> (63 - last % 64)) & (!0u64 << (first % 64));
+            return self.bits.get(first / 64).is_some_and(|w| w & bits != 0);
+        }
+        self.any_across(first, last)
+    }
+
+    /// [`Marks::any`] of blocks `first..=last`, across words of bits: out of line, so a run's
+    /// copy keeps the one-word test alone.
+    #[cold]
+    #[inline(never)]
+    fn any_across(&self, first: usize, last: usize) -> bool {
         (first..=last).any(|b| {
             self.bits
                 .get(b / 64)
@@ -492,11 +506,79 @@ pub fn wrap_unit(
 /// The columns `s` takes: its length when it's ASCII, otherwise [`UnicodeWidthStr::width`].
 /// A `\r` before a `\n` takes no column of its own there, so it takes the slow path.
 pub fn text_width(s: &str) -> usize {
-    if s.bytes().all(|b| b < 0x80 && b != b'\r') {
+    if plain_ascii(s.as_bytes()) {
         s.len()
-    } else {
+    } else if s.len() < PIECED {
         s.width()
+    } else {
+        pieced_width(s)
     }
+}
+
+/// Whether `b` is ASCII without a `\r`, a column a byte: 16 bytes a step with no exit inside,
+/// which vectorizes, as `code::needs_expanding` reads a line (LAY-013: tested a byte at
+/// a time with an exit on each, a code line's widths ran two compares and a branch a byte, and
+/// fences' layout swung ±10% between builds with that loop's placement). A string shorter than
+/// a step, most words and marks, is the byte loop it was, inline; a longer one calls the steps.
+#[inline(always)]
+fn plain_ascii(b: &[u8]) -> bool {
+    if b.len() < 16 {
+        return !b.iter().any(|&x| odd_byte(x));
+    }
+    plain_ascii_steps(b)
+}
+
+/// A byte that isn't a column of its own: past ASCII, or a `\r`.
+#[inline(always)]
+fn odd_byte(x: u8) -> bool {
+    (x >= 0x80) | (x == b'\r')
+}
+
+/// [`plain_ascii`] of 16 bytes or more. Out of line: inlined at each caller of [`text_width`],
+/// the steps cost text past ASCII (the throughput bench's unicode layout) 3 to 5% of its CPU.
+#[inline(never)]
+fn plain_ascii_steps(b: &[u8]) -> bool {
+    let (chunks, rest) = b.as_chunks::<16>();
+    !chunks
+        .iter()
+        .any(|c| c.iter().fold(false, |m, &x| m | odd_byte(x)))
+        && !rest.iter().any(|&x| odd_byte(x))
+}
+
+/// The length from which [`text_width`] counts a string's ASCII runs by their length: below
+/// it, its pieces cost more than they save (a wrap mark's `↪`, measured on every row that
+/// continues a line: twice `width`'s instructions, log.log +0.5%).
+const PIECED: usize = 256;
+
+/// [`UnicodeWidthStr::width`] of `s`, its runs of ASCII but their last two bytes counted a
+/// column a byte, and only the pieces from there through each character past ASCII (or `\r`)
+/// measured by `unicode-width` (HL-009: one `ø` sent huge.json's 3.75 MB line through it whole). The
+/// width reads a string from its end, each character by the one after it; an ASCII character
+/// before another, but `\n`, takes one column and passes nothing on, so the width splits there
+/// exactly: a piece ends at the first such pair past its last character beyond ASCII. Keycaps
+/// (`1` then U+FE0F) and `\r\n` stay in one piece. Out of line, the rare path.
+#[inline(never)]
+fn pieced_width(s: &str) -> usize {
+    let b = s.as_bytes();
+    // a split's right side starts with two ASCII bytes, the first not `\n`
+    let splits = |i: usize| b[i] < 0x80 && b[i] != b'\n' && b.get(i + 1).is_some_and(|&n| n < 0x80);
+    let (mut width, mut i) = (0, 0);
+    while i < b.len() {
+        let Some(k) = b[i..].iter().position(|&x| x >= 0x80 || x == b'\r') else {
+            return width + (b.len() - i);
+        };
+        // the run's bytes but the last two, which the piece takes (its first may be a `\r`'s
+        // or a keycap's), a column each
+        let from = (i + k).saturating_sub(2).max(i);
+        width += from - i;
+        let mut end = i + k + 1;
+        while end < b.len() && !splits(end) {
+            end += 1;
+        }
+        width += s[from..end].width();
+        i = end;
+    }
+    width
 }
 
 /// `s` cut to at most `max` columns, counted a character at a time.
@@ -661,6 +743,14 @@ fn push_text((w, src): Sink<'_>, (doc, run, marks): (&Doc, &Run, Option<&Marks>)
     end_piece((w, src), [start, start, end], false, look, run.src_line);
 }
 
+/// [`push_parts`] of a soft break: a space, its body alone, pushed as it is (LAY-009: one a
+/// source line, it went through the parts' checks and [`push_clean`]'s look at its byte).
+fn push_soft((w, src): Sink<'_>, look: Look, src_line: u32) {
+    let start = w.buf.len() as u32;
+    w.buf.push(' ');
+    end_piece((w, src), [start, start, start + 1], false, look, src_line);
+}
+
 /// The piece from `start` to the buffer's end, its body `body_start..body_end`, from source line
 /// `src_line`. A body alone that follows a piece of the same look ending in its body grows that
 /// piece instead (LAY-006: a soft break was a piece of its own, a seg and a slow `Packer::add` on
@@ -740,7 +830,7 @@ fn flatten(
                 push_code((w, src), pad, (doc, run, marks), look);
             }
             RunKind::Text | RunKind::Math(_) => push_text((w, src), (doc, run, marks), look),
-            RunKind::SoftBreak => push_parts((w, src), ["", " ", ""], look, line, false),
+            RunKind::SoftBreak => push_soft((w, src), look, line),
             RunKind::HardBreak => push_parts((w, src), ["", "\n", ""], look, line, false),
             RunKind::InlineImage(link) | RunKind::Embed(link) => {
                 let (glyph, key) = match run.kind {
@@ -985,14 +1075,78 @@ impl Cuts {
     /// The buffer is bytes `..end` of the masks' (a cell of a [`Flat`]'s, whose next cell's bytes
     /// follow), `gap_last` whether its last is a space or a newline: a word ends at `end` unless
     /// it is, whatever the masks' bits there say.
-    #[inline(always)]
+    #[cfg(test)]
     fn furthest(&self, from: usize, room: usize, end: usize, gap_last: bool) -> Option<usize> {
+        self.fill(from, room, end, gap_last).0
+    }
+
+    /// [`Cuts::furthest`], and whether the room stopped it, not a rough byte before
+    /// `from + room` or the buffer's end: then the line may be full, and [`fill_lines`] looks
+    /// at the lines after it (LAY-011: a fill a rough byte stopped skips that in one test).
+    #[inline(always)]
+    fn fill(&self, from: usize, room: usize, end: usize, gap_last: bool) -> (Option<usize>, bool) {
         let last = (from + room).min(end);
         let hi = self.first_rough(from, last);
         if hi == end && !gap_last {
-            return Some(end);
+            return (Some(end), false);
         }
-        self.last_end(from + 1, hi.min(end - 1))
+        (
+            self.last_end(from + 1, hi.min(end - 1)),
+            hi == last && last < end,
+        )
+    }
+
+    /// The line after one [`Cuts::fill`] filled to word end `e`, `last` the furthest end it had
+    /// room for (`space`: byte `e` is a space), when the word after `e` is sure not to fit it and
+    /// the line that word starts is smooth: where that line starts, `s`, and the furthest word
+    /// end it reaches in one go, `None` when its first word is longer than `avail`. `None` for no
+    /// such line: the tokens go on from `e`.
+    ///
+    /// The word starts at `e` (after a `-` or `/`) or after the single space there. With no rough
+    /// byte in `e..=hi`, `hi` the later of `last` and `e + 1`, its bytes through `hi` are ASCII,
+    /// and since `fill` found no end past `e` up to `last`, it ends past `last`. With none either
+    /// through `s + avail`, the next line's last column, the line from `s` is as wide as it is
+    /// long, and its fill is `fill`'s from `s`. Bytes `..end` are the buffer's, as in `fill`:
+    /// `hi` must be one, so its bits are of the buffer's bytes alone.
+    #[inline(always)]
+    fn next_line(
+        &self,
+        (e, space): (usize, bool),
+        last: usize,
+        (avail, end, gap_last): (u16, usize, bool),
+    ) -> Option<(Option<usize>, usize)> {
+        if last.max(e + 1) >= end {
+            return None;
+        }
+        // a word end inside the buffer is a space, a newline (rough), or a word's first byte
+        // after a `-` or `/`
+        let s = e + usize::from(space);
+        let line_end = s + usize::from(avail);
+        let lim = line_end.min(end - 1);
+        if self.rough_in(e, lim) {
+            return None;
+        }
+        Some(match line_end >= end && !gap_last {
+            true => (Some(end), s),
+            false => (self.last_end(s + 1, lim), s),
+        })
+    }
+
+    /// Whether a byte in `lo..=hi` is rough.
+    #[inline(always)]
+    fn rough_in(&self, lo: usize, hi: usize) -> bool {
+        let (mut w, hi_w) = (lo / 64, hi / 64);
+        let mut bits = self.bits[w][1] & (!0 << (lo % 64));
+        loop {
+            if w == hi_w {
+                return bits & (!0 >> (63 - hi % 64)) != 0;
+            }
+            if bits != 0 {
+                return true;
+            }
+            w += 1;
+            bits = self.bits[w][1];
+        }
     }
 
     /// The first rough byte in `from..=last`, `last` when none.
@@ -1323,12 +1477,17 @@ fn pack_with<const FAST: bool>(
                 masks = Masks::At(cuts, base);
                 let room = usize::from(avail.saturating_sub(p.width));
                 let from = base + start as usize;
-                if let Some(e) = cuts.furthest(from, room, base + len, gap_last) {
-                    let e = e - base;
-                    let e32 = e as u32;
-                    p.add(start, e32, (e32 - start) as u16, true);
-                    (tokens.i, tokens.spaced, pending) = (e, false, None);
-                    full = true;
+                let end = base + len;
+                let (Some(e), room_stopped) = cuts.fill(from, room, end, gap_last) else {
+                    continue;
+                };
+                p.add(start, (e - base) as u32, (e - from) as u16, true);
+                (tokens.i, tokens.spaced, pending, full) = (e - base, false, None, true);
+                if room_stopped {
+                    let lines = (avail, end, gap_last);
+                    let (at, spaced, filled) =
+                        fill_lines(&mut p, cuts, base, (e, from + room), lines);
+                    (tokens.i, tokens.spaced, full) = (at - base, spaced, filled);
                 }
             }
             Tok::Newline => {
@@ -1368,6 +1527,44 @@ fn pack_with<const FAST: bool>(
     if p.open || p.lines.is_empty() {
         p.flush();
     }
+}
+
+/// The lines after one [`pack`]'s masks filled to word end `e`, `last` the furthest end it had
+/// room for, each from the masks while the word after the line before is sure not to fit it and
+/// the line it starts is smooth ([`Cuts::next_line`]; LAY-011: each was a word scanned, two
+/// tokens and an `add`). Out of line, so the token loop keeps its registers: once for a run of
+/// lines. Returns where the tokens go on, whether a space is before it, and whether the line
+/// there is as full as the masks can make it.
+#[inline(never)]
+fn fill_lines(
+    p: &mut Packer<'_>,
+    cuts: &Cuts,
+    base: usize,
+    (mut e, mut last): (usize, usize),
+    (avail, end, gap_last): (u16, usize, bool),
+) -> (usize, bool, bool) {
+    let bytes = p.buf.as_bytes();
+    let mut at = e;
+    while let Some((next, s)) = cuts.next_line(
+        (e, bytes.get(e - base) == Some(&b' ')),
+        last,
+        (avail, end, gap_last),
+    ) {
+        p.flush();
+        at = s;
+        let Some(next) = next else {
+            // its first word is longer than a line: a token, hard-broken
+            return (at, at > e, false);
+        };
+        p.add(
+            (at - base) as u32,
+            (next - base) as u32,
+            (next - at) as u16,
+            true,
+        );
+        (e, last, at) = (next, at + usize::from(avail), next);
+    }
+    (at, false, true)
 }
 
 /// Bytes `start..end` of the buffer, a word longer than a whole line, broken across lines from a
@@ -1751,6 +1948,78 @@ mod tests {
         }
     }
 
+    /// `plain_ascii` (LAY-013) finds a byte past ASCII or a `\r` wherever it falls against its
+    /// 16-byte steps, and `text_width` then measures as `unicode-width` does.
+    #[test]
+    fn text_width_finds_the_odd_byte_anywhere() {
+        for len in 0..50 {
+            let plain = "a".repeat(len);
+            assert!(plain_ascii(plain.as_bytes()), "{len}");
+            assert_eq!(text_width(&plain), len);
+            for at in 0..len {
+                for odd in ["\r", "é", "日", "\u{7f}"] {
+                    let s = format!("{}{odd}{}", &plain[..at], &plain[at + 1..]);
+                    assert_eq!(plain_ascii(s.as_bytes()), odd == "\u{7f}", "{s:?}");
+                    assert_eq!(text_width(&s), s.width(), "{s:?}");
+                }
+            }
+        }
+    }
+
+    /// `pieced_width` splits a string only where `unicode-width`'s reading from the end passes
+    /// nothing on (HL-009): every string of up to four pieces that join, between ASCII runs of
+    /// none to three bytes, measures as the whole does.
+    #[test]
+    fn pieced_width_is_unicode_widths() {
+        let pieces = [
+            "a",
+            "1",
+            "#",
+            "*",
+            "\r",
+            "\n",
+            "\t",
+            "\u{fe0f}",
+            "\u{fe0e}",
+            "\u{20e3}",
+            "\u{200d}",
+            "\u{1f468}",
+            "\u{1f3fd}",
+            "\u{1f1e6}",
+            "\u{2764}",
+            "\u{301}",
+            "\u{a0}",
+            "ø",
+            "日",
+            "\u{1100}",
+            "\u{1161}",
+            "\u{11a8}",
+            "\u{644}",
+            "\u{627}",
+            "\u{e0067}",
+            "\u{e007f}",
+            "\u{1f3f4}",
+            "\u{16d63}",
+            "\u{16d67}",
+            "\u{85}",
+        ];
+        let n = pieces.len();
+        for pad in ["", "x", "xy", "x1y"] {
+            for len in 1..=4u32 {
+                for mut k in 0..n.pow(len) {
+                    let mut s = String::from(pad);
+                    for _ in 0..len {
+                        s.push_str(pieces[k % n]);
+                        k /= n;
+                    }
+                    s.push_str(pad);
+                    assert_eq!(pieced_width(&s), s.width(), "{s:?}");
+                    assert_eq!(text_width(&s), s.width(), "{s:?}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn push_clean_agrees_with_clean_char() {
         for c in (0..0x800).filter_map(char::from_u32) {
@@ -1789,6 +2058,39 @@ mod tests {
                         assert_eq!(suspect(&s, true), want(true), "{s:?} folded");
                     }
                 }
+            }
+        }
+    }
+
+    /// [`Marks::any`] answers as its blocks' bits read one at a time do, for ranges inside one
+    /// word of them and across words, and past the last (LAY-009: one masked test inside a word).
+    #[test]
+    fn marks_answer_as_their_blocks_do() {
+        // three words of bits, a block marked here and there, and past the last one none
+        let mut rng = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        let marks = Marks {
+            bits: (0..3).map(|_| next() & next() & next()).collect(),
+        };
+        let marked = |b: u32| {
+            marks
+                .bits
+                .get(b as usize / 64)
+                .is_some_and(|w| w >> (b % 64) & 1 != 0)
+        };
+        let ends = (0..4 * 64 * 64 + 100)
+            .step_by(37)
+            .chain([0, 1, 63, 64, 4095, 4096, 4097]);
+        for start in ends.clone() {
+            for end in ends.clone() {
+                let want = start < end && (start / 64..=(end - 1) / 64).any(marked);
+                let range = TextRange { start, end };
+                assert_eq!(marks.any(range), want, "{start}..{end}");
             }
         }
     }

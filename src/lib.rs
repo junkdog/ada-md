@@ -32,3 +32,10 @@ pub mod style;
 pub mod theme;
 mod toml_walk;
 pub mod ui;
+
+/// The cores to work on, eight at most. Read once a process: `available_parallelism` opens and
+/// reads the cgroup's CPU quota files, ~10 µs, which was 39% of a small note's print (PRN-007).
+pub fn cores() -> usize {
+    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CORES.get_or_init(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(8)))
+}
