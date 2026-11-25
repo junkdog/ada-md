@@ -1,10 +1,10 @@
 #!/usr/bin/env zsh
 # Refuse a push that ci.yml would fail on Linux: rustfmt and clippy (-D warnings) over the crate and over fuzz/,
 # `cargo doc` with -D warnings, `cargo check` on the MSRV (when that toolchain is installed) and `cargo test`, all
-# --locked. The pre-commit hook only checks rustfmt and the lockfiles, which let two pushes through that CI failed:
-# a public doc linking a private item (cargo doc, 2026-11-02) and fuzz targets that no longer compiled after
-# LayoutParams gained fields (fuzz clippy, 2026-11-03). Windows clippy (cfg(windows) code) and the macOS and Windows
-# test runs stay CI's.
+# --locked. The pre-commit hook checked only rustfmt and the lockfiles (`cargo doc` too since 2026-11-25), which let
+# two pushes through that CI failed: a public doc linking a private item (cargo doc, 2026-11-02) and fuzz targets
+# that no longer compiled after LayoutParams gained fields (fuzz clippy, 2026-11-03). Windows clippy (cfg(windows)
+# code) and the macOS and Windows test runs stay CI's.
 #
 # The checks run on each pushed commit, not the working tree: the commit is checked out into target/pre-push/tree
 # through a private index, so only the files that changed since the last push are rewritten and cargo rebuilds just

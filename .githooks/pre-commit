@@ -1,15 +1,23 @@
 #!/usr/bin/env zsh
-# Refuse a commit that CI's rustfmt steps would fail (the crate, the fuzz targets and the bench driver), or that
-# leaves a lockfile cargo would rewrite: `--locked` fails on it in CI, as fuzz/Cargo.lock did after the version bump
-# to 1.0.0-rc.1. The nested crates lock ada-md and its dependencies too, so a version bump or a new dependency has to
-# reach every lockfile. Offline: a lockfile that needs the network to check is reported as one to update.
+# Refuse a commit that CI's rustfmt steps would fail (the crate, the fuzz targets and the bench driver), that
+# leaves a lockfile cargo would rewrite, or whose docs CI's `cargo doc` (-D warnings) would fail. `--locked` fails on
+# a stale lockfile in CI, as fuzz/Cargo.lock did after the version bump to 1.0.0-rc.1. The nested crates lock ada-md
+# and its dependencies too, so a version bump or a new dependency has to reach every lockfile. Offline: a lockfile
+# that needs the network to check is reported as one to update. rustdoc's lints (a public doc linking a private item,
+# a broken intra-doc link) were the pre-push hook's alone, and kept failing a push after the commit was made
+# (2026-11-02, 2026-11-25).
 #
-# Both checks run on the staged content, not the working tree: the Rust sources, manifests and lockfiles in the index
-# are copied to a scratch directory and checked there. Checking the working tree let a commit through whose staged
-# files were unformatted while the working copy had been formatted but not staged (the SCSS and HTML commits of
-# 2026-11-01). Files that aren't tracked never reach the snapshot, so a manifest that isn't committed is skipped.
+# Every check runs on the staged content, not the working tree. Checking the working tree let a commit through whose
+# staged files were unformatted while the working copy had been formatted but not staged (the SCSS and HTML commits
+# of 2026-11-01). rustfmt and the lockfiles: the Rust sources, manifests and lockfiles in the index are copied to a
+# scratch directory and checked there; files that aren't tracked never reach the snapshot, so a manifest that isn't
+# committed is skipped. The docs: only when the commit changes a Rust source, a manifest or a lockfile against HEAD.
+# The whole index is written as a tree and checked out into target/pre-commit/tree through a private index, so only
+# the files that changed since the last check are rewritten and rustdoc redoes just what they touch; it builds into
+# target/pre-commit/target, its output in target/pre-commit/doc.log.
 # Enable once per clone: git config core.hooksPath .githooks
-cd "$(git rev-parse --show-toplevel)" || exit 1
+top=$(git rev-parse --show-toplevel) || exit 1
+cd $top || exit 1
 snap=$(mktemp -d "${TMPDIR:-/tmp}/ada-pre-commit.XXXXXX") || { print -u2 "pre-commit: no scratch directory"; exit 1 }
 TRAPEXIT() { rm -rf -- "$snap" }
 # checkout-index reads GIT_INDEX_FILE, so `git commit -a` and `git commit <paths>` are checked as they will commit
@@ -26,7 +34,39 @@ for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml bench/diagrams/co
   [[ -f $manifest ]] || continue
   cargo metadata --manifest-path $manifest --locked --offline --format-version 1 > /dev/null 2>&1 || stale+=($manifest)
 done
-(( ${#unformatted} + ${#stale} == 0 )) && exit 0
+doc_failed=0
+cd $top || exit 1
+if (( ! ${stale[(Ie)Cargo.toml]} )) && {
+  ! git rev-parse --verify --quiet HEAD > /dev/null \
+    || ! git diff --cached --quiet HEAD -- '*.rs' '*Cargo.toml' '*Cargo.lock' .cargo/config.toml
+}; then
+  zmodload zsh/datetime
+  base=$top/target/pre-commit
+  mkdir -p $base/tree || exit 1
+  # two commits from one checkout at once would share the tree
+  exec {lock_fd}>>$base/lock || exit 1
+  flock $lock_fd || exit 1
+  # write-tree reads GIT_INDEX_FILE too, so `git commit -a` and `git commit <paths>` are documented as they commit
+  index_tree=$(git write-tree) || { print -u2 "pre-commit: could not write the index as a tree"; exit 1 }
+  if ! GIT_INDEX_FILE=$base/index git --work-tree=$base/tree read-tree --reset -u $index_tree 2> /dev/null; then
+    # a private index or tree left broken by an interrupted run: start both again
+    rm -rf -- $base/tree $base/index
+    mkdir -p $base/tree
+    GIT_INDEX_FILE=$base/index git --work-tree=$base/tree read-tree --reset -u $index_tree \
+      || { print -u2 "pre-commit: could not check out the index into $base/tree"; exit 1 }
+  fi
+  start=$EPOCHREALTIME
+  print -nu2 -- "pre-commit: cargo doc (-D warnings)"
+  ( cd $base/tree && unset GIT_WORK_TREE GIT_INDEX_FILE \
+      && CARGO_TARGET_DIR=$base/target RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked ) >| $base/doc.log 2>&1
+  if (( $? == 0 )); then
+    printf '  ok  %.1f s\n' $(( EPOCHREALTIME - start )) >&2
+  else
+    printf '  FAILED  %.1f s  (%s)\n' $(( EPOCHREALTIME - start )) $base/doc.log >&2
+    doc_failed=1
+  fi
+fi
+(( ${#unformatted} + ${#stale} + doc_failed == 0 )) && exit 0
 if (( ${#unformatted} )); then
   print -u2 "pre-commit: staged sources not rustfmt-clean: ${(j:, :)unformatted}"
   for manifest in $unformatted; do
@@ -38,6 +78,10 @@ if (( ${#stale} )); then
   for manifest in $stale; do
     print -u2 "  cargo update --manifest-path $manifest --workspace"
   done
+fi
+if (( doc_failed )); then
+  print -u2 "pre-commit: staged docs fail rustdoc with -D warnings ($base/doc.log):"
+  grep -E -A3 '^(error|warning)' $base/doc.log | head -n 40 >&2
 fi
 print -u2 "then stage the result (an unstaged fix doesn't count); or commit with --no-verify to skip this check"
 exit 1

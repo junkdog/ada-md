@@ -1662,7 +1662,7 @@ const LINES_PER_THREAD: usize = 1024;
 
 /// [`highlight`] for print mode (O-04): a block of 1 MiB or 20,000 lines and up whose lines
 /// don't depend on each other (`Lang::line_by_line`, or JSON without a `/* */`) is cut into a
-/// chunk of lines per thread, [`LINES_PER_THREAD`] at least. Any other block goes on one
+/// chunk of lines per thread, 1,024 (`LINES_PER_THREAD`) at least. Any other block goes on one
 /// thread: ada's lexers run at hundreds of MB/s, and the chunks that guessed a state and met
 /// the true one were syntect's, gone with it (ADR-43). The result is [`highlight`]'s.
 pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeSpans {
