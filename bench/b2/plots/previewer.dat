@@ -1,4 +1,4 @@
-# B2 previewer files at ada ef2d102: hyperfine medians, ms (peak RSS in MiB); cap at 120 s; written by bench/b2/plot.py
+# B2 previewer files at ada a9f22cd: hyperfine medians, ms (peak RSS in MiB); cap at 120 s; written by bench/b2/plot.py
 # previewer, a preview, wall
 # doc ada bat rich
 code-s.py 0.702491 10.5593 64.6949

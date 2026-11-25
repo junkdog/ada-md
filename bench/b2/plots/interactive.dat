@@ -1,4 +1,4 @@
-# B2 at ada ef2d102: medians, ms (peak RSS in MiB); ada first in 80 of 84 ranked measurements; written by bench/b2/plot.py
+# B2 at ada a9f22cd: medians, ms (peak RSS in MiB); ada first in 80 of 84 ranked measurements; written by bench/b2/plot.py
 # first paint
 # doc ada leaf mdfried mdtui treemd-head glow basalt ekphos emeraldian
 S 1.35471 4.59135 101.742 21.9452 7.67431 35.4433 5.24188 8.21366 3.6064
